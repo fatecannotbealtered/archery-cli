@@ -1,0 +1,300 @@
+package cmd
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/fatecannotbealtered/archery-cli/internal/api"
+	"github.com/fatecannotbealtered/archery-cli/internal/output"
+)
+
+// ─── List printing ──────────────────────────────────────────────────────────
+
+func printWorkflowListJSON(page *api.PaginatedResponse[api.SQLWorkflow], fields []string, host string) {
+	items := make([]map[string]any, len(page.Results))
+	for i, w := range page.Results {
+		items[i] = workflowToMap(w, host)
+	}
+	if len(fields) > 0 {
+		filtered := make([]map[string]any, len(items))
+		for i, m := range items {
+			filtered[i] = output.FilterMap(m, fields)
+		}
+		items = filtered
+	}
+	output.PrintJSON(output.NewListEnvelope(items, output.ListMeta{
+		Count:   len(page.Results),
+		Limit:   len(page.Results),
+		HasMore: page.Next != nil,
+	}))
+}
+
+func printWorkflowTable(workflows []api.SQLWorkflow, host string) {
+	headers := []string{"ID", "TITLE", "STATUS", "ENGINEER", "INSTANCE", "DB", "CREATED"}
+	rows := make([][]string, len(workflows))
+	for i, w := range workflows {
+		title := w.Title
+		if len(title) > 40 {
+			title = title[:37] + "..."
+		}
+		rows[i] = []string{
+			fmt.Sprintf("%d", w.ID),
+			title,
+			workflowStatusBadge(w.Status),
+			w.Engineer,
+			fmt.Sprintf("%d", w.InstanceID),
+			w.DBName,
+			formatTime(w.CreateDate),
+		}
+	}
+	output.Table(headers, rows)
+}
+
+// ─── Detail printing ────────────────────────────────────────────────────────
+
+func printWorkflowDetailJSON(detail *api.SQLWorkflowDetail, fields []string, host string) {
+	m := workflowDetailToMap(detail, host)
+	if len(fields) > 0 {
+		m = output.FilterMap(m, fields)
+	}
+	output.PrintJSON(m)
+}
+
+func printWorkflowDetail(detail *api.SQLWorkflowDetail, host string) {
+	fmt.Println()
+	header := fmt.Sprintf("  %s · %s",
+		output.FormatCyanBold(fmt.Sprintf("#%d", detail.ID)),
+		workflowStatusBadge(detail.Status))
+	fmt.Println(header)
+	output.Gray("  ────────────────────────────────────────────────")
+
+	printField := func(label, value string) {
+		if value != "" {
+			fmt.Printf("  %-14s %s\n", output.FormatGray(label), value)
+		}
+	}
+
+	printField("Title", detail.Title)
+	printField("Engineer", detail.Engineer)
+	printField("Status", workflowStatusLabel(detail.Status))
+	printField("Instance", fmt.Sprintf("%d", detail.InstanceID))
+	printField("Database", detail.DBName)
+	printField("Group", fmt.Sprintf("%d", detail.GroupID))
+	printField("Created", formatTime(detail.CreateDate))
+	if detail.DemandURL != "" {
+		printField("Demand URL", detail.DemandURL)
+	}
+	printField("URL", host+fmt.Sprintf("/sqlworkflow/%d/", detail.ID))
+
+	if detail.SQLContent != "" {
+		fmt.Println()
+		output.Gray("  SQL Content")
+		output.Gray("  ────────────────────────────────────────────────")
+		sql := detail.SQLContent
+		if len(sql) > 2000 {
+			sql = sql[:2000] + "\n  ... (truncated)"
+		}
+		for _, line := range strings.Split(sql, "\n") {
+			fmt.Println("  " + line)
+		}
+	}
+
+	if len(detail.AuditLog) > 0 {
+		fmt.Println()
+		output.Gray("  Audit Log")
+		output.Gray("  ────────────────────────────────────────────────")
+		for _, entry := range detail.AuditLog {
+			action := entry.Action
+			if action == "" {
+				action = "review"
+			}
+			remark := ""
+			if entry.Remark != "" {
+				remark = fmt.Sprintf(" (%s)", entry.Remark)
+			}
+			fmt.Printf("  %s  %s -> %s%s\n",
+				output.FormatGray(formatTime(entry.CreateDate)),
+				output.FormatCyanBold(entry.User),
+				action,
+				remark)
+		}
+	}
+	fmt.Println()
+}
+
+// ─── SQLCheck printing ──────────────────────────────────────────────────────
+
+func printSQLCheckResults(results []api.SQLCheckResult) {
+	if len(results) == 0 {
+		output.Success("SQL check passed with no issues.")
+		return
+	}
+
+	headers := []string{"LEVEL", "MESSAGE", "AFFECTED_ROWS", "SQL"}
+	rows := make([][]string, len(results))
+	for i, r := range results {
+		sql := r.SQL
+		if len(sql) > 60 {
+			sql = sql[:57] + "..."
+		}
+		rows[i] = []string{
+			checkLevelBadge(r.Level),
+			r.Message,
+			fmt.Sprintf("%d", r.AffectedRows),
+			sql,
+		}
+	}
+	output.Table(headers, rows)
+
+	hasError := false
+	for _, r := range results {
+		if r.Level == "error" {
+			hasError = true
+			break
+		}
+	}
+	if hasError {
+		output.Warn("SQL check found errors. Fix them before submitting.")
+	} else {
+		output.Warn("SQL check found warnings. Review before submitting.")
+	}
+}
+
+// ─── Map converters for JSON output ─────────────────────────────────────────
+
+func workflowToMap(w api.SQLWorkflow, host string) map[string]any {
+	m := map[string]any{
+		"id":         w.ID,
+		"title":      w.Title,
+		"status":     w.Status,
+		"engineer":   w.Engineer,
+		"instanceId": w.InstanceID,
+		"db":         w.DBName,
+		"created":    w.CreateDate,
+	}
+	if host != "" {
+		m["webUrl"] = host + fmt.Sprintf("/sqlworkflow/%d/", w.ID)
+	}
+	return m
+}
+
+func workflowDetailToMap(d *api.SQLWorkflowDetail, host string) map[string]any {
+	m := map[string]any{
+		"id":         d.ID,
+		"title":      d.Title,
+		"status":     d.Status,
+		"engineer":   d.Engineer,
+		"instanceId": d.InstanceID,
+		"db":         d.DBName,
+		"groupId":    d.GroupID,
+		"sql":        d.SQLContent,
+		"created":    d.CreateDate,
+	}
+	if d.DemandURL != "" {
+		m["demandUrl"] = d.DemandURL
+	}
+	if host != "" {
+		m["webUrl"] = host + fmt.Sprintf("/sqlworkflow/%d/", d.ID)
+	}
+	if len(d.AuditLog) > 0 {
+		logs := make([]map[string]any, len(d.AuditLog))
+		for i, e := range d.AuditLog {
+			logs[i] = map[string]any{
+				"user":      e.User,
+				"action":    e.Action,
+				"remark":    e.Remark,
+				"timestamp": e.CreateDate,
+			}
+		}
+		m["auditLog"] = logs
+	}
+	// Tag externally-sourced fields as untrusted (SEC-SPEC §2).
+	api.TagUntrusted(m, "sql", "auditLog", "demandUrl")
+	return m
+}
+
+// ─── Status display helpers ─────────────────────────────────────────────────
+
+func workflowStatusBadge(status int) string {
+	label := workflowStatusLabel(status)
+	switch {
+	case status == 0:
+		return output.StatusBadge("created")
+	case status == 1:
+		return output.StatusBadge("pending")
+	case status == 2:
+		return output.StatusBadge("approved")
+	case status == 3:
+		return output.StatusBadge("rejected")
+	case status == 4:
+		return output.StatusBadge("executing")
+	case status == 5:
+		return output.StatusBadge("success")
+	case status == 6:
+		return output.StatusBadge("failed")
+	case status == 7:
+		return output.StatusBadge("cancelled")
+	default:
+		return output.StatusBadge(label)
+	}
+}
+
+func workflowStatusLabel(status int) string {
+	switch status {
+	case 0:
+		return "created"
+	case 1:
+		return "pending"
+	case 2:
+		return "approved"
+	case 3:
+		return "rejected"
+	case 4:
+		return "executing"
+	case 5:
+		return "success"
+	case 6:
+		return "failed"
+	case 7:
+		return "cancelled"
+	default:
+		return fmt.Sprintf("unknown(%d)", status)
+	}
+}
+
+func checkLevelBadge(level string) string {
+	switch strings.ToLower(level) {
+	case "error":
+		return output.FormatRed(level)
+	case "warning", "warn":
+		return output.FormatYellow(level)
+	case "info":
+		return output.FormatBlue(level)
+	default:
+		return level
+	}
+}
+
+// formatTime parses common Archery date formats and returns a compact display string.
+func formatTime(t string) string {
+	if t == "" {
+		return ""
+	}
+	for _, layout := range []string{
+		"2006-01-02T15:04:05.000-0700",
+		"2006-01-02T15:04:05-07:00",
+		"2006-01-02T15:04:05Z07:00",
+		"2006-01-02 15:04:05",
+		time.RFC3339,
+		time.RFC3339Nano,
+	} {
+		if parsed, err := time.Parse(layout, t); err == nil {
+			return parsed.Format("2006-01-02 15:04")
+		}
+	}
+	if len(t) >= 10 {
+		return t[:10]
+	}
+	return t
+}

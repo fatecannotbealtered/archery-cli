@@ -1,0 +1,108 @@
+# Contributing to archery-cli
+
+Thank you for your interest in contributing to archery-cli.
+
+## Development Setup
+
+### Prerequisites
+
+- Go 1.23 or later
+- Git
+- golangci-lint (for linting)
+
+### Getting Started
+
+```bash
+# Clone the repository
+git clone https://github.com/fatecannotbealtered/archery-cli.git
+cd archery-cli
+
+# Build the binary
+make build
+
+# Run tests
+go test -race ./...
+
+# Run linter
+golangci-lint run
+```
+
+## Branch Strategy
+
+- Create feature branches from `main`: `git checkout -b feat/your-feature`
+- Keep branches focused on a single change
+- Open a Pull Request (PR) targeting `main` when ready
+- Rebase or merge latest `main` before requesting review
+
+## Commit Format
+
+This project uses [Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+<type>: <description>
+
+<optional body>
+```
+
+| Type | Use for |
+|------|---------|
+| `feat` | New features |
+| `fix` | Bug fixes |
+| `refactor` | Code restructuring without behavior change |
+| `docs` | Documentation changes |
+| `test` | Adding or updating tests |
+| `chore` | Build, CI, dependency, or tooling changes |
+| `perf` | Performance improvements |
+| `ci` | CI/CD pipeline changes |
+
+Examples:
+
+```
+feat: add slow query export command
+fix: handle nil pointer in workflow status check
+docs: update README install instructions
+```
+
+## Pull Request Checklist
+
+Before submitting a PR, ensure:
+
+- [ ] All tests pass: `go test -race ./...`
+- [ ] Code is formatted: `gofmt -s -w .`
+- [ ] No vet warnings: `go vet ./...`
+- [ ] Linter passes: `golangci-lint run`
+- [ ] Documentation is updated if behavior changed
+- [ ] `CHANGELOG.md` is updated under `[Unreleased]`
+- [ ] Commit messages follow the conventional commit format
+
+## Code Style
+
+- Use `gofmt` for formatting (enforced in CI)
+- Run `go vet` to catch common issues
+- Run `golangci-lint` for additional static analysis
+- Follow existing patterns in the codebase
+- Keep functions focused and small
+- Handle errors explicitly; do not discard them with `_`
+
+## Testing Requirements
+
+```bash
+# Run all tests with race detector
+go test -race ./...
+
+# Run tests with verbose output
+go test -v -race ./...
+
+# Run tests for a specific package
+go test -race ./internal/api/...
+```
+
+- Write tests for new functionality
+- Ensure existing tests still pass
+- Aim for meaningful coverage, not just line count
+
+## Reporting Issues
+
+- Use GitHub Issues for bug reports and feature requests
+- Include steps to reproduce for bugs
+- Include your Go version and OS

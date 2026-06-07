@@ -1,0 +1,52 @@
+{
+  "name": "@fatecannotbealtered/archery-cli",
+  "version": "0.1.0",
+  "description": "CLI tool for managing the Archery SQL audit platform",
+  "keywords": [
+    "archery",
+    "sql",
+    "audit",
+    "cli",
+    "ai-agent"
+  ],
+  "author": "",
+  "homepage": "https://github.com/fatecannotbealtered/archery-cli#readme",
+  "bugs": {
+    "url": "https://github.com/fatecannotbealtered/archery-cli/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fatecannotbealtered/archery-cli.git"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "archery": "scripts/run.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/install.js"
+  },
+  "files": [
+    "scripts/install.js",
+    "scripts/run.js",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md"
+  ],
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "engines": {
+    "node": ">=16"
+  }
+}
