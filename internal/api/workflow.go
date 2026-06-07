@@ -13,10 +13,16 @@ type WorkflowAPI struct {
 	client *Client
 }
 
+// ListResult holds the parsed response and pagination metadata for a list call.
+type ListResult[T any] struct {
+	Page       PaginatedResponse[T]
+	Pagination Pagination
+}
+
 // List returns a paginated list of SQL workflows.
 //
 // GET /api/v1/workflow/
-func (w *WorkflowAPI) List(ctx context.Context, params WorkflowListParams) (*PaginatedResponse[SQLWorkflow], error) {
+func (w *WorkflowAPI) List(ctx context.Context, params WorkflowListParams) (*ListResult[SQLWorkflow], error) {
 	q := url.Values{}
 	if params.Status != "" {
 		q.Set("status", params.Status)
@@ -42,7 +48,7 @@ func (w *WorkflowAPI) List(ctx context.Context, params WorkflowListParams) (*Pag
 		path += "?" + encoded
 	}
 
-	data, err := w.client.Get(ctx, path)
+	data, headerPag, err := w.client.GetWithPagination(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("list workflows: %w", err)
 	}
@@ -51,7 +57,15 @@ func (w *WorkflowAPI) List(ctx context.Context, params WorkflowListParams) (*Pag
 	if err := json.Unmarshal(data, &page); err != nil {
 		return nil, fmt.Errorf("parsing workflow list: %w", err)
 	}
-	return &page, nil
+
+	// Merge: prefer header pagination fields, but fill Count from body if
+	// the server didn't send X-Total-Count.
+	pag := headerPag
+	if pag.Count == 0 {
+		pag.Count = page.Count
+	}
+
+	return &ListResult[SQLWorkflow]{Page: page, Pagination: pag}, nil
 }
 
 // Submit creates a new SQL workflow.

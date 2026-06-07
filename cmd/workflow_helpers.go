@@ -11,9 +11,9 @@ import (
 
 // ─── List printing ──────────────────────────────────────────────────────────
 
-func printWorkflowListJSON(page *api.PaginatedResponse[api.SQLWorkflow], fields []string, host string) {
-	items := make([]map[string]any, len(page.Results))
-	for i, w := range page.Results {
+func printWorkflowListJSON(result *api.ListResult[api.SQLWorkflow], fields []string, host string) {
+	items := make([]map[string]any, len(result.Page.Results))
+	for i, w := range result.Page.Results {
 		items[i] = workflowToMap(w, host)
 	}
 	if len(fields) > 0 {
@@ -23,11 +23,42 @@ func printWorkflowListJSON(page *api.PaginatedResponse[api.SQLWorkflow], fields 
 		}
 		items = filtered
 	}
+	pag := result.Pagination
+	hasMore := pag.NextPage > 0 || (result.Page.Next != nil && result.Page.Next != "")
 	output.PrintJSON(output.NewListEnvelope(items, output.ListMeta{
-		Count:   len(page.Results),
-		Limit:   len(page.Results),
-		HasMore: page.Next != nil,
+		Count:   len(result.Page.Results),
+		Limit:   pag.PerPage,
+		Page:    pag.Page,
+		Total:   pag.Count,
+		HasMore: hasMore,
 	}))
+}
+
+// printListPaginationHint prints a summary line below the table showing
+// pagination state. Only shown in terminal (non-JSON) mode when there is
+// more data available or when the total count is known.
+func printListPaginationHint(pag api.Pagination, requestedLimit int) {
+	total := pag.Count
+	showing := requestedLimit
+	if showing <= 0 {
+		showing = total
+	}
+
+	// Determine if there are more pages.
+	hasMore := pag.NextPage > 0
+	if !hasMore && total > 0 && showing > 0 && total > showing {
+		hasMore = true
+	}
+
+	if total > 0 {
+		msg := fmt.Sprintf("Showing %d of %d results", showing, total)
+		if hasMore {
+			msg += fmt.Sprintf(" (use --offset %d for next page)", showing)
+		}
+		output.Gray("  " + msg)
+	} else if hasMore {
+		output.Gray(fmt.Sprintf("  More results available (use --offset %d for next page)", showing))
+	}
 }
 
 func printWorkflowTable(workflows []api.SQLWorkflow, host string) {

@@ -105,22 +105,23 @@ var workflowListCmd = &cobra.Command{
 			return nil
 		}
 
-		page, err := client.Workflows.List(apiCtx(), params)
+		result, err := client.Workflows.List(apiCtx(), params)
 		if err != nil {
 			return handleAPIError(err)
 		}
 
 		if jsonMode {
 			fields := getFieldsFlag(cmd)
-			printWorkflowListJSON(page, fields, region.URL)
+			printWorkflowListJSON(result, fields, region.URL)
 			return nil
 		}
 
-		if len(page.Results) == 0 {
+		if len(result.Page.Results) == 0 {
 			output.Info("No workflows found.")
 			return nil
 		}
-		printWorkflowTable(page.Results, region.URL)
+		printWorkflowTable(result.Page.Results, region.URL)
+		printListPaginationHint(result.Pagination, limit)
 		return nil
 	},
 }

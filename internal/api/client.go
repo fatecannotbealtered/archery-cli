@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,6 +24,28 @@ const (
 	maxRateLimitWait  = 60 * time.Second
 )
 
+// globalHTTP holds the current client options, set from cmd flags/env before any client is created.
+var globalHTTP = ClientOptions{Timeout: 30 * time.Second}
+
+// ClientOptions configures HTTP transport settings.
+type ClientOptions struct {
+	Timeout            time.Duration
+	InsecureSkipVerify bool
+}
+
+// SetClientOptions updates global HTTP settings (from cmd flags).
+func SetClientOptions(o ClientOptions) {
+	if o.Timeout <= 0 {
+		o.Timeout = 30 * time.Second
+	}
+	globalHTTP = o
+}
+
+// CurrentClientOptions returns the global HTTP settings (for tests/diagnostics).
+func CurrentClientOptions() ClientOptions {
+	return globalHTTP
+}
+
 // defaultUserAgent returns ARCHERY_CLI_USER_AGENT if set, otherwise a clear CLI UA.
 func defaultUserAgent() string {
 	if ua := strings.TrimSpace(os.Getenv("ARCHERY_CLI_USER_AGENT")); ua != "" {
@@ -31,11 +54,16 @@ func defaultUserAgent() string {
 	return "archery-cli"
 }
 
-func newHTTPClient(timeout time.Duration) *http.Client {
+func newHTTPClient(opts ClientOptions) *http.Client {
 	jar, _ := cookiejar.New(nil)
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if opts.InsecureSkipVerify {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec
+	}
 	return &http.Client{
-		Timeout: timeout,
-		Jar:     jar,
+		Timeout:   opts.Timeout,
+		Jar:       jar,
+		Transport: transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 10 {
 				return fmt.Errorf("stopped after 10 redirects")
@@ -172,11 +200,11 @@ type Client struct {
 	Workflows    *WorkflowAPI
 }
 
-// NewClient creates a new API client.
+// NewClient creates a new API client using global HTTP options.
 func NewClient(host string) *Client {
 	c := &Client{
 		host:       strings.TrimRight(host, "/"),
-		httpClient: newHTTPClient(30 * time.Second),
+		httpClient: newHTTPClient(globalHTTP),
 	}
 	c.Auth = &AuthAPI{client: c}
 	c.Workflows = &WorkflowAPI{client: c}
@@ -398,6 +426,104 @@ func (c *Client) parseError(statusCode int, data []byte) *APIError {
 	return apiErr
 }
 
+// Pagination holds page metadata from DRF response headers or response body.
+//
+// Archery uses Django REST Framework. Depending on the paginator configured
+// server-side, pagination info may arrive as:
+//   - HTTP headers: X-Total-Count, Link (RFC 5988)
+//   - JSON body: {"count": N, "next": "url", "previous": "url", "results": [...]}
+//
+// This struct captures both sources. The JSON-body fields (Count, Next,
+// Previous) come from PaginatedResponse; the header fields are populated
+// by extractPagination when the caller uses GetWithPagination.
+type Pagination struct {
+	// Count is the total number of items (from X-Total-Count header or JSON "count").
+	Count int
+	// Page is the current page number (from X-Page header, 1-based).
+	Page int
+	// PerPage is the page size (from X-Per-Page header).
+	PerPage int
+	// NextPage is the next page number (0 if last page).
+	NextPage int
+	// PrevPage is the previous page number (0 if first page).
+	PrevPage int
+	// Link is the raw Link header value (RFC 5988).
+	Link string
+}
+
+// extractPagination parses DRF-style pagination from HTTP response headers.
+//
+// Supported headers:
+//   - X-Total-Count: total item count
+//   - X-Page, X-Per-Page, X-Next-Page, X-Prev-Page: page navigation
+//   - Link: RFC 5988 Link header (parsed for rel="next" / rel="prev")
+//
+// If the Link header is present, NextPage/PrevPage are derived from it
+// (overriding the X-*-Page headers).
+func extractPagination(h http.Header) Pagination {
+	atoi := func(s string) int {
+		n, _ := strconv.Atoi(strings.TrimSpace(s))
+		return n
+	}
+	p := Pagination{
+		Count:    atoi(h.Get("X-Total-Count")),
+		Page:     atoi(h.Get("X-Page")),
+		PerPage:  atoi(h.Get("X-Per-Page")),
+		NextPage: atoi(h.Get("X-Next-Page")),
+		PrevPage: atoi(h.Get("X-Prev-Page")),
+		Link:     h.Get("Link"),
+	}
+	// Parse Link header for next/prev page numbers if present.
+	if p.Link != "" {
+		parseLinkHeader(&p)
+	}
+	return p
+}
+
+// parseLinkHeader extracts page numbers from an RFC 5988 Link header.
+// Example: <https://host/api/v1/workflow/?limit=20&offset=20>; rel="next"
+func parseLinkHeader(p *Pagination) {
+	for _, part := range strings.Split(p.Link, ",") {
+		part = strings.TrimSpace(part)
+		// Split into URL and params: <url>; rel="next"
+		segments := strings.SplitN(part, ";", 2)
+		if len(segments) != 2 {
+			continue
+		}
+		rel := ""
+		for _, param := range segments[1:] {
+			param = strings.TrimSpace(param)
+			if strings.HasPrefix(param, "rel=") {
+				rel = strings.Trim(strings.TrimPrefix(param, "rel="), `"`)
+			}
+		}
+		// Extract page/offset from the URL to determine page number.
+		urlPart := strings.TrimSpace(segments[0])
+		urlPart = strings.Trim(urlPart, "<>")
+		if parsed, err := url.Parse(urlPart); err == nil {
+			q := parsed.Query()
+			page := 0
+			if v := q.Get("page"); v != "" {
+				page, _ = strconv.Atoi(v)
+			} else if v := q.Get("offset"); v != "" {
+				offset, _ := strconv.Atoi(v)
+				limit := p.PerPage
+				if limit > 0 {
+					page = offset/limit + 1
+				}
+			}
+			if page > 0 {
+				switch rel {
+				case "next":
+					p.NextPage = page
+				case "prev":
+					p.PrevPage = page
+				}
+			}
+		}
+	}
+}
+
 // TagUntrusted adds a "_untrusted" key to data listing the names of fields that
 // contain externally-sourced, user-generated content. Callers must pass only the
 // inner data map (not the full envelope). Fields that do not exist in the map
@@ -420,6 +546,16 @@ func TagUntrusted(data map[string]any, fields ...string) {
 func (c *Client) Get(ctx context.Context, path string) ([]byte, error) {
 	data, _, _, err := c.restRequest(ctx, http.MethodGet, path, nil)
 	return data, err
+}
+
+// GetWithPagination sends a GET request and returns body + pagination metadata
+// from the response headers. Useful for list endpoints.
+func (c *Client) GetWithPagination(ctx context.Context, path string) ([]byte, Pagination, error) {
+	data, _, header, err := c.restRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, Pagination{}, err
+	}
+	return data, extractPagination(header), nil
 }
 
 // Post sends a POST request with Bearer token auth.

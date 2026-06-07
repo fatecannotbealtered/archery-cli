@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,14 +41,18 @@ var version = "dev"
 
 // Global flags.
 var (
-	jsonMode    = true
-	jsonAlias   bool
-	compactJSON bool
-	quietMode   bool
-	dryRun      bool
-	regionFlag  string
-	formatMode  = formatJSON
+	jsonMode       = true
+	jsonAlias      bool
+	compactJSON    bool
+	quietMode      bool
+	dryRun         bool
+	regionFlag     string
+	formatMode     = formatJSON
+	insecureTLS    bool
+	timeoutSeconds int
 )
+
+const defaultTimeoutSeconds = 30
 
 const (
 	formatJSON = "json"
@@ -110,6 +115,8 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&quietMode, "quiet", false, "Suppress non-JSON stdout output (for scripts and AI Agents)")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Show what would be done without executing")
 	rootCmd.PersistentFlags().StringVar(&regionFlag, "region", "", "Override active region (default: config default_region)")
+	rootCmd.PersistentFlags().BoolVar(&insecureTLS, "insecure", false, "Skip TLS certificate verification (corporate/self-signed CA)")
+	rootCmd.PersistentFlags().IntVar(&timeoutSeconds, "timeout", defaultTimeoutSeconds, "HTTP request timeout in seconds")
 	initConfirmFlag()
 
 	cobra.OnInitialize(func() {
@@ -123,6 +130,7 @@ func init() {
 		if err := applyFormatFlags(cmd); err != nil {
 			return err
 		}
+		initClientOptions(cmd)
 		return nil
 	}
 
@@ -469,4 +477,46 @@ func trim(s string) string {
 		s = s[:len(s)-1]
 	}
 	return s
+}
+
+// InsecureTLS returns true if --insecure is active (for doctor checks).
+func InsecureTLS() bool { return insecureTLS }
+
+func applyInsecureFromEnv() {
+	if insecureTLS {
+		return
+	}
+	v := strings.TrimSpace(os.Getenv("ARCHERY_CLI_INSECURE"))
+	if v == "1" || strings.EqualFold(v, "true") {
+		insecureTLS = true
+	}
+}
+
+func timeoutExplicitlySet(cmd *cobra.Command) bool {
+	f := cmd.Flags().Lookup("timeout")
+	return f != nil && f.Changed
+}
+
+func applyTimeoutFromEnv(cmd *cobra.Command) int {
+	if timeoutExplicitlySet(cmd) {
+		if timeoutSeconds > 0 {
+			return timeoutSeconds
+		}
+		return defaultTimeoutSeconds
+	}
+	if s := strings.TrimSpace(os.Getenv("ARCHERY_CLI_TIMEOUT")); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultTimeoutSeconds
+}
+
+func initClientOptions(cmd *cobra.Command) {
+	applyInsecureFromEnv()
+	sec := applyTimeoutFromEnv(cmd)
+	api.SetClientOptions(api.ClientOptions{
+		Timeout:            time.Duration(sec) * time.Second,
+		InsecureSkipVerify: insecureTLS,
+	})
 }

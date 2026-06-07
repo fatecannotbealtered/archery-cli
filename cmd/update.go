@@ -25,9 +25,13 @@ import (
 )
 
 const (
-	updateDefaultRepo = "fatecannotbealtered/archery-cli"
-	updateBinaryName  = "archery-cli"
-	updateAPIBaseURL  = "https://api.github.com"
+	updateDefaultRepo  = "fatecannotbealtered/archery-cli"
+	updateBinaryName   = "archery-cli"
+	updateAPIBaseURL   = "https://api.github.com"
+	updateNPMPackage   = "@fatecannotbealtered/archery-cli"
+	updatePipPackage   = "archery-cli"
+	updateChannelStable = "stable"
+	updateChannelCanary = "canary"
 )
 
 var updateCmd = &cobra.Command{
@@ -64,6 +68,8 @@ type updatePlan struct {
 	ChecksumURL     string
 	UpdateAvailable bool
 	Downgrade       bool
+	InstallMethod   string
+	Channel         string
 }
 
 type updateApplyResult struct {
@@ -86,6 +92,7 @@ func init() {
 	updateCmd.Flags().Bool("check", false, "Check for an available update without installing")
 	updateCmd.Flags().String("target-version", "", "Install a specific version (for example 1.2.3 or v1.2.3)")
 	updateCmd.Flags().Bool("reinstall", false, "Install even when the target version matches the current version")
+	updateCmd.Flags().String("channel", updateChannelStable, "Release channel: stable or canary")
 	markWrite(updateCmd)
 	markConfirm(updateCmd)
 	markRiskLevel(updateCmd, "medium")
@@ -95,6 +102,13 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	checkOnly, _ := cmd.Flags().GetBool("check")
 	targetVersion, _ := cmd.Flags().GetString("target-version")
 	reinstall, _ := cmd.Flags().GetBool("reinstall")
+	channel, _ := cmd.Flags().GetString("channel")
+	if channel != updateChannelStable && channel != updateChannelCanary {
+		return failArg("invalid channel: must be 'stable' or 'canary'")
+	}
+
+	exePath, _ := updateExecutable()
+	installMethod := detectInstallMethod(exePath)
 
 	release, err := fetchUpdateRelease(cmd.Context(), targetVersion)
 	if err != nil {
@@ -105,6 +119,8 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return failArg(err.Error())
 	}
+	plan.InstallMethod = installMethod
+	plan.Channel = channel
 
 	result := updateResultMap(plan, updateStatus(plan, targetVersion))
 	if plan.Downgrade {
@@ -122,12 +138,21 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
+	if installMethod == "npm" || installMethod == "pip" {
+		cmd := updateInstallCommand(installMethod, plan.TargetVersion)
+		result["status"] = "package_manager_required"
+		result["command"] = cmd
+		printUpdateResult(result)
+		return nil
+	}
+
 	confirmPayload := map[string]any{
 		"currentVersion": plan.CurrentVersion,
 		"targetVersion":  plan.TargetVersion,
 		"assetName":      plan.AssetName,
 		"assetURL":       plan.AssetURL,
 		"reinstall":      reinstall,
+		"channel":        channel,
 	}
 	if dryRun {
 		confirmToken, expires := newConfirmToken("update archery-cli", "", confirmPayload)
@@ -146,9 +171,8 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	exe, err := updateExecutable()
-	if err != nil {
-		return failWithCode("resolving current executable: "+err.Error(), ExitNetwork, output.E_NETWORK)
+	if err := ensureExecutable(exePath); err != nil {
+		return err
 	}
 
 	tmpDir, err := os.MkdirTemp("", "archery-cli-update-*")
@@ -175,7 +199,7 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 		return failWithCode("extracting archive: "+err.Error(), ExitNetwork, output.E_NETWORK)
 	}
 
-	applied, err := updateApply(binPath, exe)
+	applied, err := updateApply(binPath, exePath)
 	if err != nil {
 		return failWithCode("installing update: "+err.Error(), ExitNetwork, output.E_NETWORK)
 	}
@@ -562,14 +586,17 @@ func copyFile(src, dst string, mode os.FileMode) error {
 }
 
 func updateResultMap(plan updatePlan, status string) map[string]any {
-	return map[string]any{
+	result := map[string]any{
 		"status":          status,
 		"currentVersion":  plan.CurrentVersion,
 		"targetVersion":   plan.TargetVersion,
 		"updateAvailable": plan.UpdateAvailable,
 		"releaseUrl":      plan.ReleaseURL,
 		"asset":           plan.AssetName,
+		"installMethod":   plan.InstallMethod,
+		"channel":         plan.Channel,
 	}
+	return result
 }
 
 func printUpdateResult(result map[string]any) {
@@ -580,6 +607,7 @@ func printUpdateResult(result map[string]any) {
 	status, _ := result["status"].(string)
 	current, _ := result["currentVersion"].(string)
 	target, _ := result["targetVersion"].(string)
+	command, _ := result["command"].(string)
 	switch status {
 	case "up_to_date":
 		output.Success(fmt.Sprintf("archery-cli is up to date (%s)", current))
@@ -595,8 +623,91 @@ func printUpdateResult(result map[string]any) {
 		output.Success(fmt.Sprintf("Updated archery-cli to %s", target))
 	case "scheduled":
 		output.Success(fmt.Sprintf("Update to %s scheduled; restart the command after this process exits", target))
+	case "package_manager_required":
+		output.Warn(fmt.Sprintf("archery-cli is managed by a package manager; run the suggested command to update to %s", target))
+		if command != "" {
+			output.Gray("  " + command)
+		}
 	default:
 		output.Info(fmt.Sprintf("Update status: %s", status))
+	}
+}
+
+func ensureExecutable(path string) error {
+	if path == "" {
+		return failWithCode("could not determine current executable path", ExitNetwork, output.E_NETWORK)
+	}
+	return nil
+}
+
+func detectInstallMethod(exe string) string {
+	exe = filepath.Clean(exe)
+	if exe != "" && pathHasSegment(exe, "node_modules") && npmPackageRoot(exe) != "" {
+		return "npm"
+	}
+	if isPipOrVenvPath(exe) {
+		return "pip"
+	}
+	return "binary"
+}
+
+func pathHasSegment(path, segment string) bool {
+	for _, part := range strings.FieldsFunc(filepath.Clean(path), func(r rune) bool {
+		return r == os.PathSeparator || r == '/' || r == '\\'
+	}) {
+		if part == segment {
+			return true
+		}
+	}
+	return false
+}
+
+func npmPackageRoot(exe string) string {
+	for dir := filepath.Dir(exe); dir != "." && dir != string(filepath.Separator); dir = filepath.Dir(dir) {
+		data, err := os.ReadFile(filepath.Join(dir, "package.json"))
+		if err == nil {
+			var pkg struct {
+				Name string `json:"name"`
+			}
+			if json.Unmarshal(data, &pkg) == nil && pkg.Name == updateNPMPackage {
+				return dir
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+	}
+	return ""
+}
+
+func isPipOrVenvPath(exe string) bool {
+	exe = filepath.Clean(exe)
+	lower := strings.ToLower(exe)
+	if pathHasSegment(exe, "site-packages") {
+		return true
+	}
+	if pathHasSegment(exe, "venv") || pathHasSegment(exe, ".venv") {
+		return true
+	}
+	if strings.Contains(lower, "pip") || strings.Contains(lower, "conda") {
+		return true
+	}
+	if pathHasSegment(exe, "lib") && pathHasSegment(exe, "python") {
+		return true
+	}
+	return false
+}
+
+func updateInstallCommand(method, targetVersion string) string {
+	v := normalizeVersion(targetVersion)
+	switch method {
+	case "npm":
+		return "npm install -g " + updateNPMPackage + "@" + v
+	case "pip":
+		return "pip install --upgrade " + updatePipPackage + "==" + v
+	default:
+		return ""
 	}
 }
 

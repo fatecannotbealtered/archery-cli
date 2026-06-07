@@ -27,15 +27,16 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 		Fix    *string `json:"fix"`
 	}
 	type doctorResult struct {
-		Version      string        `json:"version"`
-		Checks       []doctorCheck `json:"checks"`
-		ConfigExists bool          `json:"configExists"`
-		AuthValid    bool          `json:"authValid"`
-		LatencyMs    int64         `json:"latencyMs"`
-		Region       string        `json:"region,omitempty"`
-		URL          string        `json:"url,omitempty"`
-		Username     string        `json:"username,omitempty"`
-		Error        string        `json:"error,omitempty"`
+		Version         string        `json:"version"`
+		Checks          []doctorCheck `json:"checks"`
+		ConfigExists    bool          `json:"configExists"`
+		AuthValid       bool          `json:"authValid"`
+		LatencyMs       int64         `json:"latencyMs"`
+		Region          string        `json:"region,omitempty"`
+		URL             string        `json:"url,omitempty"`
+		Username        string        `json:"username,omitempty"`
+		CredentialStore string        `json:"credentialStore,omitempty"`
+		Error           string        `json:"error,omitempty"`
 	}
 
 	result := doctorResult{Version: version}
@@ -84,7 +85,26 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	result.ConfigExists = true
 	result.URL = region.URL
 	result.Username = region.Username
+	result.CredentialStore = config.CredentialStoreLabel(cfg)
 	check("config", "pass", "")
+
+	// TLS security check
+	if InsecureTLS() {
+		check("tls", "warning", "TLS certificate verification is disabled (--insecure); re-enable for production use")
+	} else {
+		check("tls", "pass", "")
+	}
+
+	// Credential store check
+	storeLabel := result.CredentialStore
+	if storeLabel == "" {
+		storeLabel = "file"
+	}
+	if config.KeyringAvailable() {
+		check("credential-store", storeLabel+" (OS keyring available)", "")
+	} else {
+		check("credential-store", storeLabel+" (OS keyring unavailable, using plaintext fallback)", "")
+	}
 
 	// Test connectivity by attempting to authenticate or verify token
 	client := api.NewClient(region.URL)
@@ -186,6 +206,9 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	output.Gray("  ────────────────────────────────────────")
 	fmt.Println()
 	output.Success("Config found")
+	if InsecureTLS() {
+		output.Warn("TLS verification disabled (--insecure)")
+	}
 	if result.AuthValid {
 		output.Success("JWT token valid")
 	}
@@ -193,6 +216,7 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	if result.Username != "" {
 		output.Success(fmt.Sprintf("Authenticated as %s", result.Username))
 	}
+	output.Gray(fmt.Sprintf("  Credential store: %s", storeLabel))
 	if result.LatencyMs >= 0 {
 		output.Gray(fmt.Sprintf("  Latency: %dms", result.LatencyMs))
 	}

@@ -230,7 +230,11 @@ func doAuthLogin(regionName, username, password string) error {
 
 	fmt.Println()
 	output.Success(fmt.Sprintf("Logged in to %s (region: %s)", region.URL, regionName))
-	output.Info("JWT tokens cached in config")
+	storeLabel := config.CredentialStoreLabel(cfg)
+	if storeLabel == "" {
+		storeLabel = config.CredentialStoreFile
+	}
+	output.Info(fmt.Sprintf("JWT tokens cached (%s)", storeLabel))
 	fmt.Println()
 	output.Gray("  Try: archery-cli doctor")
 	fmt.Println()
@@ -254,7 +258,10 @@ func runAuthLogout(_ *cobra.Command, _ []string) error {
 		return failNotFound(fmt.Sprintf("region %q not found", regionName))
 	}
 
-	// Clear tokens but keep URL and credentials
+	// Clear tokens from keyring and config
+	ts := config.NewTokenStore()
+	_ = ts.DeleteTokens(regionName, region.Username)
+
 	region.AccessToken = ""
 	region.RefreshToken = ""
 	cfg.Regions[regionName] = region
