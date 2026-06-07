@@ -5,3 +5,4 @@ node_modules/
 *.new
 .env
 .archery-cli/
+.idea/
