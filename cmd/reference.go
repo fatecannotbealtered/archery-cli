@@ -40,51 +40,71 @@ type refFlag struct {
 
 // refCommand is a node in the machine-readable command tree.
 type refCommand struct {
-	Name                 string       `json:"name"`
-	Path                 string       `json:"path,omitempty"`
-	Use                  string       `json:"use"`
-	Short                string       `json:"short,omitempty"`
-	Write                bool         `json:"write,omitempty"`
-	RequiresConfirmation bool         `json:"requiresConfirmation,omitempty"`
-	RiskLevel            string       `json:"riskLevel,omitempty"`
-	BlastRadius          string       `json:"blastRadius,omitempty"`
-	OutputType           string       `json:"outputType,omitempty"`
-	Formats              []string     `json:"formats,omitempty"`
-	PositionalArgs       []string     `json:"positionalArgs,omitempty"`
-	SupportsFields       bool         `json:"supportsFields,omitempty"`
-	Flags                []refFlag    `json:"flags,omitempty"`
-	Commands             []refCommand `json:"commands,omitempty"`
+	Name                 string         `json:"name"`
+	Path                 string         `json:"path,omitempty"`
+	Use                  string         `json:"use"`
+	Short                string         `json:"short,omitempty"`
+	Write                bool           `json:"write,omitempty"`
+	RequiresConfirmation bool           `json:"requiresConfirmation,omitempty"`
+	RequiresDangerous    bool           `json:"requiresDangerous,omitempty"`
+	RiskLevel            string         `json:"riskLevel,omitempty"`
+	BlastRadius          string         `json:"blastRadius,omitempty"`
+	OutputType           string         `json:"outputType,omitempty"`
+	Formats              []string       `json:"formats,omitempty"`
+	PositionalArgs       []string       `json:"positionalArgs,omitempty"`
+	SupportsFields       bool           `json:"supportsFields,omitempty"`
+	OutputSchema         map[string]any `json:"output_schema,omitempty"`
+	Flags                []refFlag      `json:"flags,omitempty"`
+	Commands             []refCommand   `json:"commands,omitempty"`
+}
+
+// refErrorCode describes a stable machine-readable error code.
+type refErrorCode struct {
+	ExitCode  int    `json:"exit_code"`
+	Retryable bool   `json:"retryable"`
+	Hint      string `json:"hint,omitempty"`
 }
 
 // refTree is the root JSON document for `reference --json`.
 type refTree struct {
-	Tool          string         `json:"tool"`
-	Version       string         `json:"version"`
-	SecurityTier  string         `json:"security_tier"`
-	GlobalFlags   []refFlag      `json:"globalFlags"`
-	ExitCodes     map[int]string `json:"exitCodes"`
-	Commands      []refCommand   `json:"commands"`
+	Tool             string                  `json:"tool"`
+	Version          string                  `json:"version"`
+	SecurityTier     string                  `json:"security_tier"`
+	GlobalFlags      []refFlag               `json:"globalFlags"`
+	GlobalFlagsSnake []refFlag               `json:"global_flags"`
+	ExitCodes        map[int]string          `json:"exitCodes"`
+	ExitCodesSnake   map[int]string          `json:"exit_codes"`
+	ErrorCodes       map[string]refErrorCode `json:"errorCodes"`
+	ErrorCodesSnake  map[string]refErrorCode `json:"error_codes"`
+	Commands         []refCommand            `json:"commands"`
 }
 
 var positionalArgRe = regexp.MustCompile(`<([^>]+)>`)
 
 func buildReferenceTree(root *cobra.Command) refTree {
+	exitCodes := map[int]string{
+		0: "success",
+		1: "error",
+		2: "bad_args",
+		3: "not_found",
+		4: "auth_or_permission",
+		5: "confirm_required",
+		6: "conflict",
+		7: "retryable",
+		8: "timeout",
+	}
+	globalFlags := collectPersistentRefFlags(root)
+	errorCodes := referenceErrorCodes()
 	tree := refTree{
-		Tool:          "archery-cli",
-		Version:       root.Version,
-		SecurityTier:  "T1",
-		GlobalFlags:   collectPersistentRefFlags(root),
-		ExitCodes: map[int]string{
-			0: "success",
-			1: "error",
-			2: "bad_args",
-			3: "not_found",
-			4: "auth_or_permission",
-			5: "confirm_required",
-			6: "conflict",
-			7: "retryable",
-			8: "timeout",
-		},
+		Tool:             "archery-cli",
+		Version:          root.Version,
+		SecurityTier:     "T2",
+		GlobalFlags:      globalFlags,
+		GlobalFlagsSnake: globalFlags,
+		ExitCodes:        exitCodes,
+		ExitCodesSnake:   exitCodes,
+		ErrorCodes:       errorCodes,
+		ErrorCodesSnake:  errorCodes,
 	}
 	children := root.Commands()
 	sort.Slice(children, func(i, j int) bool {
@@ -129,6 +149,7 @@ func commandToRef(cmd *cobra.Command, prefix, pathPrefix string) refCommand {
 		node.Write = cmd.Annotations["write"] == "true"
 		node.RequiresConfirmation = cmd.Annotations["confirm"] == "true"
 		node.RiskLevel = cmd.Annotations["riskLevel"]
+		node.RequiresDangerous = requiresDangerousGate(cmd)
 		node.OutputType = cmd.Annotations["outputType"]
 	}
 	// Derive blast radius from write flag and risk level (SEC-SPEC §3).
@@ -156,8 +177,42 @@ func commandToRef(cmd *cobra.Command, prefix, pathPrefix string) refCommand {
 			node.OutputType = "json"
 		}
 		node.Formats = commandOutputFormats(cmd)
+		node.OutputSchema = map[string]any{
+			"envelope": "success",
+			"type":     "object",
+		}
 	}
 	return node
+}
+
+func referenceErrorCodes() map[string]refErrorCode {
+	codes := []struct {
+		code output.ErrorCode
+		exit int
+	}{
+		{output.E_CONFIG, ExitAuth},
+		{output.E_AUTH, ExitAuth},
+		{output.E_FORBIDDEN, ExitForbidden},
+		{output.E_NOT_FOUND, ExitNotFound},
+		{output.E_USAGE, ExitBadArgs},
+		{output.E_VALIDATION, ExitBadArgs},
+		{output.E_CONFIRMATION_REQUIRED, ExitConfirm},
+		{output.E_CONFLICT, ExitConflict},
+		{output.E_RATE_LIMIT, ExitRateLimit},
+		{output.E_SERVER, ExitNetwork},
+		{output.E_NETWORK, ExitNetwork},
+		{output.E_TIMEOUT, ExitTimeout},
+		{output.E_UNKNOWN, ExitError},
+	}
+	out := make(map[string]refErrorCode, len(codes))
+	for _, c := range codes {
+		out[string(c.code)] = refErrorCode{
+			ExitCode:  c.exit,
+			Retryable: output.RetryableErrorCode(c.code),
+			Hint:      output.HintForErrorCode(c.code),
+		}
+	}
+	return out
 }
 
 func parsePositionalArgs(use string) []string {
@@ -234,9 +289,9 @@ func printReference(cmd *cobra.Command, root *cobra.Command) {
 	lines = append(lines, "# archery-cli Command Reference")
 	lines = append(lines, "")
 	lines = append(lines, fmt.Sprintf("Version: %s", root.Version))
-	lines = append(lines, "Security Tier: T1 (Medium)")
+	lines = append(lines, "Security Tier: T2 (High)")
 	lines = append(lines, "")
-	lines = append(lines, "Legend: **write** = mutates Archery state; **confirm** = requires `--dry-run` then `--confirm <confirm_token>`; **output** = default stdout type.")
+	lines = append(lines, "Legend: **write** = mutates Archery state; **confirm** = requires `--dry-run` then `--confirm <confirm_token>`; **dangerous** = high/critical write requiring `--dangerous` in both steps; **output** = default stdout type.")
 	lines = append(lines, "")
 
 	walkCommands(root, &lines, "")
@@ -268,6 +323,9 @@ func walkCommands(cmd *cobra.Command, lines *[]string, prefix string) {
 			}
 			if cmd.Annotations["confirm"] == "true" {
 				meta = append(meta, "confirm")
+			}
+			if requiresDangerousGate(cmd) {
+				meta = append(meta, "dangerous")
 			}
 			if rl := cmd.Annotations["riskLevel"]; rl != "" {
 				meta = append(meta, "risk="+rl)

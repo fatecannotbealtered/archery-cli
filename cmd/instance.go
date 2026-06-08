@@ -75,6 +75,7 @@ func init() {
 	instanceCmd.AddCommand(instanceUpdateCmd)
 	markWrite(instanceUpdateCmd)
 	markConfirm(instanceUpdateCmd)
+	markRiskLevel(instanceUpdateCmd, "high")
 
 	// instance delete
 	instanceCmd.AddCommand(instanceDeleteCmd)
@@ -146,7 +147,7 @@ var instanceListCmd = &cobra.Command{
 			Results  []instanceResult `json:"results"`
 		}
 		if err := json.Unmarshal(data, &page); err != nil {
-			return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+			return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 		}
 
 		if jsonMode {
@@ -217,7 +218,7 @@ var instanceDetailCmd = &cobra.Command{
 
 		var inst instanceResult
 		if err := json.Unmarshal(data, &inst); err != nil {
-			return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+			return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 		}
 
 		if jsonMode {
@@ -298,7 +299,7 @@ var instanceResourceCmd = &cobra.Command{
 			fields := getFieldsFlag(cmd)
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 			}
 			// Try to extract the list from the response
 			items := extractResourceItems(raw)
@@ -368,7 +369,7 @@ var instanceDescribeCmd = &cobra.Command{
 			fields := getFieldsFlag(cmd)
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 			}
 			if cols, ok := raw.([]any); ok {
 				for _, col := range cols {
@@ -398,8 +399,8 @@ var instanceDescribeCmd = &cobra.Command{
 		if err := json.Unmarshal(data, &rows); err != nil {
 			// Try internal response format
 			var resp struct {
-				Status int    `json:"status"`
-				Msg    string `json:"msg"`
+				Status int             `json:"status"`
+				Msg    string          `json:"msg"`
 				Data   json.RawMessage `json:"data"`
 			}
 			if err2 := json.Unmarshal(data, &resp); err2 == nil && resp.Data != nil {
@@ -454,11 +455,6 @@ var instanceCreateCmd = &cobra.Command{
 		dbName, _ := cmd.Flags().GetString("db")
 		charset, _ := cmd.Flags().GetString("charset")
 
-		client, _, _, err := newClient()
-		if err != nil {
-			return err
-		}
-
 		payload := map[string]any{
 			"instance_name": name,
 			"type":          0, // 0=master in Archery
@@ -484,15 +480,35 @@ var instanceCreateCmd = &cobra.Command{
 		}
 
 		detail := map[string]any{
-			"name":    name,
-			"type":    instanceType,
-			"dbType":  dbType,
-			"host":    host,
-			"port":    port,
-			"user":    user,
+			"name":   name,
+			"type":   instanceType,
+			"dbType": dbType,
+			"host":   host,
+			"port":   port,
+			"user":   user,
 		}
-		if markDryRunOrConfirm("create instance", detail) {
+		if password != "" {
+			detail["password"] = "***"
+		}
+		if mode != "" {
+			detail["mode"] = mode
+		}
+		if dbName != "" {
+			detail["db"] = dbName
+		}
+		if charset != "" {
+			detail["charset"] = charset
+		}
+		confirmPayload := map[string]any{
+			"payload": payload,
+		}
+		if markDryRunOrConfirmWithPayload("create instance", detail, confirmPayload) {
 			return nil
+		}
+
+		client, _, _, err := newClient()
+		if err != nil {
+			return err
 		}
 
 		path := client.APIPath("/v1/instance/")
@@ -503,7 +519,7 @@ var instanceCreateCmd = &cobra.Command{
 
 		var inst instanceResult
 		if err := json.Unmarshal(data, &inst); err != nil {
-			return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+			return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 		}
 
 		if jsonMode {
@@ -523,11 +539,6 @@ var instanceUpdateCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		id, err := parseInstanceID(args[0])
-		if err != nil {
-			return err
-		}
-
-		client, _, _, err := newClient()
 		if err != nil {
 			return err
 		}
@@ -561,8 +572,17 @@ var instanceUpdateCmd = &cobra.Command{
 				detail[k] = "***"
 			}
 		}
-		if markDryRunOrConfirm("update instance", detail) {
+		confirmPayload := map[string]any{
+			"instanceId": id,
+			"payload":    payload,
+		}
+		if markDryRunOrConfirmWithPayload("update instance", detail, confirmPayload) {
 			return nil
+		}
+
+		client, _, _, err := newClient()
+		if err != nil {
+			return err
 		}
 
 		path := client.APIPath(fmt.Sprintf("/v1/instance/%s/", id))
@@ -573,7 +593,7 @@ var instanceUpdateCmd = &cobra.Command{
 
 		var inst instanceResult
 		if err := json.Unmarshal(data, &inst); err != nil {
-			return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+			return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 		}
 
 		if jsonMode {
@@ -597,13 +617,13 @@ var instanceDeleteCmd = &cobra.Command{
 			return err
 		}
 
+		if markDryRunOrConfirm("delete instance", map[string]any{"instanceId": id}) {
+			return nil
+		}
+
 		client, _, _, err := newClient()
 		if err != nil {
 			return err
-		}
-
-		if markDryRunOrConfirm("delete instance", map[string]any{"instanceId": id}) {
-			return nil
 		}
 
 		path := client.APIPath(fmt.Sprintf("/v1/instance/%s/", id))
@@ -652,7 +672,7 @@ var instanceTableInstancesCmd = &cobra.Command{
 			fields := getFieldsFlag(cmd)
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 			}
 			// Try to parse as list of instances
 			var instances []instanceResult
@@ -665,7 +685,7 @@ var instanceTableInstancesCmd = &cobra.Command{
 					instances = page.Results
 				} else {
 					// Return raw
-					output.PrintJSON(raw)
+					output.PrintJSON(normalizeAgentValue(raw))
 					return nil
 				}
 			}
@@ -742,19 +762,19 @@ var instanceUsersCmd = &cobra.Command{
 			fields := getFieldsFlag(cmd)
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 			}
 			// Try to extract rows from internal response format
 			var resp struct {
 				Status int    `json:"status"`
 				Msg    string `json:"msg"`
 				Data   struct {
-					Total int    `json:"total"`
+					Total int              `json:"total"`
 					Rows  []map[string]any `json:"rows"`
 				} `json:"data"`
 			}
 			if err := json.Unmarshal(data, &resp); err == nil && len(resp.Data.Rows) > 0 {
-				items := resp.Data.Rows
+				items := normalizeAgentRows(resp.Data.Rows)
 				if len(fields) > 0 {
 					filtered := make([]map[string]any, len(items))
 					for i, m := range items {
@@ -767,9 +787,9 @@ var instanceUsersCmd = &cobra.Command{
 			}
 			// Fallback: return raw
 			if m, ok := raw.(map[string]any); ok && len(fields) > 0 {
-				output.PrintJSON(output.FilterMap(m, fields))
+				output.PrintJSON(output.FilterMap(normalizeAgentMap(m), fields))
 			} else {
-				output.PrintJSON(raw)
+				output.PrintJSON(normalizeAgentValue(raw))
 			}
 			return nil
 		}
@@ -876,6 +896,7 @@ func instanceResultToMap(inst instanceResult) map[string]any {
 		m["instanceTag"] = inst.InstanceTag
 	}
 	m["isActive"] = inst.IsActive
+	tagCommonUntrusted(m)
 	return m
 }
 
@@ -903,7 +924,7 @@ func extractResourceItems(raw any) []map[string]any {
 		items := make([]map[string]any, 0, len(arr))
 		for _, v := range arr {
 			if m, ok := v.(map[string]any); ok {
-				items = append(items, m)
+				items = append(items, normalizeAgentMap(m))
 			}
 		}
 		return items

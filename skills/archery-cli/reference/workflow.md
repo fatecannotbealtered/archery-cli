@@ -93,8 +93,8 @@ archery-cli workflow audit 42 --action pass --remark "LGTM" --confirm ct_...
 ### Execute an approved workflow
 
 ```bash
-archery-cli workflow execute 42 --mode auto --dry-run
-archery-cli workflow execute 42 --mode auto --confirm ct_...
+archery-cli workflow execute 42 --mode auto --dangerous --dry-run
+archery-cli workflow execute 42 --mode auto --dangerous --confirm ct_...
 ```
 
 | Flag | Type | Required | Default | Description |
@@ -116,11 +116,11 @@ archery-cli workflow cancel 42 --remark "No longer needed" --confirm ct_...
 
 ```json
 {
-  "id": 42,
+  "id": "42",
   "name": "Add email index",
   "status": "workflow_finish",
   "engineer": "admin",
-  "instance": 1,
+  "instance": "1",
   "db_name": "mydb",
   "sql_content": "ALTER TABLE users ADD INDEX idx_email (email)",
   "create_time": "2024-06-15T10:30:00Z",
@@ -158,15 +158,15 @@ archery-cli workflow submit --name "Add note column" --instance 1 --db mydb \
 archery-cli workflow detail 42
 
 # 4. Execute after approval
-archery-cli workflow execute 42 --mode auto --dry-run
-archery-cli workflow execute 42 --mode auto --confirm ct_...
+archery-cli workflow execute 42 --mode auto --dangerous --dry-run
+archery-cli workflow execute 42 --mode auto --dangerous --confirm ct_...
 ```
 
 ## Notes
 
 - `workflow list` supports `--fields` for output trimming in JSON mode
 - `workflow submit` returns `workflowId` and `url` in the response
-- `workflow execute` risk level is **high** -- always confirm with user before executing
+- `workflow execute` risk level is **high** -- requires `--dangerous` in both dry-run and confirm steps
 - `workflow audit` action must be exactly `pass` or `cancel`
 - Workflow status values: `workflow_manconfirming`, `workflow_finish`, `audit_abort`, `workflow_executing`, etc.
 - All write operations are audit-logged to `~/.archery-cli/audit/`

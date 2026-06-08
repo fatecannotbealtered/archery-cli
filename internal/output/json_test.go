@@ -161,7 +161,7 @@ func TestRetryableErrorCode(t *testing.T) {
 		}
 	}
 
-	nonRetryable := []ErrorCode{E_CONFIG, E_AUTH, E_FORBIDDEN, E_NOT_FOUND, E_BAD_ARGS, E_VALIDATION, E_CONFIRM_REQUIRED, E_CONFLICT, E_UNKNOWN}
+	nonRetryable := []ErrorCode{E_CONFIG, E_AUTH, E_FORBIDDEN, E_NOT_FOUND, E_USAGE, E_VALIDATION, E_CONFIRMATION_REQUIRED, E_CONFLICT, E_UNKNOWN}
 	for _, code := range nonRetryable {
 		if RetryableErrorCode(code) {
 			t.Errorf("RetryableErrorCode(%s) = true, want false", code)
@@ -171,8 +171,8 @@ func TestRetryableErrorCode(t *testing.T) {
 
 func TestHintForErrorCode(t *testing.T) {
 	allCodes := []ErrorCode{
-		E_CONFIG, E_AUTH, E_FORBIDDEN, E_NOT_FOUND, E_BAD_ARGS,
-		E_VALIDATION, E_CONFIRM_REQUIRED, E_CONFLICT, E_RATE_LIMIT,
+		E_CONFIG, E_AUTH, E_FORBIDDEN, E_NOT_FOUND, E_USAGE,
+		E_VALIDATION, E_CONFIRMATION_REQUIRED, E_CONFLICT, E_RATE_LIMIT,
 		E_SERVER, E_NETWORK, E_TIMEOUT,
 	}
 	for _, code := range allCodes {
@@ -221,4 +221,3 @@ func TestEmitErrorPayload_Fallback(t *testing.T) {
 		t.Errorf("fallback stderr = %q", stderr)
 	}
 }
-

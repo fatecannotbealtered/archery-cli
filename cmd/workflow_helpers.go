@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -196,29 +197,30 @@ func printSQLCheckResults(results []api.SQLCheckResult) {
 
 func workflowToMap(w api.SQLWorkflow, host string) map[string]any {
 	m := map[string]any{
-		"id":         w.ID,
+		"id":         strconv.Itoa(w.ID),
 		"title":      w.Title,
 		"status":     w.Status,
 		"engineer":   w.Engineer,
-		"instanceId": w.InstanceID,
+		"instanceId": strconv.Itoa(w.InstanceID),
 		"db":         w.DBName,
 		"created":    w.CreateDate,
 	}
 	if host != "" {
 		m["webUrl"] = host + fmt.Sprintf("/sqlworkflow/%d/", w.ID)
 	}
-	return m
+	api.TagUntrusted(m, "title")
+	return normalizeAgentMap(m)
 }
 
 func workflowDetailToMap(d *api.SQLWorkflowDetail, host string) map[string]any {
 	m := map[string]any{
-		"id":         d.ID,
+		"id":         strconv.Itoa(d.ID),
 		"title":      d.Title,
 		"status":     d.Status,
 		"engineer":   d.Engineer,
-		"instanceId": d.InstanceID,
+		"instanceId": strconv.Itoa(d.InstanceID),
 		"db":         d.DBName,
-		"groupId":    d.GroupID,
+		"groupId":    strconv.Itoa(d.GroupID),
 		"sql":        d.SQLContent,
 		"created":    d.CreateDate,
 	}
@@ -241,8 +243,8 @@ func workflowDetailToMap(d *api.SQLWorkflowDetail, host string) map[string]any {
 		m["auditLog"] = logs
 	}
 	// Tag externally-sourced fields as untrusted (SEC-SPEC §2).
-	api.TagUntrusted(m, "sql", "auditLog", "demandUrl")
-	return m
+	api.TagUntrusted(m, "title", "sql", "auditLog", "demandUrl")
+	return normalizeAgentMap(m)
 }
 
 // ─── Status display helpers ─────────────────────────────────────────────────

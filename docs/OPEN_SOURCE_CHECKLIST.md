@@ -9,11 +9,11 @@ Security and compliance gate before the first public push.
 - [ ] Config file template (`config.example.json`) has placeholder values only
 - [ ] `.gitignore` excludes `config.json`, `.env`, and other credential files
 - [ ] SECURITY.md is present with vulnerability reporting instructions
-- [ ] `docs/SECURITY-TIER.md` documents risk classification and known gaps
+- [ ] `docs/SECURITY-TIER.md` documents risk classification and keyring-only credential storage
 
 ## Dependencies
 
-- [ ] All dependencies audited (`go mod tidy && go vet ./...`)
+- [ ] All dependencies audited (`go mod tidy && go vet ./...`; `npm audit --audit-level=high`)
 - [ ] No known CVEs in dependencies (check with `govulncheck ./...`)
 - [ ] LICENSE file is present and correct
 - [ ] All transitive dependencies are compatible with the project license
@@ -35,5 +35,6 @@ Security and compliance gate before the first public push.
 ## CI/CD
 
 - [ ] CI pipeline runs tests on pull requests
+- [ ] CI runs lockfile install and high-severity npm audit
 - [ ] Release pipeline builds binaries for all supported platforms
 - [ ] No secrets in CI configuration files

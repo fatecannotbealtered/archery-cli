@@ -35,6 +35,41 @@ func TestFilterMap_IgnoresUnknown(t *testing.T) {
 	}
 }
 
+func TestFilterMap_PreservesMatchingUntrustedFields(t *testing.T) {
+	m := map[string]any{
+		"id":         "1",
+		"sql":        "select 1",
+		"message":    "check this",
+		"_untrusted": []string{"sql", "message"},
+	}
+	out := FilterMap(m, []string{"SQL"})
+	if out["sql"] != "select 1" {
+		t.Fatalf("sql = %v, want select 1", out["sql"])
+	}
+	if _, ok := out["message"]; ok {
+		t.Fatalf("message should be filtered out: %v", out)
+	}
+	raw, ok := out["_untrusted"].([]string)
+	if !ok {
+		t.Fatalf("_untrusted = %T, want []string", out["_untrusted"])
+	}
+	if len(raw) != 1 || raw[0] != "sql" {
+		t.Fatalf("_untrusted = %v, want [sql]", raw)
+	}
+}
+
+func TestFilterMap_DropsUntrustedWhenNoSelectedFieldsMatch(t *testing.T) {
+	m := map[string]any{
+		"id":         "1",
+		"sql":        "select 1",
+		"_untrusted": []any{"sql"},
+	}
+	out := FilterMap(m, []string{"id"})
+	if _, ok := out["_untrusted"]; ok {
+		t.Fatalf("_untrusted should be omitted when selected fields are trusted: %v", out)
+	}
+}
+
 func TestWorkflowToMap_OmitsEmpty(t *testing.T) {
 	f := FlatWorkflow{ID: 1, Name: "deploy"}
 	m := WorkflowToMap(f)
@@ -61,8 +96,8 @@ func TestErrorCodeFromStatus(t *testing.T) {
 		429: E_RATE_LIMIT,
 		500: E_SERVER,
 		503: E_SERVER,
-		400: E_BAD_ARGS,
-		422: E_BAD_ARGS,
+		400: E_USAGE,
+		422: E_USAGE,
 		0:   E_UNKNOWN,
 	}
 	for status, want := range cases {
@@ -81,8 +116,8 @@ func TestErrorCodeFromStatus(t *testing.T) {
 
 func TestHintForErrorCode_AllCodesHaveHint(t *testing.T) {
 	codes := []ErrorCode{
-		E_CONFIG, E_AUTH, E_FORBIDDEN, E_NOT_FOUND, E_BAD_ARGS,
-		E_VALIDATION, E_CONFIRM_REQUIRED, E_CONFLICT, E_RATE_LIMIT,
+		E_CONFIG, E_AUTH, E_FORBIDDEN, E_NOT_FOUND, E_USAGE,
+		E_VALIDATION, E_CONFIRMATION_REQUIRED, E_CONFLICT, E_RATE_LIMIT,
 		E_SERVER, E_NETWORK, E_TIMEOUT,
 	}
 	for _, c := range codes {

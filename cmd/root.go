@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -46,6 +45,7 @@ var (
 	compactJSON    bool
 	quietMode      bool
 	dryRun         bool
+	dangerousMode  bool
 	regionFlag     string
 	formatMode     = formatJSON
 	insecureTLS    bool
@@ -101,11 +101,6 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
-	if version == "dev" {
-		if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
-			version = info.Main.Version
-		}
-	}
 	rootCmd.Version = version
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
 
@@ -114,6 +109,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&compactJSON, "compact", false, "Compact JSON (no indentation; only affects --format json)")
 	rootCmd.PersistentFlags().BoolVar(&quietMode, "quiet", false, "Suppress non-JSON stdout output (for scripts and AI Agents)")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Show what would be done without executing")
+	rootCmd.PersistentFlags().BoolVar(&dangerousMode, "dangerous", false, "Enable high/critical risk write commands; required in both dry-run and confirm steps")
 	rootCmd.PersistentFlags().StringVar(&regionFlag, "region", "", "Override active region (default: config default_region)")
 	rootCmd.PersistentFlags().BoolVar(&insecureTLS, "insecure", false, "Skip TLS certificate verification (corporate/self-signed CA)")
 	rootCmd.PersistentFlags().IntVar(&timeoutSeconds, "timeout", defaultTimeoutSeconds, "HTTP request timeout in seconds")
@@ -217,6 +213,10 @@ func exitCodeForStatus(status int) int {
 // The confirm token binds the command path (not the human-readable action) so that
 // token validation is tied to the exact command, not an arbitrary label.
 func dryRunOutput(action string, detail map[string]any) bool {
+	return dryRunOutputWithPayload(action, detail, detail)
+}
+
+func dryRunOutputWithPayload(action string, detail map[string]any, confirmPayload any) bool {
 	if !dryRun {
 		return false
 	}
@@ -232,11 +232,11 @@ func dryRunOutput(action string, detail map[string]any) bool {
 		if len(detail) > 0 {
 			changes = append(changes, detail)
 		}
-		region := ""
+		confirmCtx := ""
 		if cfg, err := config.Load(); err == nil {
-			region = activeRegionName(cfg)
+			confirmCtx = confirmContext(cfg)
 		}
-		token, expires := newConfirmToken(cmdPath, region, detail)
+		token, expires := newConfirmToken(cmdPath, confirmCtx, confirmPayload)
 		output.PrintJSON(map[string]any{
 			"preview": map[string]any{
 				"action":  action,
@@ -256,21 +256,79 @@ func dryRunOutput(action string, detail map[string]any) bool {
 // should return immediately (dry-run was shown, or an error was emitted).
 // The confirm token binds the command path, operation args, and region context.
 func markDryRunOrConfirm(action string, detail map[string]any) bool {
+	return markDryRunOrConfirmWithPayload(action, detail, detail)
+}
+
+func markDryRunOrConfirmWithPayload(action string, detail map[string]any, confirmPayload any) bool {
 	cmdPath := action
 	if activeCmd != nil {
 		cmdPath = activeCmd.CommandPath()
 	}
-	region := ""
-	if cfg, err := config.Load(); err == nil {
-		region = activeRegionName(cfg)
+	if requiresDangerousGate(activeCmd) {
+		if !dangerousMode {
+			return failDangerousRequired(activeCmd)
+		}
+		detail = withDangerousPreview(detail)
+		confirmPayload = map[string]any{
+			"dangerous": true,
+			"operation": confirmPayload,
+		}
 	}
-	if dryRunOutput(action, detail) {
+	confirmCtx := ""
+	if cfg, err := config.Load(); err == nil {
+		confirmCtx = confirmContext(cfg)
+	}
+	if dryRunOutputWithPayload(action, detail, confirmPayload) {
 		return true
 	}
-	if err := requireConfirm(activeCmd, cmdPath, region, detail); err != nil {
+	if err := requireConfirm(activeCmd, cmdPath, confirmCtx, confirmPayload); err != nil {
 		return true
 	}
 	return false
+}
+
+func requiresDangerousGate(cmd *cobra.Command) bool {
+	if cmd == nil || cmd.Annotations == nil || cmd.Annotations["write"] != "true" {
+		return false
+	}
+	risk := strings.ToLower(strings.TrimSpace(cmd.Annotations["riskLevel"]))
+	return risk == "high" || risk == "critical"
+}
+
+func failDangerousRequired(cmd *cobra.Command) bool {
+	name := "this command"
+	if cmd != nil {
+		name = cmd.CommandPath()
+	}
+	emitError(name+" is high risk and requires --dangerous in both dry-run and confirm steps", ExitConfirm, output.E_CONFIRMATION_REQUIRED)
+	return true
+}
+
+func withDangerousPreview(detail map[string]any) map[string]any {
+	out := make(map[string]any, len(detail)+1)
+	for k, v := range detail {
+		out[k] = v
+	}
+	out["dangerous"] = true
+	return out
+}
+
+func confirmContext(cfg *config.Config) string {
+	regionName := regionFlag
+	if regionName == "" && cfg != nil {
+		regionName = config.ActiveRegion(cfg)
+	}
+	if regionName == "" {
+		return ""
+	}
+	if cfg == nil {
+		return regionName
+	}
+	region, ok := cfg.Regions[regionName]
+	if !ok || strings.TrimSpace(region.Username) == "" {
+		return regionName
+	}
+	return regionName + "|" + strings.TrimSpace(region.Username)
 }
 
 func applyFormatFlags(cmd *cobra.Command) error {
@@ -354,9 +412,10 @@ func markWrite(cmd *cobra.Command) {
 		cmd.Annotations = map[string]string{}
 	}
 	cmd.Annotations["write"] = "true"
+	markConfirm(cmd)
 }
 
-// markConfirm marks commands that prompt for typed confirmation unless --force is set.
+// markConfirm marks commands that require the non-interactive dry-run/confirm flow.
 func markConfirm(cmd *cobra.Command) {
 	if cmd.Annotations == nil {
 		cmd.Annotations = map[string]string{}
@@ -424,6 +483,12 @@ func newClient() (*api.Client, *config.Config, *config.RegionConfig, error) {
 	client := api.NewClient(region.URL)
 	if region.AccessToken != "" {
 		client.SetTokens(region.AccessToken, region.RefreshToken)
+	} else if strings.TrimSpace(region.Username) != "" && strings.TrimSpace(region.Password) != "" {
+		accessToken, refreshToken, err := client.Auth.Login(apiCtx(), region.Username, region.Password)
+		if err != nil {
+			return nil, nil, nil, handleAPIError(err)
+		}
+		client.SetTokens(accessToken, refreshToken)
 	}
 	return client, cfg, &region, nil
 }

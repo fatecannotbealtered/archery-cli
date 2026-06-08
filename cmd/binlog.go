@@ -77,16 +77,16 @@ var binlogListCmd = &cobra.Command{
 		if jsonMode {
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 			}
-			output.PrintJSON(raw)
+			output.PrintJSON(normalizeAgentValue(raw))
 			return nil
 		}
 
 		// Text mode
 		var resp struct {
-			Status int    `json:"status"`
-			Msg    string `json:"msg"`
+			Status int              `json:"status"`
+			Msg    string           `json:"msg"`
 			Data   []map[string]any `json:"data"`
 		}
 		if err := json.Unmarshal(data, &resp); err != nil {
@@ -151,8 +151,8 @@ var binlogParseCmd = &cobra.Command{
 		threads, _ := cmd.Flags().GetInt("threads")
 
 		detail := map[string]any{
-			"instance":  instance,
-			"rollback":  rollback,
+			"instance": instance,
+			"rollback": rollback,
 		}
 		if startFile != "" {
 			detail["startFile"] = startFile
@@ -160,14 +160,32 @@ var binlogParseCmd = &cobra.Command{
 		if endFile != "" {
 			detail["endFile"] = endFile
 		}
+		if startPos > 0 {
+			detail["startPos"] = startPos
+		}
+		if endPos > 0 {
+			detail["endPos"] = endPos
+		}
 		if startTime != "" {
 			detail["startTime"] = startTime
 		}
 		if endTime != "" {
 			detail["endTime"] = endTime
 		}
+		if schemas != "" {
+			detail["schemas"] = schemas
+		}
 		if len(tables) > 0 {
 			detail["tables"] = tables
+		}
+		if len(sqlTypes) > 0 {
+			detail["sqlTypes"] = sqlTypes
+		}
+		if saveSQL {
+			detail["saveSql"] = true
+		}
+		if threads > 0 {
+			detail["threads"] = threads
 		}
 		if markDryRunOrConfirm("parse binlog", detail) {
 			return nil
@@ -226,14 +244,14 @@ var binlogParseCmd = &cobra.Command{
 		if jsonMode {
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 			}
 			if m, ok := raw.(map[string]any); ok {
 				if dataMap, ok := m["data"].(map[string]any); ok {
 					api.TagUntrusted(dataMap, "sqls", "full_sqls")
 				}
 			}
-			output.PrintJSON(raw)
+			output.PrintJSON(normalizeAgentValue(raw))
 			return nil
 		}
 
@@ -298,8 +316,8 @@ var binlogPurgeCmd = &cobra.Command{
 		}
 
 		form := url.Values{
-			"instance_id":   {instance},
-			"binlog":        {binlogFile},
+			"instance_id": {instance},
+			"binlog":      {binlogFile},
 		}
 
 		data, err := client.InternalPost(apiCtx(), "/binlog/del_log/", form)
@@ -310,12 +328,12 @@ var binlogPurgeCmd = &cobra.Command{
 		if jsonMode {
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 			}
 			output.PrintJSON(map[string]any{
-				"purged":        true,
-				"instance":      instance,
-				"binlog":        binlogFile,
+				"purged":   true,
+				"instance": instance,
+				"binlog":   binlogFile,
 			})
 			return nil
 		}

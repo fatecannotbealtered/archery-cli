@@ -16,43 +16,43 @@ var contextCmd = &cobra.Command{
 Useful as the FIRST command in an AI Agent workflow to bootstrap region, URL,
 and authenticated user before issuing other commands.
 
-By default exits with code 3 when Archery is not authenticated (use --no-strict to always exit 0).`,
+By default exits with code 4 when Archery is not authenticated (use --no-strict to always exit 0).`,
 	RunE: runContext,
 }
 
 var contextStrict bool
 
 func init() {
-	contextCmd.Flags().BoolVar(&contextStrict, "strict", true, "Exit with code 3 when not authenticated")
+	contextCmd.Flags().BoolVar(&contextStrict, "strict", true, "Exit with code 4 when not authenticated")
 	contextCmd.Flags().Bool("no-strict", false, "Do not fail when unauthenticated (overrides --strict)")
 	rootCmd.AddCommand(contextCmd)
 }
 
 // contextRegion is the JSON shape for a region in the context output.
 type contextRegion struct {
-	Name        string `json:"name"`
-	URL         string `json:"url"`
-	Username    string `json:"username,omitempty"`
-	HasTokens   bool   `json:"hasTokens"`
-	IsActive    bool   `json:"isActive"`
+	Name      string `json:"name"`
+	URL       string `json:"url"`
+	Username  string `json:"username,omitempty"`
+	HasTokens bool   `json:"hasTokens"`
+	IsActive  bool   `json:"isActive"`
 }
 
 // contextCredentials reports credential status without leaking secrets.
 type contextCredentials struct {
-	Configured bool   `json:"configured"`
-	HasTokens  bool   `json:"hasTokens,omitempty"`
-	HasBasic   bool   `json:"hasBasic,omitempty"`
+	Configured bool `json:"configured"`
+	HasTokens  bool `json:"hasTokens,omitempty"`
+	HasBasic   bool `json:"hasBasic,omitempty"`
 }
 
 // contextResult is the top-level JSON envelope.
 type contextResult struct {
-	Version        string              `json:"version"`
-	Env            string              `json:"env"`
-	DefaultRegion  string              `json:"defaultRegion"`
-	ActiveRegion   string              `json:"activeRegion"`
-	Regions        []contextRegion     `json:"regions"`
-	ConfigPath     string              `json:"configPath"`
-	Credentials    contextCredentials  `json:"credentials"`
+	Version       string             `json:"version"`
+	Env           string             `json:"env"`
+	DefaultRegion string             `json:"defaultRegion"`
+	ActiveRegion  string             `json:"activeRegion"`
+	Regions       []contextRegion    `json:"regions"`
+	ConfigPath    string             `json:"configPath"`
+	Credentials   contextCredentials `json:"credentials"`
 }
 
 func runContext(cmd *cobra.Command, _ []string) error {

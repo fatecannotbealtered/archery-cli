@@ -25,11 +25,11 @@ import (
 )
 
 const (
-	updateDefaultRepo  = "fatecannotbealtered/archery-cli"
-	updateBinaryName   = "archery-cli"
-	updateAPIBaseURL   = "https://api.github.com"
-	updateNPMPackage   = "@fatecannotbealtered/archery-cli"
-	updatePipPackage   = "archery-cli"
+	updateDefaultRepo   = "fatecannotbealtered/archery-cli"
+	updateBinaryName    = "archery-cli"
+	updateAPIBaseURL    = "https://api.github.com"
+	updateNPMPackage    = "@fatecannotbealtered/archery-cli"
+	updatePipPackage    = "archery-cli"
 	updateChannelStable = "stable"
 	updateChannelCanary = "canary"
 )
@@ -155,7 +155,7 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 		"channel":        channel,
 	}
 	if dryRun {
-		confirmToken, expires := newConfirmToken("update archery-cli", "", confirmPayload)
+		confirmToken, expires := newConfirmToken(cmd.CommandPath(), "", confirmPayload)
 		result["status"] = "dry_run"
 		result["preview"] = map[string]any{
 			"action":  "update archery-cli",
@@ -167,7 +167,7 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	if err := requireConfirm(cmd, "update archery-cli", "", confirmPayload); err != nil {
+	if err := requireConfirm(cmd, cmd.CommandPath(), "", confirmPayload); err != nil {
 		return err
 	}
 
@@ -206,8 +206,12 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 
 	result = updateResultMap(plan, applied.Status)
 	result["path"] = applied.Path
+	result["previous_version"] = plan.CurrentVersion
+	result["current_version"] = plan.TargetVersion
+	result["hint"] = fmt.Sprintf("run \"archery-cli changelog --since %s\" to see what changed", plan.CurrentVersion)
 	if applied.PendingPath != "" {
 		result["pendingPath"] = applied.PendingPath
+		result["pending_path"] = applied.PendingPath
 	}
 	printUpdateResult(result)
 	return nil
@@ -587,14 +591,19 @@ func copyFile(src, dst string, mode os.FileMode) error {
 
 func updateResultMap(plan updatePlan, status string) map[string]any {
 	result := map[string]any{
-		"status":          status,
-		"currentVersion":  plan.CurrentVersion,
-		"targetVersion":   plan.TargetVersion,
-		"updateAvailable": plan.UpdateAvailable,
-		"releaseUrl":      plan.ReleaseURL,
-		"asset":           plan.AssetName,
-		"installMethod":   plan.InstallMethod,
-		"channel":         plan.Channel,
+		"status":           status,
+		"currentVersion":   plan.CurrentVersion,
+		"targetVersion":    plan.TargetVersion,
+		"updateAvailable":  plan.UpdateAvailable,
+		"releaseUrl":       plan.ReleaseURL,
+		"asset":            plan.AssetName,
+		"installMethod":    plan.InstallMethod,
+		"channel":          plan.Channel,
+		"current_version":  plan.CurrentVersion,
+		"target_version":   plan.TargetVersion,
+		"update_available": plan.UpdateAvailable,
+		"release_url":      plan.ReleaseURL,
+		"install_method":   plan.InstallMethod,
 	}
 	return result
 }

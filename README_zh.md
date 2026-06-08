@@ -9,27 +9,26 @@ AI 代理友好的 [Archery](https://github.com/hhyo/Archery) SQL 审核平台�
 ### CLI 二进制
 
 ```bash
-# npm（推荐）
-npm install -g @fatecannotbealtered/archery-cli
-
-# 或从 GitHub Releases 下载
-# https://github.com/fatecannotbealtered/archery-cli/releases
+# 当前状态：未发布，从源码检出安装
+go install ./cmd/archery-cli
 ```
 
 ### Agent Skill
 
 ```bash
-npx skills add archery-cli -y -g
+npx skills add ./skills/archery-cli -y -g
 ```
 
 ## 快速开始
 
 ```bash
 # 1. 配置
-archery-cli auth login --username <USER> --password <PASS> --region default
+archery-cli auth login --url https://archery.example.com --username <USER> --password <PASS> --region default --dry-run
+archery-cli auth login --url https://archery.example.com --username <USER> --password <PASS> --region default --confirm <confirm_token>
 
 # 2. 验证
-archery-cli doctor
+archery-cli context --compact
+archery-cli doctor --compact
 
 # 3. 第一个命令
 archery-cli instance list --compact
@@ -56,6 +55,7 @@ archery-cli instance list --compact
 ## 配置
 
 archery-cli 将配置存储在 `~/.archery-cli/config.json`（文件权限 `0600`）。
+凭据只存储在操作系统钥匙串。密码和 token 不会写入配置文件；如果钥匙串不可用，请用环境变量执行一次性命令。
 
 环境变量（覆盖配置文件）：
 
@@ -65,6 +65,10 @@ archery-cli 将配置存储在 `~/.archery-cli/config.json`（文件权限 `0600
 | `ARCHERY_CLI_USERNAME` | 用户名 |
 | `ARCHERY_CLI_PASSWORD` | 密码 |
 | `ARCHERY_CLI_REGION` | 活跃区域名称 |
+| `ARCHERY_CLI_INSECURE` | 显式跳过 HTTPS TLS 证书校验 |
+| `ARCHERY_CLI_TIMEOUT` | HTTP 超时时间 |
+| `ARCHERY_CLI_MAX_RETRIES` | 临时 HTTP 失败的重试次数 |
+| `ARCHERY_CLI_USER_AGENT` | 自定义 HTTP User-Agent |
 | `NO_COLOR` | 禁用彩色输出 |
 
 ## 面向 AI 代理
@@ -74,6 +78,7 @@ archery-cli 将配置存储在 `~/.archery-cli/config.json`（文件权限 `0600
 - **安全**: [.agent/SEC-SPEC.md](.agent/SEC-SPEC.md)
 - **能力发现**: 运行 `archery-cli reference`
 - **预检**: 运行 `archery-cli context` 然后 `archery-cli doctor`
+- **危险写操作**: 如果 `reference` 返回 `requiresDangerous`，在 `--dry-run` 和 `--confirm` 两步都必须带 `--dangerous`
 
 ## 开发
 

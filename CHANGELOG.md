@@ -7,22 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-06-08
-
 ### Added
-- Initial release
-- Multi-region support (cn/overseas)
-- JWT authentication via /api/auth/token/
-- Workflow management (list, submit, detail, audit, execute, cancel, sqlcheck)
-- SQL query execution and management
-- Instance management (CRUD, resources, describe, users)
-- Slow query analysis and optimization
-- Database diagnostics (process, kill, tablespace, locks, transactions)
-- Binlog management (list, parse, purge)
-- Data archiving (list, apply, audit, switch, once, log)
-- Data dictionary (tables, views, triggers, procedures, export)
-- User and group management
-- Self-description commands (reference, doctor, context, changelog, update)
-- Audit logging for write operations
-- _untrusted tagging for external content
-- npm wrapper distribution
+- Initial unreleased implementation.
+- Multi-region support (cn/overseas).
+- JWT authentication via /api/auth/token/.
+- Workflow management (list, submit, detail, audit, execute, cancel, sqlcheck).
+- SQL query execution and management.
+- Instance management (CRUD, resources, describe, users).
+- Slow query analysis and optimization.
+- Database diagnostics (process, kill, tablespace, locks, transactions).
+- Binlog management (list, parse, purge).
+- Data archiving (list, apply, audit, switch, once, log).
+- Data dictionary (tables, views, triggers, procedures, export).
+- User and group management.
+- Self-description commands (reference, doctor, context, changelog, update).
+- Audit logging for write operations.
+- _untrusted tagging for external content.
+- npm wrapper distribution scaffolding.
+- Agent-facing conformance checks for write confirmation, risk metadata, ID normalization, and URL validation.
+- Repository governance files for AI-native open-source distribution: `AGENTS.md`, `NOTICE.md`, `CODE_OF_CONDUCT.md`, `docs/E2E.md`, and Dependabot configuration.
+- npm lockfile and CI npm audit coverage.
+
+### Changed
+- Write commands now consistently require `--dry-run` followed by `--confirm <confirm_token>`, including authentication, query execution/favorite, workflow, instance, archive, binlog, diagnostic, and self-update writes.
+- `auth login` now uses explicit `--url` in non-interactive JSON mode and validates HTTPS by default, allowing HTTP only for loopback development URLs.
+- Agent-facing JSON output normalizes IDs to strings and tags common external/generated content fields with `_untrusted`.
+- Skill, README, and reference docs now point agents to `reference` as the machine truth and document the current confirmation flow.
+
+### Security
+- Confirm tokens bind command path, operation payload, region, and username context; dry-run previews redact secrets while confirmation tokens bind the full payload.
+- High and critical write commands now require explicit `--dangerous` in both dry-run and confirm steps as the T2 second gate.
+- npm installer checksum verification hard-fails when integrity cannot be verified.
+- Credential persistence now uses OS keyring-only storage; passwords and tokens are never written to the config file.

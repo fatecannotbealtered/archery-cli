@@ -7,7 +7,8 @@ const crypto = require("crypto");
 const { execFileSync } = require("child_process");
 const os = require("os");
 
-const VERSION = require("../package.json").version;
+const pkg = require("../package.json");
+const VERSION = pkg.version;
 const REPO = "fatecannotbealtered/archery-cli";
 const NAME = "archery-cli";
 
@@ -24,6 +25,15 @@ const ARCH_MAP = {
 
 const platform = PLATFORM_MAP[process.platform];
 let arch = ARCH_MAP[process.arch];
+const isWindows = process.platform === "win32";
+const ext = isWindows ? ".zip" : ".tar.gz";
+
+function installHint() {
+  if (!VERSION) {
+    return `\nNo release binary is available yet. Build from source with "go build -o bin/${NAME}${isWindows ? ".exe" : ""} ./cmd/archery-cli".`;
+  }
+  return `\nManually download from:\n  https://github.com/${REPO}/releases`;
+}
 
 // Windows ARM64: fall back to amd64 (runs via emulation)
 if (process.platform === "win32" && process.arch === "arm64") {
@@ -33,14 +43,9 @@ if (process.platform === "win32" && process.arch === "arm64") {
 
 if (!platform || !arch) {
   console.error(`Unsupported platform: ${process.platform}-${process.arch}`);
-  console.error(`\nManually download from:\n  https://github.com/${REPO}/releases`);
+  console.error(installHint());
   process.exit(1);
 }
-
-const isWindows = process.platform === "win32";
-const ext = isWindows ? ".zip" : ".tar.gz";
-const archiveName = `${NAME}-${VERSION}-${platform}-${arch}${ext}`;
-const GITHUB_URL = `https://github.com/${REPO}/releases/download/v${VERSION}/${archiveName}`;
 
 const binDir = path.join(__dirname, "..", "bin");
 const dest = path.join(binDir, NAME + (isWindows ? ".exe" : ""));
@@ -75,6 +80,14 @@ function install() {
     process.exit(0);
   }
 
+  if (!VERSION) {
+    console.log(`${NAME} is unreleased; no release binary will be downloaded. Build from source with "go build -o bin/${NAME}${isWindows ? ".exe" : ""} ./cmd/archery-cli".`);
+    process.exit(0);
+  }
+
+  const archiveName = `${NAME}-${VERSION}-${platform}-${arch}${ext}`;
+  const GITHUB_URL = `https://github.com/${REPO}/releases/download/v${VERSION}/${archiveName}`;
+
   if (fs.existsSync(dest) && !process.env.ARCHERY_CLI_FORCE_INSTALL) {
     console.log(`${NAME} already installed at ${dest}, skipping download. Set ARCHERY_CLI_FORCE_INSTALL=1 to reinstall.`);
     process.exit(0);
@@ -89,26 +102,18 @@ function install() {
     console.log(`Downloading ${NAME} v${VERSION} for ${platform}-${arch}...`);
     download(GITHUB_URL, archivePath);
 
-    // Verify checksum
-    try {
-      download(checksumURL, checksumPath);
-      const checksumContent = fs.readFileSync(checksumPath, "utf8");
-      const line = checksumContent
-        .split("\n")
-        .find((l) => l.includes(archiveName));
-      if (line) {
-        const expectedHash = line.trim().split(/\s+/)[0];
-        verifyChecksum(archivePath, expectedHash);
-        console.log("Checksum verified");
-      } else {
-        console.warn("Warning: archive not found in checksums.txt, skipping verification");
-      }
-    } catch (checksumErr) {
-      if (checksumErr.message.includes("Checksum mismatch")) {
-        throw checksumErr;
-      }
-      console.warn("Warning: could not verify checksum --", checksumErr.message);
+    // Verify checksum. Integrity verification is mandatory for install.
+    download(checksumURL, checksumPath);
+    const checksumContent = fs.readFileSync(checksumPath, "utf8");
+    const line = checksumContent
+      .split("\n")
+      .find((l) => l.trim().endsWith(archiveName));
+    if (!line) {
+      throw new Error(`Checksum for ${archiveName} not found in checksums.txt`);
     }
+    const expectedHash = line.trim().split(/\s+/)[0];
+    verifyChecksum(archivePath, expectedHash);
+    console.log("Checksum verified");
 
     // Extract binary
     if (isWindows) {
@@ -139,8 +144,6 @@ try {
   install();
 } catch (err) {
   console.error(`Failed to install ${NAME}:`, err.message);
-  console.error(
-    `\nManually download from:\n  https://github.com/${REPO}/releases\n`
-  );
+  console.error(`${installHint()}\n`);
   process.exit(1);
 }

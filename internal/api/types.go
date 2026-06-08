@@ -15,8 +15,8 @@ type PaginatedResponse[T any] struct {
 // InternalPaginatedResponse wraps Archery internal paginated responses
 // that use {status, msg, data: {total, rows}} format.
 type InternalPaginatedResponse[T any] struct {
-	Status int            `json:"status"`
-	Msg    string         `json:"msg"`
+	Status int             `json:"status"`
+	Msg    string          `json:"msg"`
 	Data   InternalPage[T] `json:"data"`
 }
 
@@ -30,9 +30,9 @@ type InternalPage[T any] struct {
 
 // Workflow represents an Archery workflow definition (template).
 type Workflow struct {
-	ID      int              `json:"id"`
-	Name    string           `json:"name"`
-	IsUsed  bool             `json:"is_used"`
+	ID      int               `json:"id"`
+	Name    string            `json:"name"`
+	IsUsed  bool              `json:"is_used"`
 	Content []WorkflowContent `json:"content"`
 }
 
@@ -72,18 +72,18 @@ type SQLWorkflow struct {
 
 // SQLWorkflowDetail is the full detail of an SQL workflow.
 type SQLWorkflowDetail struct {
-	ID          int                  `json:"id"`
-	Title       string               `json:"workflow_name"`
-	Status      int                  `json:"status"`
-	Engineer    string               `json:"engineer"`
-	InstanceID  int                  `json:"instance_id"`
-	DBName      string               `json:"db_name"`
-	GroupID     int                  `json:"group_id"`
-	SQLContent  string               `json:"sql_content"`
-	IsBackup    bool                 `json:"is_backup"`
-	DemandURL   string               `json:"demand_url"`
-	CreateDate  string               `json:"create_date"`
-	AuditLog    []SQLWorkflowAuditEntry `json:"audit_log"`
+	ID         int                     `json:"id"`
+	Title      string                  `json:"workflow_name"`
+	Status     int                     `json:"status"`
+	Engineer   string                  `json:"engineer"`
+	InstanceID int                     `json:"instance_id"`
+	DBName     string                  `json:"db_name"`
+	GroupID    int                     `json:"group_id"`
+	SQLContent string                  `json:"sql_content"`
+	IsBackup   bool                    `json:"is_backup"`
+	DemandURL  string                  `json:"demand_url"`
+	CreateDate string                  `json:"create_date"`
+	AuditLog   []SQLWorkflowAuditEntry `json:"audit_log"`
 }
 
 // SQLWorkflowAuditEntry is a single audit log entry within a workflow detail.
@@ -158,18 +158,18 @@ type SQLCheckResult struct {
 
 // Instance represents a database instance configured in Archery.
 type Instance struct {
-	ID             json.Number `json:"id"`
-	InstanceName   string      `json:"instance_name"`
-	DbType         string      `json:"db_type"`
-	Host           string      `json:"host"`
-	Port           int         `json:"port"`
-	User           string      `json:"user"`
-	Password       string      `json:"password"`
-	DBName         string      `json:"db_name"`
-	Charset        string      `json:"charset"`
-	IsActive       bool        `json:"is_active"`
-	Environment    string      `json:"environment"`
-	InstanceTag    string      `json:"instance_tag"`
+	ID           json.Number `json:"id"`
+	InstanceName string      `json:"instance_name"`
+	DbType       string      `json:"db_type"`
+	Host         string      `json:"host"`
+	Port         int         `json:"port"`
+	User         string      `json:"user"`
+	Password     string      `json:"password"`
+	DBName       string      `json:"db_name"`
+	Charset      string      `json:"charset"`
+	IsActive     bool        `json:"is_active"`
+	Environment  string      `json:"environment"`
+	InstanceTag  string      `json:"instance_tag"`
 }
 
 // ===== Query =====
@@ -186,39 +186,39 @@ type QueryResult struct {
 
 // QueryLog represents a single query log entry.
 type QueryLog struct {
-	ID          int    `json:"id"`
-	Username    string `json:"username"`
-	DbUser      string `json:"db_user"`
-	SQLText     string `json:"sqllog"`
-	EffectRows  int    `json:"effect_row"`
-	CostTime    string `json:"cost_time"`
-	Instance    string `json:"instance_name"`
-	ExecTime    string `json:"exec_time"`
+	ID         int    `json:"id"`
+	Username   string `json:"username"`
+	DbUser     string `json:"db_user"`
+	SQLText    string `json:"sqllog"`
+	EffectRows int    `json:"effect_row"`
+	CostTime   string `json:"cost_time"`
+	Instance   string `json:"instance_name"`
+	ExecTime   string `json:"exec_time"`
 }
 
 // ===== Slow Query =====
 
 // SlowQuery represents a slow query entry from the analysis system.
 type SlowQuery struct {
-	ID            int     `json:"id"`
-	SQLText       string  `json:"sql_text"`
-	MySQLTotal    float64 `json:"mysql_total"`
-	Count         int     `json:"count"`
-	MaxQueryTime  float64 `json:"max_query_time"`
-	MysqlMaxTime  float64 `json:"mysql_max_time"`
+	ID           int     `json:"id"`
+	SQLText      string  `json:"sql_text"`
+	MySQLTotal   float64 `json:"mysql_total"`
+	Count        int     `json:"count"`
+	MaxQueryTime float64 `json:"max_query_time"`
+	MysqlMaxTime float64 `json:"mysql_max_time"`
 }
 
 // SlowQueryHistory represents historical slow query data.
 type SlowQueryHistory struct {
-	ID            int     `json:"id"`
-	SlowQueryID   int     `json:"slowquery_id"`
-	SQLText       string  `json:"sql_text"`
-	StartTime     string  `json:"start_time"`
-	StopTime      string  `json:"stop_time"`
-	QueryTimeAvg  float64 `json:"query_time_avg"`
-	LockTimeAvg   float64 `json:"lock_time_avg"`
-	RowsExamined  int     `json:"rows_examined_avg"`
-	RowsSent      int     `json:"rows_sent_avg"`
+	ID           int     `json:"id"`
+	SlowQueryID  int     `json:"slowquery_id"`
+	SQLText      string  `json:"sql_text"`
+	StartTime    string  `json:"start_time"`
+	StopTime     string  `json:"stop_time"`
+	QueryTimeAvg float64 `json:"query_time_avg"`
+	LockTimeAvg  float64 `json:"lock_time_avg"`
+	RowsExamined int     `json:"rows_examined_avg"`
+	RowsSent     int     `json:"rows_sent_avg"`
 }
 
 // ===== DBA Tools =====
@@ -237,49 +237,49 @@ type ProcessInfo struct {
 
 // TableSpace represents table space usage information.
 type TableSpace struct {
-	TableName string  `json:"table_name"`
-	Engine    string  `json:"engine"`
-	RowFormat string  `json:"row_format"`
-	Rows      int     `json:"table_rows"`
-	DataSize  string  `json:"data_length"`
-	IndexSize string  `json:"index_length"`
-	TotalSize string  `json:"total_size"`
+	TableName string `json:"table_name"`
+	Engine    string `json:"engine"`
+	RowFormat string `json:"row_format"`
+	Rows      int    `json:"table_rows"`
+	DataSize  string `json:"data_length"`
+	IndexSize string `json:"index_length"`
+	TotalSize string `json:"total_size"`
 }
 
 // LockInfo represents an InnoDB lock entry.
 type LockInfo struct {
-	LockTrxID     string `json:"lock_trx_id"`
-	LockMode      string `json:"lock_mode"`
-	LockType      string `json:"lock_type"`
-	LockTable     string `json:"lock_table"`
-	LockIndex     string `json:"lock_index"`
-	LockSpace     int    `json:"lock_space"`
-	LockPage      int    `json:"lock_page"`
-	LockRec       int    `json:"lock_rec"`
-	LockData      string `json:"lock_data"`
-	TrxID         string `json:"trx_id"`
-	TrxState      string `json:"trx_state"`
-	TrxStarted    string `json:"trx_started"`
-	TrxQuery      string `json:"trx_query"`
-	TrxWait       int    `json:"trx_wait"`
+	LockTrxID  string `json:"lock_trx_id"`
+	LockMode   string `json:"lock_mode"`
+	LockType   string `json:"lock_type"`
+	LockTable  string `json:"lock_table"`
+	LockIndex  string `json:"lock_index"`
+	LockSpace  int    `json:"lock_space"`
+	LockPage   int    `json:"lock_page"`
+	LockRec    int    `json:"lock_rec"`
+	LockData   string `json:"lock_data"`
+	TrxID      string `json:"trx_id"`
+	TrxState   string `json:"trx_state"`
+	TrxStarted string `json:"trx_started"`
+	TrxQuery   string `json:"trx_query"`
+	TrxWait    int    `json:"trx_wait"`
 }
 
 // TransactionInfo represents a running transaction.
 type TransactionInfo struct {
-	TrxID        string `json:"trx_id"`
-	TrxState     string `json:"trx_state"`
-	TrxStarted   string `json:"trx_started"`
-	TrxQuery     string `json:"trx_query"`
-	TrxRowsLocked int   `json:"trx_rows_locked"`
-	TrxRowsModified int `json:"trx_rows_modified"`
+	TrxID           string `json:"trx_id"`
+	TrxState        string `json:"trx_state"`
+	TrxStarted      string `json:"trx_started"`
+	TrxQuery        string `json:"trx_query"`
+	TrxRowsLocked   int    `json:"trx_rows_locked"`
+	TrxRowsModified int    `json:"trx_rows_modified"`
 }
 
 // ===== Binlog =====
 
 // BinlogFile represents a MySQL binlog file entry.
 type BinlogFile struct {
-	LogName   string `json:"log_name"`
-	FileSize  int64  `json:"file_size"`
+	LogName  string `json:"log_name"`
+	FileSize int64  `json:"file_size"`
 }
 
 // BinlogParseResult holds the parsed binlog events.
@@ -292,21 +292,21 @@ type BinlogParseResult struct {
 
 // ArchiveConfig represents an archive task configuration.
 type ArchiveConfig struct {
-	ID              int    `json:"id"`
-	Title           string `json:"title"`
-	AuditWorkflow   int    `json:"audit_workflow"`
-	AuditUsers      string `json:"audit_users"`
-	SourceHost      string `json:"source_host"`
-	SourceDb        string `json:"source_db"`
-	SourceTable     string `json:"source_table"`
-	TargetHost      string `json:"target_host"`
-	TargetDb        string `json:"target_db"`
-	TargetTable     string `json:"target_table"`
-	Mode            string `json:"mode"`
-	Condition       string `json:"condition"`
-	IsArchive       bool   `json:"is_archive"`
-	ExecDate        string `json:"exec_date"`
-	Status          int    `json:"status"`
+	ID            int    `json:"id"`
+	Title         string `json:"title"`
+	AuditWorkflow int    `json:"audit_workflow"`
+	AuditUsers    string `json:"audit_users"`
+	SourceHost    string `json:"source_host"`
+	SourceDb      string `json:"source_db"`
+	SourceTable   string `json:"source_table"`
+	TargetHost    string `json:"target_host"`
+	TargetDb      string `json:"target_db"`
+	TargetTable   string `json:"target_table"`
+	Mode          string `json:"mode"`
+	Condition     string `json:"condition"`
+	IsArchive     bool   `json:"is_archive"`
+	ExecDate      string `json:"exec_date"`
+	Status        int    `json:"status"`
 }
 
 // ArchiveLog represents a single archive execution log.
@@ -335,9 +335,9 @@ type DataDictionaryTable struct {
 
 // DataDictionaryTableInfo holds detailed column info for a dictionary table.
 type DataDictionaryTableInfo struct {
-	TableName string                      `json:"table_name"`
-	Comment   string                      `json:"comment"`
-	Columns   []DataDictionaryColumn      `json:"columns"`
+	TableName string                 `json:"table_name"`
+	Comment   string                 `json:"comment"`
+	Columns   []DataDictionaryColumn `json:"columns"`
 }
 
 // DataDictionaryColumn describes a single column in a data dictionary table.
@@ -371,7 +371,7 @@ type Group struct {
 
 // ResourceGroup represents a resource group for instance access control.
 type ResourceGroup struct {
-	ID      int    `json:"id"`
-	Name    string `json:"name"`
-	Users   []int  `json:"users"`
+	ID    int    `json:"id"`
+	Name  string `json:"name"`
+	Users []int  `json:"users"`
 }

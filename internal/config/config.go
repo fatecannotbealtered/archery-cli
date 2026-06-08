@@ -13,7 +13,7 @@ import (
 var jsonMarshalIndent = json.MarshalIndent
 
 // RegionConfig stores Archery authentication information for a single region.
-// Password is never persisted after login; tokens are stored in the OS keyring when available.
+// Password is never persisted; tokens are stored only in the OS keyring.
 type RegionConfig struct {
 	URL          string `json:"url"`
 	Username     string `json:"username"`
@@ -94,6 +94,7 @@ func Load() (*Config, error) {
 		if cfg.Regions == nil {
 			cfg.Regions = make(map[string]RegionConfig)
 		}
+		stripDiskSecrets(cfg)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("reading config: %w", err)
 	}
@@ -142,9 +143,21 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
+func stripDiskSecrets(cfg *Config) {
+	for name, region := range cfg.Regions {
+		if region.Password != "" || region.AccessToken != "" || region.RefreshToken != "" || region.TokenExpiry != "" {
+			region.Password = ""
+			region.AccessToken = ""
+			region.RefreshToken = ""
+			region.TokenExpiry = ""
+			cfg.Regions[name] = region
+		}
+	}
+}
+
 // Save writes the configuration to disk.
 //
-// When the OS keyring is available, JWT tokens are stored there (not in config.json).
+// JWT tokens are stored in the OS keyring (not in config.json).
 // Passwords are never persisted after login.
 // File permissions are set to 0600 (owner-readable only) to restrict access.
 func Save(cfg *Config) error {
@@ -152,13 +165,14 @@ func Save(cfg *Config) error {
 	store := ts.ActiveStore()
 	cfg.CredentialStore = store
 
-	// Persist tokens to keyring when available.
-	if store == CredentialStoreKeyring {
-		for name, region := range cfg.Regions {
-			if region.AccessToken != "" {
-				if err := ts.SaveTokens(name, region.Username, region.AccessToken, region.RefreshToken); err != nil {
-					return fmt.Errorf("saving tokens to keyring: %w", err)
-				}
+	if configHasTokens(cfg) && store != CredentialStoreKeyring {
+		return errors.New("OS credential store unavailable; refusing to write credentials to config file")
+	}
+
+	for name, region := range cfg.Regions {
+		if region.AccessToken != "" {
+			if err := ts.SaveTokens(name, region.Username, region.AccessToken, region.RefreshToken); err != nil {
+				return fmt.Errorf("saving tokens to keyring: %w", err)
 			}
 		}
 	}
@@ -181,9 +195,21 @@ func Save(cfg *Config) error {
 	return nil
 }
 
+func configHasTokens(cfg *Config) bool {
+	if cfg == nil {
+		return false
+	}
+	for _, region := range cfg.Regions {
+		if strings.TrimSpace(region.AccessToken) != "" || strings.TrimSpace(region.RefreshToken) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // onDiskCopy returns a config safe to write to config.json.
-// When using keyring, tokens are stripped (they live in the keyring).
-// Password is always kept on disk -- callers clear it before Save when appropriate.
+// Tokens are always stripped; persistent secrets live only in the OS keyring.
+// Password is never written to disk; use auth login or env vars for password input.
 func (c *Config) onDiskCopy(store string) *Config {
 	disk := &Config{
 		DefaultRegion:   c.DefaultRegion,
@@ -194,12 +220,6 @@ func (c *Config) onDiskCopy(store string) *Config {
 		rc := RegionConfig{
 			URL:      region.URL,
 			Username: region.Username,
-			Password: region.Password,
-		}
-		if store == CredentialStoreFile {
-			rc.AccessToken = region.AccessToken
-			rc.RefreshToken = region.RefreshToken
-			rc.TokenExpiry = region.TokenExpiry
 		}
 		disk.Regions[name] = rc
 	}
@@ -325,5 +345,5 @@ func CredentialStoreLabel(cfg *Config) string {
 	if cfg.usesKeyringStore() {
 		return CredentialStoreKeyring
 	}
-	return CredentialStoreFile
+	return CredentialStoreNone
 }

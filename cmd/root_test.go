@@ -59,6 +59,17 @@ func TestGlobalFlags(t *testing.T) {
 			},
 		},
 		{
+			name:     "dangerous",
+			flagName: "dangerous",
+			wantType: "bool",
+			checkFunc: func(t *testing.T) {
+				got, _ := rootCmd.PersistentFlags().GetBool("dangerous")
+				if got != false {
+					t.Errorf("default = %v, want false", got)
+				}
+			},
+		},
+		{
 			name:     "confirm",
 			flagName: "confirm",
 			wantType: "string",

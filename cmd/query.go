@@ -30,6 +30,7 @@ func init() {
 	queryRunCmd.Flags().String("fields", "", "Comma-separated fields for JSON output")
 	queryCmd.AddCommand(queryRunCmd)
 	markWrite(queryRunCmd)
+	markRiskLevel(queryRunCmd, "high")
 	markOutputFormats(queryRunCmd, formatJSON, formatText, formatRaw)
 
 	// explain
@@ -55,6 +56,7 @@ func init() {
 	queryFavoriteCmd.Flags().String("alias", "", "Alias for the query")
 	queryCmd.AddCommand(queryFavoriteCmd)
 	markWrite(queryFavoriteCmd)
+	markRiskLevel(queryFavoriteCmd, "medium")
 
 	// generate
 	queryGenerateCmd.Flags().String("instance", "", "Instance name (required)")
@@ -80,16 +82,16 @@ type QueryRunOutput struct {
 
 // queryRunResponse is the raw API response from POST /query/.
 type queryRunResponse struct {
-	Status      int            `json:"status"`
-	Msg         string         `json:"msg"`
-	ColumnList  []string       `json:"column_list"`
-	Rows        [][]any        `json:"rows"`
-	RowCount    int            `json:"row_count"`
-	AffectedRows int           `json:"affected_rows"`
-	QueryTime   float64        `json:"query_time"`
-	IsMasked    bool           `json:"is_masked"`
-	IsExecute   bool           `json:"is_execute"`
-	ErrorMessage string        `json:"error_message"`
+	Status       int      `json:"status"`
+	Msg          string   `json:"msg"`
+	ColumnList   []string `json:"column_list"`
+	Rows         [][]any  `json:"rows"`
+	RowCount     int      `json:"row_count"`
+	AffectedRows int      `json:"affected_rows"`
+	QueryTime    float64  `json:"query_time"`
+	IsMasked     bool     `json:"is_masked"`
+	IsExecute    bool     `json:"is_execute"`
+	ErrorMessage string   `json:"error_message"`
 }
 
 var queryRunCmd = &cobra.Command{
@@ -109,10 +111,23 @@ var queryRunCmd = &cobra.Command{
 			return failArg("--sql is required")
 		}
 		limit, _ := cmd.Flags().GetInt("limit")
+		if limit < 0 {
+			return failArg("--limit must be >= 0")
+		}
 		table, _ := cmd.Flags().GetString("table")
 		schema, _ := cmd.Flags().GetString("schema")
 
-		if dryRunOutput("query run", map[string]any{"instance": instance, "db": db, "sql": sql}) {
+		detail := map[string]any{"instance": instance, "db": db, "sql": sql}
+		if limit > 0 {
+			detail["limit"] = limit
+		}
+		if table != "" {
+			detail["table"] = table
+		}
+		if schema != "" {
+			detail["schema"] = schema
+		}
+		if markDryRunOrConfirm("query run", detail) {
 			return nil
 		}
 
@@ -284,11 +299,12 @@ var queryExplainCmd = &cobra.Command{
 		out := QueryExplainOutput{Plan: resp.Data}
 
 		if jsonMode {
+			m := map[string]any{"plan": out.Plan}
+			api.TagUntrusted(m, "plan")
 			if fields := getFieldsFlag(cmd); len(fields) > 0 {
-				m := map[string]any{"plan": out.Plan}
 				output.PrintJSON(output.FilterMap(m, fields))
 			} else {
-				output.PrintJSON(out)
+				output.PrintJSON(m)
 			}
 			return nil
 		}
@@ -320,21 +336,21 @@ var queryExplainCmd = &cobra.Command{
 
 // QueryLogEntry represents a single query log entry for output.
 type QueryLogEntry struct {
-	ID         int    `json:"id"`
-	Username   string `json:"username"`
-	DbUser     string `json:"db_user"`
-	SQL        string `json:"sql"`
-	EffectRow  int    `json:"effect_row"`
-	CostTime   string `json:"cost_time"`
-	Instance   string `json:"instance_name"`
-	ExecTime   string `json:"exec_time"`
+	ID        int    `json:"id"`
+	Username  string `json:"username"`
+	DbUser    string `json:"db_user"`
+	SQL       string `json:"sql"`
+	EffectRow int    `json:"effect_row"`
+	CostTime  string `json:"cost_time"`
+	Instance  string `json:"instance_name"`
+	ExecTime  string `json:"exec_time"`
 }
 
 // queryLogResponse is the raw API response from GET /query/querylog/.
 type queryLogResponse struct {
-	Status int               `json:"status"`
-	Msg    string            `json:"msg"`
-	Data   queryLogPageData  `json:"data"`
+	Status int              `json:"status"`
+	Msg    string           `json:"msg"`
+	Data   queryLogPageData `json:"data"`
 }
 
 type queryLogPageData struct {
@@ -368,6 +384,13 @@ var queryLogCmd = &cobra.Command{
 		star, _ := cmd.Flags().GetBool("star")
 		start, _ := cmd.Flags().GetString("start")
 		end, _ := cmd.Flags().GetString("end")
+
+		if limit < 1 || limit > 100 {
+			return failArg("--limit must be between 1 and 100")
+		}
+		if offset < 0 {
+			return failArg("--offset must be >= 0")
+		}
 
 		params := url.Values{}
 		if limit > 0 {
@@ -467,16 +490,16 @@ var queryLogCmd = &cobra.Command{
 }
 
 func queryLogEntryToMap(e QueryLogEntry) map[string]any {
-	return map[string]any{
-		"id":          e.ID,
-		"username":    e.Username,
-		"db_user":     e.DbUser,
-		"sql":         e.SQL,
-		"effect_row":  e.EffectRow,
-		"cost_time":   e.CostTime,
-		"instance":    e.Instance,
-		"exec_time":   e.ExecTime,
-	}
+	return normalizeAgentMap(map[string]any{
+		"id":         strconv.Itoa(e.ID),
+		"username":   e.Username,
+		"db_user":    e.DbUser,
+		"sql":        e.SQL,
+		"effect_row": e.EffectRow,
+		"cost_time":  e.CostTime,
+		"instance":   e.Instance,
+		"exec_time":  e.ExecTime,
+	})
 }
 
 // ─── favorite ───────────────────────────────────────────────────────────────
@@ -494,7 +517,11 @@ var queryFavoriteCmd = &cobra.Command{
 		star, _ := cmd.Flags().GetBool("star")
 		alias, _ := cmd.Flags().GetString("alias")
 
-		if dryRunOutput("query favorite", map[string]any{"log_id": logID, "star": star}) {
+		detail := map[string]any{"logId": strconv.Itoa(logID), "star": star}
+		if alias != "" {
+			detail["alias"] = alias
+		}
+		if markDryRunOrConfirm("query favorite", detail) {
 			return nil
 		}
 
@@ -504,8 +531,8 @@ var queryFavoriteCmd = &cobra.Command{
 		}
 
 		form := url.Values{
-			"id":    {strconv.Itoa(logID)},
-			"star":  {strconv.FormatBool(star)},
+			"id":   {strconv.Itoa(logID)},
+			"star": {strconv.FormatBool(star)},
 		}
 		if alias != "" {
 			form.Set("alias", alias)
@@ -518,7 +545,7 @@ var queryFavoriteCmd = &cobra.Command{
 
 		if jsonMode {
 			output.PrintJSON(map[string]any{
-				"id":   logID,
+				"id":   strconv.Itoa(logID),
 				"star": star,
 			})
 			return nil
@@ -605,11 +632,12 @@ var queryGenerateCmd = &cobra.Command{
 		out := QueryGenerateOutput{SQL: resp.Data}
 
 		if jsonMode {
+			m := map[string]any{"sql": out.SQL}
+			api.TagUntrusted(m, "sql")
 			if fields := getFieldsFlag(cmd); len(fields) > 0 {
-				m := map[string]any{"sql": out.SQL}
 				output.PrintJSON(output.FilterMap(m, fields))
 			} else {
-				output.PrintJSON(out)
+				output.PrintJSON(m)
 			}
 			return nil
 		}

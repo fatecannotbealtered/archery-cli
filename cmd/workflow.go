@@ -101,10 +101,6 @@ var workflowListCmd = &cobra.Command{
 			params.InstanceID = v
 		}
 
-		if dryRunOutput("list workflows", map[string]any{"filters": params}) {
-			return nil
-		}
-
 		result, err := client.Workflows.List(apiCtx(), params)
 		if err != nil {
 			return handleAPIError(err)
@@ -132,11 +128,6 @@ var workflowSubmitCmd = &cobra.Command{
 	Use:   "submit",
 	Short: "Submit a new SQL workflow for review",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, _, region, err := newClient()
-		if err != nil {
-			return err
-		}
-
 		name, err := requireFlagString(cmd, "name", "--name")
 		if err != nil {
 			return err
@@ -171,19 +162,24 @@ var workflowSubmitCmd = &cobra.Command{
 
 		detail := map[string]any{
 			"name":       name,
-			"instanceId": instanceID,
+			"instanceId": strconv.Itoa(instanceID),
 			"db":         db,
 			"sql":        sql,
 			"backup":     backup,
 		}
 		if groupID > 0 {
-			detail["groupId"] = groupID
+			detail["groupId"] = strconv.Itoa(groupID)
 		}
 		if demandURL != "" {
 			detail["demandUrl"] = demandURL
 		}
-		if dryRunOutput("submit workflow", detail) {
+		if markDryRunOrConfirm("submit workflow", detail) {
 			return nil
+		}
+
+		client, _, region, err := newClient()
+		if err != nil {
+			return err
 		}
 
 		resp, err := client.Workflows.Submit(apiCtx(), req)
@@ -194,7 +190,7 @@ var workflowSubmitCmd = &cobra.Command{
 		url := region.URL + fmt.Sprintf("/sqlworkflow/%d/", resp.ID)
 		if jsonMode {
 			output.PrintJSON(map[string]any{
-				"workflowId": resp.ID,
+				"workflowId": strconv.Itoa(resp.ID),
 				"url":        url,
 			})
 			return nil
@@ -244,11 +240,6 @@ var workflowAuditCmd = &cobra.Command{
 	Short: "Audit (approve or reject) a workflow",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, _, _, err := newClient()
-		if err != nil {
-			return err
-		}
-
 		id, err := parseWorkflowID(args[0])
 		if err != nil {
 			return err
@@ -271,14 +262,19 @@ var workflowAuditCmd = &cobra.Command{
 		}
 
 		detail := map[string]any{
-			"workflowId": id,
+			"workflowId": strconv.Itoa(id),
 			"action":     action,
 		}
 		if remark != "" {
 			detail["remark"] = remark
 		}
-		if dryRunOutput("audit workflow", detail) {
+		if markDryRunOrConfirm("audit workflow", detail) {
 			return nil
+		}
+
+		client, _, _, err := newClient()
+		if err != nil {
+			return err
 		}
 
 		if err := client.Workflows.Audit(apiCtx(), req); err != nil {
@@ -287,7 +283,7 @@ var workflowAuditCmd = &cobra.Command{
 
 		if jsonMode {
 			output.PrintJSON(map[string]any{
-				"workflowId": id,
+				"workflowId": strconv.Itoa(id),
 				"status":     action,
 			})
 			return nil
@@ -304,11 +300,6 @@ var workflowExecuteCmd = &cobra.Command{
 	Short: "Execute an approved workflow",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, _, _, err := newClient()
-		if err != nil {
-			return err
-		}
-
 		id, err := parseWorkflowID(args[0])
 		if err != nil {
 			return err
@@ -326,11 +317,16 @@ var workflowExecuteCmd = &cobra.Command{
 		}
 
 		detail := map[string]any{
-			"workflowId": id,
+			"workflowId": strconv.Itoa(id),
 			"mode":       mode,
 		}
-		if dryRunOutput("execute workflow", detail) {
+		if markDryRunOrConfirm("execute workflow", detail) {
 			return nil
+		}
+
+		client, _, _, err := newClient()
+		if err != nil {
+			return err
 		}
 
 		if err := client.Workflows.Execute(apiCtx(), req); err != nil {
@@ -339,7 +335,7 @@ var workflowExecuteCmd = &cobra.Command{
 
 		if jsonMode {
 			output.PrintJSON(map[string]any{
-				"workflowId": id,
+				"workflowId": strconv.Itoa(id),
 				"status":     "executing",
 				"mode":       mode,
 			})
@@ -357,11 +353,6 @@ var workflowCancelCmd = &cobra.Command{
 	Short: "Cancel a running workflow",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, _, _, err := newClient()
-		if err != nil {
-			return err
-		}
-
 		id, err := parseWorkflowID(args[0])
 		if err != nil {
 			return err
@@ -375,13 +366,18 @@ var workflowCancelCmd = &cobra.Command{
 		}
 
 		detail := map[string]any{
-			"workflowId": id,
+			"workflowId": strconv.Itoa(id),
 		}
 		if remark != "" {
 			detail["remark"] = remark
 		}
-		if dryRunOutput("cancel workflow", detail) {
+		if markDryRunOrConfirm("cancel workflow", detail) {
 			return nil
+		}
+
+		client, _, _, err := newClient()
+		if err != nil {
+			return err
 		}
 
 		if err := client.Workflows.Cancel(apiCtx(), req); err != nil {
@@ -390,7 +386,7 @@ var workflowCancelCmd = &cobra.Command{
 
 		if jsonMode {
 			output.PrintJSON(map[string]any{
-				"workflowId": id,
+				"workflowId": strconv.Itoa(id),
 				"status":     "cancelled",
 			})
 			return nil
@@ -436,7 +432,11 @@ var workflowSQLCheckCmd = &cobra.Command{
 		}
 
 		if jsonMode {
-			output.PrintJSON(results)
+			items := make([]map[string]any, len(results))
+			for i, r := range results {
+				items[i] = sqlCheckResultToMap(r)
+			}
+			output.PrintJSON(items)
 			return nil
 		}
 		printSQLCheckResults(results)
@@ -459,4 +459,13 @@ func parseWorkflowID(s string) (int, error) {
 func mustGetString(cmd *cobra.Command, name string) string {
 	v, _ := cmd.Flags().GetString(name)
 	return v
+}
+
+func sqlCheckResultToMap(r api.SQLCheckResult) map[string]any {
+	return normalizeAgentMap(map[string]any{
+		"level":         r.Level,
+		"message":       r.Message,
+		"affected_rows": r.AffectedRows,
+		"sql":           r.SQL,
+	})
 }

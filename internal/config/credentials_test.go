@@ -46,31 +46,9 @@ func TestNewTokenStore(t *testing.T) {
 func TestTokenStore_ActiveStore(t *testing.T) {
 	ts := NewTokenStore()
 	store := ts.ActiveStore()
-	// Should return either "keyring" or "file" depending on environment.
-	if store != CredentialStoreKeyring && store != CredentialStoreFile {
-		t.Errorf("ActiveStore() = %q, want %q or %q", store, CredentialStoreKeyring, CredentialStoreFile)
-	}
-}
-
-func TestFileStore_IsAvailable(t *testing.T) {
-	fs := &FileStore{}
-	if !fs.IsAvailable() {
-		t.Error("FileStore.IsAvailable() should always return true")
-	}
-}
-
-func TestFileStore_StoreRetrieveDelete(t *testing.T) {
-	// FileStore is a no-op for individual key/value operations.
-	fs := &FileStore{}
-	if err := fs.Store("svc", "key", "val"); err != nil {
-		t.Errorf("Store: %v", err)
-	}
-	if err := fs.Delete("svc", "key"); err != nil {
-		t.Errorf("Delete: %v", err)
-	}
-	_, err := fs.Retrieve("svc", "key")
-	if err == nil {
-		t.Error("Retrieve should return error for FileStore")
+	// Should return either "keyring" or "none" depending on environment.
+	if store != CredentialStoreKeyring && store != CredentialStoreNone {
+		t.Errorf("ActiveStore() = %q, want %q or %q", store, CredentialStoreKeyring, CredentialStoreNone)
 	}
 }
 
@@ -90,8 +68,8 @@ func TestCredentialStoreLabel(t *testing.T) {
 	}
 
 	cfg = &Config{CredentialStore: ""}
-	if got := CredentialStoreLabel(cfg); got != CredentialStoreFile {
-		t.Errorf("CredentialStoreLabel(empty) = %q, want %q", got, CredentialStoreFile)
+	if got := CredentialStoreLabel(cfg); got != CredentialStoreNone {
+		t.Errorf("CredentialStoreLabel(empty) = %q, want %q", got, CredentialStoreNone)
 	}
 }
 
@@ -162,15 +140,15 @@ func TestOnDiskCopy_StripsTokensWhenKeyring(t *testing.T) {
 	if region.RefreshToken != "" {
 		t.Errorf("RefreshToken should be stripped on disk with keyring, got %q", region.RefreshToken)
 	}
-	if region.Password != "pass" {
-		t.Errorf("Password should be kept on disk, got %q", region.Password)
+	if region.Password != "" {
+		t.Errorf("Password should be stripped on disk, got %q", region.Password)
 	}
 	if disk.CredentialStore != CredentialStoreKeyring {
 		t.Errorf("CredentialStore = %q, want %q", disk.CredentialStore, CredentialStoreKeyring)
 	}
 }
 
-func TestOnDiskCopy_KeepsTokensWhenFile(t *testing.T) {
+func TestOnDiskCopy_StripsTokensWhenNoStore(t *testing.T) {
 	cfg := &Config{
 		DefaultRegion: "prod",
 		Regions: map[string]RegionConfig{
@@ -184,17 +162,20 @@ func TestOnDiskCopy_KeepsTokensWhenFile(t *testing.T) {
 		},
 	}
 
-	disk := cfg.onDiskCopy(CredentialStoreFile)
+	disk := cfg.onDiskCopy(CredentialStoreNone)
 
 	region := disk.Regions["prod"]
-	if region.AccessToken != "at" {
-		t.Errorf("AccessToken = %q, want at", region.AccessToken)
+	if region.AccessToken != "" {
+		t.Errorf("AccessToken should be stripped on disk, got %q", region.AccessToken)
 	}
-	if region.RefreshToken != "rt" {
-		t.Errorf("RefreshToken = %q, want rt", region.RefreshToken)
+	if region.RefreshToken != "" {
+		t.Errorf("RefreshToken should be stripped on disk, got %q", region.RefreshToken)
 	}
-	if region.Password != "pass" {
-		t.Errorf("Password = %q, want pass", region.Password)
+	if region.Password != "" {
+		t.Errorf("Password should be stripped on disk, got %q", region.Password)
+	}
+	if disk.CredentialStore != CredentialStoreNone {
+		t.Errorf("CredentialStore = %q, want %q", disk.CredentialStore, CredentialStoreNone)
 	}
 }
 
@@ -204,9 +185,9 @@ func TestUsesKeyringStore(t *testing.T) {
 		t.Error("expected usesKeyringStore() = true for keyring store")
 	}
 
-	cfg = &Config{CredentialStore: CredentialStoreFile}
+	cfg = &Config{CredentialStore: CredentialStoreNone}
 	if cfg.usesKeyringStore() {
-		t.Error("expected usesKeyringStore() = false for file store")
+		t.Error("expected usesKeyringStore() = false for no credential store")
 	}
 
 	cfg = &Config{CredentialStore: ""}

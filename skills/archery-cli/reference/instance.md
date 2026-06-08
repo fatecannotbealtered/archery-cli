@@ -115,9 +115,9 @@ archery-cli instance create \
   --password "secret" \
   --mode cluster \
   --charset utf8mb4 \
-  --dry-run
+  --dangerous --dry-run
 
-archery-cli instance create ... --confirm ct_...
+archery-cli instance create ... --dangerous --confirm ct_...
 ```
 
 | Flag | Type | Required | Description |
@@ -136,8 +136,8 @@ archery-cli instance create ... --confirm ct_...
 ### Update an instance
 
 ```bash
-archery-cli instance update 42 --host 10.0.1.51 --port 3307 --dry-run
-archery-cli instance update 42 --host 10.0.1.51 --port 3307 --confirm ct_...
+archery-cli instance update 42 --host 10.0.1.51 --port 3307 --dangerous --dry-run
+archery-cli instance update 42 --host 10.0.1.51 --port 3307 --dangerous --confirm ct_...
 ```
 
 At least one field to update is required. Passwords are redacted in dry-run preview.
@@ -145,17 +145,17 @@ At least one field to update is required. Passwords are redacted in dry-run prev
 ### Delete an instance
 
 ```bash
-archery-cli instance delete 42 --dry-run
-archery-cli instance delete 42 --confirm ct_...
+archery-cli instance delete 42 --dangerous --dry-run
+archery-cli instance delete 42 --dangerous --confirm ct_...
 ```
 
-- Risk level: **high** -- always confirm with user before deleting
+- Risk level: **high** -- requires `--dangerous` in both dry-run and confirm steps
 
 ## Instance data payload
 
 ```json
 {
-  "id": 42,
+  "id": "42",
   "instanceName": "prod-mysql",
   "dbType": "mysql",
   "host": "10.0.1.10",
@@ -198,10 +198,10 @@ archery-cli instance describe --instance prod-mysql --db mydb --table orders
 ## Notes
 
 - `instance detail` takes a positional INSTANCE_ID argument: `archery-cli instance detail 42`
-- `instance describe` uses `--instance` flag with the **instance name** (not ID), while `instance resource` uses `--instance` flag with the **instance ID** (integer)
-- `instance delete` risk level is **high** -- irreversible, always confirm with user
-- `instance create` risk level is **high** -- confirm parameters with user before creating
+- `instance describe` uses `--instance` flag with the **instance name** (not ID), while `instance resource` uses `--instance` flag with the **instance ID** input
+- `instance delete` risk level is **high** -- irreversible, requires `--dangerous`
+- `instance create` risk level is **high** -- confirm parameters with user and include `--dangerous`
 - `instance resource` types: `database`, `schema`, `table`, `column` (hierarchical: each level requires the parent)
 - `instance users` lists database-level users, not Archery platform users
 - `instance table-instances` searches across all registered instances for a given table name
-- All IDs are integers; all instance names are strings
+- JSON output IDs are strings per the CLI contract, even when input flags accept numeric IDs; all instance names are strings
