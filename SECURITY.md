@@ -2,7 +2,7 @@
 
 ## Risk Tier
 
-**T1 (Medium)** -- archery-cli holds writable credentials (JWT tokens) and can modify external state (submit/approve/execute SQL workflows, manage instances). It does NOT execute arbitrary SQL directly (that is done server-side by Archery/goInception). See [docs/SECURITY-TIER.md](docs/SECURITY-TIER.md) for details.
+**T2 (High)** -- archery-cli holds writable credentials and can trigger database-impacting operations, including query execution, approved workflow execution, instance deletion, and diagnostic thread kills. See [docs/SECURITY-TIER.md](docs/SECURITY-TIER.md) for details.
 
 ## Supported Versions
 
@@ -39,4 +39,4 @@ When using archery-cli:
 - **Rotate tokens**: Regularly rotate your API tokens and credentials. If you suspect a token has been compromised, rotate it immediately.
 - **Least privilege**: Grant only the minimum permissions required. Do not use admin-level credentials for routine operations.
 - **Keep updated**: Run `archery-cli update` regularly to get the latest security patches.
-- **Protect config files**: The archery-cli config file stores credentials. Ensure it has restricted file permissions (`chmod 600` or equivalent) and is not committed to version control.
+- **Protect credentials**: archery-cli stores credentials only in the OS keyring. Passwords and tokens are not written to the config file; if the keyring is unavailable, use environment variables for one-shot commands and never commit config files.

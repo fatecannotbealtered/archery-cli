@@ -45,4 +45,4 @@ archery-cli passes `--db-type` through to Archery. Supported types depend on the
 
 | Go Version | Status |
 |------------|--------|
-| 1.22+ | Required (for generics support) |
+| Version declared in `go.mod` | Required for local builds and CI |

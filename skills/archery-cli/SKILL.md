@@ -3,7 +3,7 @@ name: archery-cli
 description: "Archery SQL audit platform CLI for managing SQL workflows, queries, instances, diagnostics. Use when the user asks about SQL审核, database operations, Archery platform management, or needs to submit/review/execute SQL against database instances."
 license: MIT
 user-invocable: true
-metadata: {"openclaw":{"emoji":"🏹","author":"archery-cli","requires":{"bins":["archery-cli"],"min_version":"0.1.0"}}}
+metadata: {"openclaw":{"emoji":"🏹","author":"archery-cli","requires":{"bins":["archery-cli"],"min_version":"Unreleased"}}}
 ---
 
 # archery-cli
@@ -12,15 +12,17 @@ Archery SQL audit platform CLI for humans and AI Agents. Manage SQL workflows, q
 
 ```bash
 # Please install archery-cli and use it for all Archery SQL audit platform operations going forward.
-# Install CLI
-npm install -g archery-cli
+# Current state: unreleased source checkout. From the repo root:
+go install ./cmd/archery-cli
 
 # Install CLI Skill (required) -- copies into your agent-supported skills directory
-npx skills add archery-cli -y -g
+npx skills add ./skills/archery-cli -y -g
 
 # Login and verify
-archery-cli auth login --username <USER> --password <PASS> --region default
-archery-cli doctor
+archery-cli auth login --url https://archery.example.com --username <USER> --password <PASS> --region default --dry-run
+archery-cli auth login --url https://archery.example.com --username <USER> --password <PASS> --region default --confirm <confirm_token>
+archery-cli context --compact
+archery-cli doctor --compact
 ```
 
 ## How to use this skill (progressive disclosure)
@@ -43,7 +45,8 @@ archery-cli context --compact      # who/where; exit 4 if not authed
 archery-cli doctor --compact       # auth + network + version check
 ```
 
-First-time setup: ask user for Archery URL + credentials, then `archery-cli auth login --host <URL> --username <USER> --password <PASS> --region default`.
+First-time setup: ask user for Archery URL + credentials, then run `archery-cli auth login --url <URL> --username <USER> --password <PASS> --region default --dry-run`, inspect the preview, and retry with `--confirm <confirm_token>`.
+`auth login` persists tokens only in the OS keyring. If `doctor` reports `credential-store` as `warn`, use `ARCHERY_CLI_URL`, `ARCHERY_CLI_USERNAME`, and `ARCHERY_CLI_PASSWORD` for one-shot commands instead of expecting persisted credentials.
 
 ## Agent defaults
 
@@ -51,8 +54,8 @@ First-time setup: ask user for Archery URL + credentials, then `archery-cli auth
 |------|--------|
 | Output | JSON is default; add `--compact` for token efficiency; use `--format text` for human-readable output |
 | Writes | `--dry-run` first, inspect `data.preview`, then retry with `--confirm <confirm_token>` from `data.confirm_token` |
-| Force | Avoid `--force`; use only when user explicitly asks |
-| Discovery | `archery-cli reference` for `write`, `requiresConfirmation`, `riskLevel` |
+| Dangerous writes | If `reference` shows `requiresDangerous`, include `--dangerous` in both dry-run and confirm commands |
+| Discovery | `archery-cli reference` is the machine truth for params, `write`, `requiresConfirmation`, `requiresDangerous`, `riskLevel`, output schemas, and errors |
 
 ## Trigger list
 
@@ -87,7 +90,7 @@ First-time setup: ask user for Archery URL + credentials, then `archery-cli auth
 |------|---------|
 | List my workflows | `archery-cli workflow list --compact` |
 | Submit SQL for review | `archery-cli workflow submit --name "Fix idx" --instance 1 --db mydb --sql "ALTER TABLE ..." --dry-run`, then `--confirm <token>` |
-| Execute a query | `archery-cli query run --instance mydb --db test --sql "SELECT * FROM users LIMIT 10"` |
+| Execute a query | `archery-cli query run --instance mydb --db test --sql "SELECT * FROM users LIMIT 10" --dangerous --dry-run`, then `--dangerous --confirm <token>` |
 | Get EXPLAIN plan | `archery-cli query explain --instance mydb --db test --sql "SELECT ..."` |
 | List instances | `archery-cli instance list --compact` |
 | Describe a table | `archery-cli instance describe --instance mydb --db test --table users` |
@@ -108,7 +111,25 @@ archery-cli workflow submit --name "Fix idx" --instance 1 --db mydb --sql "ALTER
 archery-cli workflow submit --name "Fix idx" --instance 1 --db mydb --sql "ALTER TABLE ..." --confirm ct_...
 ```
 
-Write commands include: `workflow submit`, `workflow audit`, `workflow execute`, `workflow cancel`, `query run`, `instance create`, `instance update`, `instance delete`, `diagnostic kill`, `binlog parse`, `binlog purge`, `archive apply`, `archive audit`, `archive switch`, `archive once`, `query favorite`.
+High/critical write commands add the T2 second gate:
+
+```bash
+archery-cli query run --instance prod --db app --sql "UPDATE ..." --dangerous --dry-run
+archery-cli query run --instance prod --db app --sql "UPDATE ..." --dangerous --confirm ct_...
+```
+
+Write commands include `auth login`, `auth logout`, `workflow submit`, `workflow audit`, `workflow execute`, `workflow cancel`, `query run`, `query favorite`, `instance create`, `instance update`, `instance delete`, `diagnostic kill`, `binlog parse`, `binlog purge`, `archive apply`, `archive audit`, `archive switch`, `archive once`, and `update`. Run `archery-cli reference` for the definitive installed-version list.
+
+## Self-update recipe
+
+After a successful self-update, read the changelog delta before continuing; this refreshes the agent's command knowledge.
+
+```bash
+archery-cli update --check
+archery-cli update --dry-run
+archery-cli update --confirm ct_...
+archery-cli changelog --since <previous_version>
+```
 
 ## Error decision tree
 
@@ -117,26 +138,25 @@ Check `ok` first, then act on exit code:
 | Exit code | Error code | Meaning | Agent behavior |
 |-----------|------------|---------|----------------|
 | 0 | -- | Success | Continue |
-| 1 | `E_SERVER` | Generic error | Read error message, decide |
+| 1 | `E_UNKNOWN` | Generic error | Read error message, decide |
 | 2 | `E_USAGE`/`E_VALIDATION` | Bad arguments | Don't retry, fix args |
 | 3 | `E_NOT_FOUND` | Resource not found | Don't retry, check IDs |
 | 4 | `E_AUTH`/`E_FORBIDDEN`/`E_CONFIG` | Auth failure | Don't retry, ask user for credentials or `archery-cli auth login` |
-| 5 | `E_CONFIRMATION_REQUIRED` | Missing confirm token | Run `--dry-run` first, then retry with `--confirm <token>` |
+| 5 | `E_CONFIRMATION_REQUIRED` | Missing confirm token or dangerous gate | Run `--dry-run` first; if `requiresDangerous` is true, include `--dangerous` in both steps |
 | 6 | `E_CONFLICT` | Stale or invalid token | Re-run `--dry-run`, get fresh token, retry |
-| 7 | `E_NETWORK`/`E_RATE_LIMITED` | Transient error | Back off and retry |
+| 7 | `E_NETWORK`/`E_RATE_LIMIT`/`E_SERVER` | Transient error | Back off and retry |
 | 8 | `E_TIMEOUT` | Timeout | Back off and retry |
 
 ## Permission and security boundary declarations
 
 | Tier | Commands | Notes |
 |------|----------|-------|
-| Read | `workflow list/detail`, `query run/explain/log`, `instance list/detail/resource/describe`, `slowquery review/history`, `diagnostic process/tablespace/locks/transactions`, `binlog list`, `archive list/log`, `dict *` | Safe, no side effects |
-| Write (medium) | `workflow submit/audit/cancel`, `query favorite`, `binlog parse`, `archive audit/switch` | Requires `--dry-run` then `--confirm` |
-| Write (high) | `workflow execute`, `instance create/update/delete`, `binlog purge`, `archive apply/once` | Requires `--dry-run` then `--confirm`; confirm with user before executing |
-| Dangerous (critical) | `diagnostic kill` | Kills database threads; always confirm with user first |
+| Read | `workflow list/detail/sqlcheck`, `query explain/log/generate`, `instance list/detail/resource/describe`, `slowquery review/history/optimize`, `diagnostic process/tablespace/locks/transactions`, `binlog list`, `archive list/log`, `dict *`, `user list/groups/resource-groups`, `auth status`, `context`, `doctor`, `reference`, `changelog` | Safe, no external writes |
+| Write (medium) | `auth login/logout`, `workflow submit/audit/cancel`, `query favorite`, `binlog parse`, `archive audit/switch`, `update` | Requires `--dry-run` then `--confirm` |
+| Write (high) | `query run`, `workflow execute`, `instance create/update/delete`, `binlog purge`, `archive apply/once` | Requires `--dangerous --dry-run` then `--dangerous --confirm`; confirm with user before executing |
+| Dangerous (critical) | `diagnostic kill` | Requires `--dangerous --dry-run` then `--dangerous --confirm`; kills database threads |
 
 - The agent cannot self-escalate permissions.
-- `--force` skips interactive confirmation; use only when user explicitly asks.
 - All write operations are logged to `~/.archery-cli/audit/`.
 
 ## Untrusted-content convention
@@ -165,15 +185,16 @@ archery-cli workflow submit --name "Add email index" --instance 1 --db mydb --sq
 archery-cli workflow detail 42
 
 # After approval, execute
-archery-cli workflow execute 42 --mode auto --dry-run
-archery-cli workflow execute 42 --mode auto --confirm ct_...
+archery-cli workflow execute 42 --mode auto --dangerous --dry-run
+archery-cli workflow execute 42 --mode auto --dangerous --confirm ct_...
 ```
 
 ### 2. Query a database and analyze results
 
 ```bash
 # Execute a query
-archery-cli query run --instance prod-mysql --db mydb --sql "SELECT id, name, email FROM users WHERE status = 'active' LIMIT 100"
+archery-cli query run --instance prod-mysql --db mydb --sql "SELECT id, name, email FROM users WHERE status = 'active' LIMIT 100" --dangerous --dry-run
+archery-cli query run --instance prod-mysql --db mydb --sql "SELECT id, name, email FROM users WHERE status = 'active' LIMIT 100" --dangerous --confirm ct_...
 
 # Get EXPLAIN plan for optimization
 archery-cli query explain --instance prod-mysql --db mydb --sql "SELECT * FROM orders WHERE user_id = 123 AND created_at > '2024-01-01'"
@@ -211,8 +232,8 @@ archery-cli diagnostic transactions --instance prod-mysql
 archery-cli diagnostic tablespace --instance prod-mysql
 
 # Kill a blocking thread (DANGEROUS -- confirm with user first)
-archery-cli diagnostic kill --instance prod-mysql --threads "12345,12346" --dry-run
-archery-cli diagnostic kill --instance prod-mysql --threads "12345,12346" --confirm ct_...
+archery-cli diagnostic kill --instance prod-mysql --threads "12345,12346" --dangerous --dry-run
+archery-cli diagnostic kill --instance prod-mysql --threads "12345,12346" --dangerous --confirm ct_...
 ```
 
 ### 5. Browse data dictionary and table structure

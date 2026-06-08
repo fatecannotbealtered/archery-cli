@@ -102,6 +102,7 @@ func TestLoad_FromFile(t *testing.T) {
 				},
 			},
 		}
+		t.Cleanup(func() { _ = NewTokenStore().DeleteTokens("us-east", "alice") })
 		if err := Save(cfg); err != nil {
 			t.Fatalf("Save: %v", err)
 		}
@@ -119,8 +120,35 @@ func TestLoad_FromFile(t *testing.T) {
 		if region.Username != "alice" {
 			t.Errorf("Username = %q, want alice", region.Username)
 		}
-		if region.Password != "filepass" {
-			t.Errorf("Password = %q, want filepass", region.Password)
+		if region.Password != "" {
+			t.Errorf("Password = %q, want empty because disk passwords are ignored", region.Password)
+		}
+	})
+}
+
+func TestLoad_IgnoresDiskSecrets(t *testing.T) {
+	withTempHome(t, func(_ string) {
+		clearArcheryEnv(t)
+		writeConfigFile(t, &Config{
+			DefaultRegion: "default",
+			Regions: map[string]RegionConfig{
+				"default": {
+					URL:          "https://archery.example.com",
+					Username:     "alice",
+					Password:     "disk-password",
+					AccessToken:  "disk-access-token",
+					RefreshToken: "disk-refresh-token",
+					TokenExpiry:  "2026-06-08T12:00:00Z",
+				},
+			},
+		})
+		got, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		region := got.Regions["default"]
+		if region.Password != "" || region.AccessToken != "" || region.RefreshToken != "" || region.TokenExpiry != "" {
+			t.Fatalf("disk secrets should be ignored, got password=%q access=%q refresh=%q expiry=%q", region.Password, region.AccessToken, region.RefreshToken, region.TokenExpiry)
 		}
 	})
 }
@@ -402,17 +430,17 @@ func TestMustLoad_ValidConfig(t *testing.T) {
 				"default": {
 					URL:      "https://archery.example.com",
 					Username: "alice",
-					Password: "pass",
 				},
 			},
 		})
+		t.Setenv("ARCHERY_CLI_PASSWORD", "envpass")
 		if _, err := MustLoad(); err != nil {
 			t.Errorf("unexpected error with valid config: %v", err)
 		}
 	})
 }
 
-func TestMustLoad_AllowsCachedTokenWithoutCredentials(t *testing.T) {
+func TestMustLoad_RejectsDiskTokenWithoutCredentials(t *testing.T) {
 	withTempHome(t, func(_ string) {
 		clearArcheryEnv(t)
 		writeConfigFile(t, &Config{
@@ -424,8 +452,8 @@ func TestMustLoad_AllowsCachedTokenWithoutCredentials(t *testing.T) {
 				},
 			},
 		})
-		if _, err := MustLoad(); err != nil {
-			t.Errorf("unexpected error with cached token: %v", err)
+		if _, err := MustLoad(); err == nil {
+			t.Error("expected disk token to be ignored and credentials to be missing")
 		}
 	})
 }
@@ -727,26 +755,19 @@ func TestDelete_Error(t *testing.T) {
 
 // --- TestIsConfigured ---
 
-func TestIsConfigured_WithCredentials(t *testing.T) {
+func TestIsConfigured_WithEnvCredentials(t *testing.T) {
 	withTempHome(t, func(_ string) {
 		clearArcheryEnv(t)
-		writeConfigFile(t, &Config{
-			DefaultRegion: "default",
-			Regions: map[string]RegionConfig{
-				"default": {
-					URL:      "https://archery.example.com",
-					Username: "alice",
-					Password: "pass",
-				},
-			},
-		})
+		t.Setenv("ARCHERY_CLI_URL", "https://archery.example.com")
+		t.Setenv("ARCHERY_CLI_USERNAME", "alice")
+		t.Setenv("ARCHERY_CLI_PASSWORD", "pass")
 		if !IsConfigured() {
 			t.Error("expected configured")
 		}
 	})
 }
 
-func TestIsConfigured_WithAccessToken(t *testing.T) {
+func TestIsConfigured_IgnoresDiskAccessToken(t *testing.T) {
 	withTempHome(t, func(_ string) {
 		clearArcheryEnv(t)
 		writeConfigFile(t, &Config{
@@ -758,8 +779,8 @@ func TestIsConfigured_WithAccessToken(t *testing.T) {
 				},
 			},
 		})
-		if !IsConfigured() {
-			t.Error("expected configured with access token")
+		if IsConfigured() {
+			t.Error("expected disk access token to be ignored")
 		}
 	})
 }

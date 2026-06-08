@@ -9,27 +9,26 @@ AI-Agent-friendly CLI for the [Archery](https://github.com/hhyo/Archery) SQL aud
 ### CLI binary
 
 ```bash
-# npm (recommended)
-npm install -g @fatecannotbealtered/archery-cli
-
-# Or download from GitHub Releases
-# https://github.com/fatecannotbealtered/archery-cli/releases
+# Current state: unreleased source checkout
+go install ./cmd/archery-cli
 ```
 
 ### Agent Skill
 
 ```bash
-npx skills add archery-cli -y -g
+npx skills add ./skills/archery-cli -y -g
 ```
 
 ## Quick Start
 
 ```bash
 # 1. Configure
-archery-cli auth login --username <USER> --password <PASS> --region default
+archery-cli auth login --url https://archery.example.com --username <USER> --password <PASS> --region default --dry-run
+archery-cli auth login --url https://archery.example.com --username <USER> --password <PASS> --region default --confirm <confirm_token>
 
 # 2. Verify
-archery-cli doctor
+archery-cli context --compact
+archery-cli doctor --compact
 
 # 3. First command
 archery-cli instance list --compact
@@ -56,6 +55,7 @@ Run `archery-cli reference` for the full machine-readable command tree.
 ## Configuration
 
 archery-cli stores config in `~/.archery-cli/config.json` (file permissions `0600`).
+Credentials are stored only in the OS keyring. Passwords and tokens are never written to the config file; if the keyring is unavailable, use environment variables for one-shot commands.
 
 Environment variables (override config file):
 
@@ -65,6 +65,10 @@ Environment variables (override config file):
 | `ARCHERY_CLI_USERNAME` | Username |
 | `ARCHERY_CLI_PASSWORD` | Password |
 | `ARCHERY_CLI_REGION` | Active region name |
+| `ARCHERY_CLI_INSECURE` | Skip TLS certificate verification for HTTPS when explicitly set |
+| `ARCHERY_CLI_TIMEOUT` | HTTP timeout |
+| `ARCHERY_CLI_MAX_RETRIES` | Retry count for transient HTTP failures |
+| `ARCHERY_CLI_USER_AGENT` | Custom HTTP user agent |
 | `NO_COLOR` | Disable colored output |
 
 ## For AI Agents
@@ -74,6 +78,7 @@ Environment variables (override config file):
 - **Security**: [.agent/SEC-SPEC.md](.agent/SEC-SPEC.md)
 - **Capabilities**: run `archery-cli reference`
 - **Pre-flight**: run `archery-cli context` then `archery-cli doctor`
+- **Dangerous writes**: if `reference` reports `requiresDangerous`, include `--dangerous` in both `--dry-run` and `--confirm` steps
 
 ## Development
 

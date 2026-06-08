@@ -85,10 +85,10 @@ func TestHost(t *testing.T) {
 func TestAPIPath(t *testing.T) {
 	c := NewClient("https://archery.example.com")
 	cases := map[string]string{
-		"/user":       "/api/user",
-		"user":        "/api/user",
-		"/workflows":  "/api/workflows",
-		"workflows":   "/api/workflows",
+		"/user":      "/api/user",
+		"user":       "/api/user",
+		"/workflows": "/api/workflows",
+		"workflows":  "/api/workflows",
 	}
 	for in, want := range cases {
 		if got := c.APIPath(in); got != want {

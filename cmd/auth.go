@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"syscall"
@@ -34,10 +35,11 @@ var authLoginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Authenticate with Archery and cache JWT tokens",
 	Long: `Authenticate using username and password, obtain JWT access/refresh tokens,
-and save them to the config file.
+store tokens in the OS keyring, and save only non-secret region metadata to config.
 
 Examples:
-  archery-cli auth login --username admin --password secret --region prod
+  archery-cli auth login --url https://archery.example.com --username admin --password secret --region prod --dry-run
+  archery-cli auth login --url https://archery.example.com --username admin --password secret --region prod --confirm <confirm_token>
   archery-cli auth login  # interactive mode`,
 	RunE: runAuthLogin,
 }
@@ -58,6 +60,7 @@ var (
 	authLoginUsernameFlag string
 	authLoginPasswordFlag string
 	authLoginRegionFlag   string
+	authLoginURLFlag      string
 )
 
 func init() {
@@ -69,6 +72,7 @@ func init() {
 	authLoginCmd.Flags().StringVar(&authLoginUsernameFlag, "username", "", "Archery username")
 	authLoginCmd.Flags().StringVar(&authLoginPasswordFlag, "password", "", "Archery password")
 	authLoginCmd.Flags().StringVar(&authLoginRegionFlag, "region", "", "Region name to save credentials under")
+	authLoginCmd.Flags().StringVar(&authLoginURLFlag, "url", "", "Archery URL")
 
 	markWrite(authLoginCmd)
 	markWrite(authLogoutCmd)
@@ -79,7 +83,10 @@ func init() {
 
 func runAuthLogin(_ *cobra.Command, _ []string) error {
 	// Determine region name
-	cfg, _ := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		return failWithCode("reading config: "+err.Error(), ExitAuth, output.E_CONFIG)
+	}
 	regionName := authLoginRegionFlag
 	if regionName == "" {
 		regionName = regionFlag
@@ -94,14 +101,24 @@ func runAuthLogin(_ *cobra.Command, _ []string) error {
 	// Determine credentials
 	username := authLoginUsernameFlag
 	password := authLoginPasswordFlag
-
-	// Non-interactive mode: both --username and --password provided
-	if username != "" && password != "" {
-		return doAuthLogin(regionName, username, password)
+	regionURL := strings.TrimSpace(authLoginURLFlag)
+	if regionURL == "" && cfg != nil {
+		if r, ok := cfg.Regions[regionName]; ok {
+			regionURL = r.URL
+		}
+	}
+	if regionURL == "" {
+		regionURL = firstNonEmpty(os.Getenv("ARCHERY_CLI_URL"))
 	}
 
 	if jsonMode {
-		return failArg("auth login requires --username and --password in json mode; use --format text for interactive login")
+		if regionURL == "" || username == "" || password == "" {
+			return failArg("auth login requires --url, --username, and --password in json mode; use --format text for interactive login")
+		}
+		if err := validateAuthURL(regionURL); err != nil {
+			return err
+		}
+		return doAuthLogin(cfg, regionName, regionURL, username, password)
 	}
 
 	// Interactive mode
@@ -112,16 +129,6 @@ func runAuthLogin(_ *cobra.Command, _ []string) error {
 	output.Gray("  ────────────────────────────────────────")
 	fmt.Println()
 
-	// Get region URL from config or prompt
-	var regionURL string
-	if cfg != nil {
-		if r, ok := cfg.Regions[regionName]; ok {
-			regionURL = r.URL
-		}
-	}
-	if regionURL == "" {
-		regionURL = firstNonEmpty(os.Getenv("ARCHERY_CLI_URL"))
-	}
 	if regionURL == "" {
 		fmt.Print("  Archery URL (e.g. https://archery.example.com): ")
 		regionURL, _ = reader.ReadString('\n')
@@ -130,8 +137,8 @@ func runAuthLogin(_ *cobra.Command, _ []string) error {
 	if regionURL == "" {
 		return failArg("URL is required")
 	}
-	if !strings.HasPrefix(regionURL, "https://") && !strings.HasPrefix(regionURL, "http://") {
-		return failArg("URL must start with https:// (or http:// for local development)")
+	if err := validateAuthURL(regionURL); err != nil {
+		return err
 	}
 
 	if username == "" {
@@ -163,49 +170,47 @@ func runAuthLogin(_ *cobra.Command, _ []string) error {
 		return failArg("password cannot be empty")
 	}
 
-	// Save URL to config before login
+	return doAuthLogin(cfg, regionName, regionURL, username, password)
+}
+
+func doAuthLogin(cfg *config.Config, regionName, regionURL, username, password string) error {
 	if cfg == nil {
 		cfg = &config.Config{Regions: make(map[string]config.RegionConfig)}
 	}
-	region := cfg.Regions[regionName]
-	region.URL = regionURL
-	region.Username = username
-	region.Password = password
-	cfg.Regions[regionName] = region
-	if cfg.DefaultRegion == "" {
-		cfg.DefaultRegion = regionName
-	}
-	if err := config.Save(cfg); err != nil {
-		return failWithCode("failed to save config: "+err.Error(), ExitNetwork, output.E_NETWORK)
+	if cfg.Regions == nil {
+		cfg.Regions = make(map[string]config.RegionConfig)
 	}
 
-	return doAuthLogin(regionName, username, password)
-}
-
-func doAuthLogin(regionName, username, password string) error {
-	// Load config to get the URL
-	cfg, err := config.Load()
-	if err != nil {
-		return failWithCode("reading config: "+err.Error(), ExitAuth, output.E_CONFIG)
+	detail := map[string]any{
+		"region":   regionName,
+		"url":      regionURL,
+		"username": username,
 	}
-
-	region, ok := cfg.Regions[regionName]
-	if !ok || region.URL == "" {
-		return failArg(fmt.Sprintf("region %q has no URL configured", regionName))
+	confirmPayload := map[string]any{
+		"region":   regionName,
+		"url":      regionURL,
+		"username": username,
+		"password": password,
 	}
-
-	if dryRunOutput("login and cache JWT tokens", map[string]any{"region": regionName, "url": region.URL}) {
+	if markDryRunOrConfirmWithPayload("login and cache JWT tokens", detail, confirmPayload) {
 		return nil
 	}
+	if !config.KeyringAvailable() {
+		return failWithCode("OS credential store unavailable; cannot persist credentials securely. Enable the OS keyring or use ARCHERY_CLI_URL, ARCHERY_CLI_USERNAME, and ARCHERY_CLI_PASSWORD for one-shot commands.", ExitAuth, output.E_CONFIG)
+	}
 
-	output.Gray("  Authenticating...")
-	client := api.NewClient(region.URL)
+	if !jsonMode {
+		output.Gray("  Authenticating...")
+	}
+	client := api.NewClient(regionURL)
 	accessToken, refreshToken, err := client.Auth.Login(apiCtx(), username, password)
 	if err != nil {
 		return handleAPIError(err)
 	}
 
 	// Update config with tokens
+	region := cfg.Regions[regionName]
+	region.URL = regionURL
 	region.AccessToken = accessToken
 	region.RefreshToken = refreshToken
 	region.Username = username
@@ -222,17 +227,17 @@ func doAuthLogin(regionName, username, password string) error {
 		output.PrintJSON(map[string]any{
 			"status":  "ok",
 			"region":  regionName,
-			"url":     region.URL,
+			"url":     regionURL,
 			"message": "JWT tokens cached successfully",
 		})
 		return nil
 	}
 
 	fmt.Println()
-	output.Success(fmt.Sprintf("Logged in to %s (region: %s)", region.URL, regionName))
+	output.Success(fmt.Sprintf("Logged in to %s (region: %s)", regionURL, regionName))
 	storeLabel := config.CredentialStoreLabel(cfg)
 	if storeLabel == "" {
-		storeLabel = config.CredentialStoreFile
+		storeLabel = config.CredentialStoreNone
 	}
 	output.Info(fmt.Sprintf("JWT tokens cached (%s)", storeLabel))
 	fmt.Println()
@@ -249,16 +254,16 @@ func runAuthLogout(_ *cobra.Command, _ []string) error {
 
 	regionName := activeRegionName(cfg)
 
-	if dryRunOutput("clear cached tokens", map[string]any{"region": regionName}) {
-		return nil
-	}
-
 	region, ok := cfg.Regions[regionName]
 	if !ok {
 		return failNotFound(fmt.Sprintf("region %q not found", regionName))
 	}
 
-	// Clear tokens from keyring and config
+	if markDryRunOrConfirm("clear cached tokens", map[string]any{"region": regionName, "username": region.Username}) {
+		return nil
+	}
+
+	// Clear tokens from keyring and any in-memory legacy fields.
 	ts := config.NewTokenStore()
 	_ = ts.DeleteTokens(regionName, region.Username)
 
@@ -347,4 +352,21 @@ func firstNonEmpty(candidates ...string) string {
 		}
 	}
 	return ""
+}
+
+func validateAuthURL(regionURL string) error {
+	if !strings.HasPrefix(regionURL, "https://") && !strings.HasPrefix(regionURL, "http://") {
+		return failArg("URL must start with https:// (or http:// for local development)")
+	}
+	parsed, err := url.Parse(regionURL)
+	if err != nil || parsed.Host == "" {
+		return failArg("URL must be a valid Archery base URL")
+	}
+	if parsed.Scheme == "http" {
+		host := strings.ToLower(parsed.Hostname())
+		if host != "localhost" && host != "127.0.0.1" && host != "::1" {
+			return failArg("http:// is only allowed for loopback hosts (localhost, 127.0.0.1, [::1])")
+		}
+	}
+	return nil
 }

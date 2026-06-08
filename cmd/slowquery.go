@@ -375,14 +375,15 @@ var slowqueryOptimizeCmd = &cobra.Command{
 
 		if jsonMode {
 			fields := getFieldsFlag(cmd)
+			m := map[string]any{
+				"tool":   out.Tool,
+				"result": out.Result,
+			}
+			tagCommonUntrusted(m)
 			if len(fields) > 0 {
-				m := map[string]any{
-					"tool":   out.Tool,
-					"result": out.Result,
-				}
 				output.PrintJSON(output.FilterMap(m, fields))
 			} else {
-				output.PrintJSON(out)
+				output.PrintJSON(m)
 			}
 			return nil
 		}
@@ -401,14 +402,14 @@ var slowqueryOptimizeCmd = &cobra.Command{
 // slowqueryInternalResponse is the Archery internal API response shape for
 // slowquery review and history endpoints.
 type slowqueryInternalResponse struct {
-	Status int                     `json:"status"`
-	Msg    string                  `json:"msg"`
-	Data   slowqueryPageData       `json:"data"`
+	Status int               `json:"status"`
+	Msg    string            `json:"msg"`
+	Data   slowqueryPageData `json:"data"`
 }
 
 type slowqueryPageData struct {
-	Total int                `json:"total"`
-	Rows  []slowqueryRowRaw  `json:"rows"`
+	Total int               `json:"total"`
+	Rows  []slowqueryRowRaw `json:"rows"`
 }
 
 type slowqueryRowRaw struct {
@@ -427,8 +428,8 @@ type slowqueryRowRaw struct {
 }
 
 func slowqueryRowToMap(r slowqueryRowRaw) map[string]any {
-	return map[string]any{
-		"id":             r.ID,
+	return normalizeAgentMap(map[string]any{
+		"id":             strconv.Itoa(r.ID),
 		"sql_id":         r.SQLID,
 		"sql_text":       r.SQLText,
 		"db_name":        r.DBName,
@@ -440,5 +441,5 @@ func slowqueryRowToMap(r slowqueryRowRaw) map[string]any {
 		"rows_sent_avg":  r.RowsSentAvg,
 		"first_seen":     r.FirstSeen,
 		"last_seen":      r.LastSeen,
-	}
+	})
 }

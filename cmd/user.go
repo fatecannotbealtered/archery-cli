@@ -95,7 +95,7 @@ var userListCmd = &cobra.Command{
 			Results  []userResult `json:"results"`
 		}
 		if err := json.Unmarshal(data, &page); err != nil {
-			return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+			return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 		}
 
 		if jsonMode {
@@ -188,7 +188,7 @@ var userGroupsCmd = &cobra.Command{
 			Results  []groupResult `json:"results"`
 		}
 		if err := json.Unmarshal(data, &page); err != nil {
-			return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+			return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 		}
 
 		if jsonMode {
@@ -284,7 +284,7 @@ var userResourceGroupsCmd = &cobra.Command{
 			Results  []resourceGroupResult `json:"results"`
 		}
 		if err := json.Unmarshal(data, &page); err != nil {
-			return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+			return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 		}
 
 		if jsonMode {
@@ -332,7 +332,7 @@ var userResourceGroupsCmd = &cobra.Command{
 
 func userResultToMap(u userResult) map[string]any {
 	m := map[string]any{
-		"id":       u.ID,
+		"id":       strconv.Itoa(u.ID),
 		"username": u.Username,
 		"isActive": u.IsActive,
 	}
@@ -343,21 +343,26 @@ func userResultToMap(u userResult) map[string]any {
 		m["email"] = u.Email
 	}
 	m["isStaff"] = u.IsStaff
+	tagCommonUntrusted(m)
 	return m
 }
 
 func groupResultToMap(g groupResult) map[string]any {
-	return map[string]any{
-		"id":   g.ID,
+	m := map[string]any{
+		"id":   strconv.Itoa(g.ID),
 		"name": g.Name,
 	}
+	tagCommonUntrusted(m)
+	return m
 }
 
 func resourceGroupResultToMap(rg resourceGroupResult) map[string]any {
-	return map[string]any{
-		"id":          rg.ID,
+	m := map[string]any{
+		"id":          strconv.Itoa(rg.ID),
 		"name":        rg.Name,
 		"activeUsers": rg.ActiveUsers,
 		"bindUsers":   rg.BindUsers,
 	}
+	tagCommonUntrusted(m)
+	return m
 }

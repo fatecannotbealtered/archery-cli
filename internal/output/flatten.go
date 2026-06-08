@@ -21,7 +21,49 @@ func FilterMap(m map[string]any, fieldNames []string) map[string]any {
 			result[origKey] = m[origKey]
 		}
 	}
+	if untrusted := filteredUntrustedFields(m, result); len(untrusted) > 0 {
+		result["_untrusted"] = untrusted
+	}
 	return result
+}
+
+func filteredUntrustedFields(source, result map[string]any) []string {
+	raw, ok := source["_untrusted"]
+	if !ok {
+		return nil
+	}
+
+	resultIndex := make(map[string]string, len(result))
+	for k := range result {
+		resultIndex[strings.ToLower(k)] = k
+	}
+
+	var sourceFields []string
+	switch x := raw.(type) {
+	case []string:
+		sourceFields = x
+	case []any:
+		for _, item := range x {
+			if s, ok := item.(string); ok {
+				sourceFields = append(sourceFields, s)
+			}
+		}
+	default:
+		return nil
+	}
+
+	out := []string{}
+	seen := map[string]bool{}
+	for _, field := range sourceFields {
+		if field == "" {
+			continue
+		}
+		if canonical, ok := resultIndex[strings.ToLower(field)]; ok && !seen[canonical] {
+			out = append(out, canonical)
+			seen[canonical] = true
+		}
+	}
+	return out
 }
 
 // ListMeta describes pagination for list command JSON output.
@@ -81,13 +123,13 @@ func WorkflowToMap(f FlatWorkflow) map[string]any {
 
 // FlatInstance is a token-efficient representation of an Archery instance.
 type FlatInstance struct {
-	ID      int    `json:"id"`
-	Name    string `json:"name"`
-	Type    string `json:"type,omitempty"`
-	Host    string `json:"host,omitempty"`
-	Port    int    `json:"port,omitempty"`
-	User    string `json:"user,omitempty"`
-	WebURL  string `json:"webUrl,omitempty"`
+	ID     int    `json:"id"`
+	Name   string `json:"name"`
+	Type   string `json:"type,omitempty"`
+	Host   string `json:"host,omitempty"`
+	Port   int    `json:"port,omitempty"`
+	User   string `json:"user,omitempty"`
+	WebURL string `json:"webUrl,omitempty"`
 }
 
 // InstanceToMap converts a FlatInstance to a map for field filtering.

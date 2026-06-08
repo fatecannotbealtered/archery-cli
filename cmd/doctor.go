@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/fatecannotbealtered/archery-cli/internal/api"
@@ -15,6 +16,8 @@ var doctorCmd = &cobra.Command{
 	Short: "Check configuration, connectivity, and API availability",
 	RunE:  runDoctor,
 }
+
+const skillMinVersion = "Unreleased"
 
 func init() {
 	rootCmd.AddCommand(doctorCmd)
@@ -46,6 +49,12 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 			fixPtr = &fix
 		}
 		result.Checks = append(result.Checks, doctorCheck{Check: name, Status: status, Fix: fixPtr})
+	}
+
+	if versionMeetsSkillMinimum(version, skillMinVersion) {
+		check("version", "pass", "")
+	} else {
+		check("version", "fail", "upgrade archery-cli to at least "+skillMinVersion)
 	}
 
 	cfg, err := config.Load()
@@ -85,25 +94,22 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	result.ConfigExists = true
 	result.URL = region.URL
 	result.Username = region.Username
-	result.CredentialStore = config.CredentialStoreLabel(cfg)
 	check("config", "pass", "")
 
 	// TLS security check
 	if InsecureTLS() {
-		check("tls", "warning", "TLS certificate verification is disabled (--insecure); re-enable for production use")
+		check("tls", "warn", "TLS certificate verification is disabled (--insecure); re-enable for production use")
 	} else {
 		check("tls", "pass", "")
 	}
 
 	// Credential store check
-	storeLabel := result.CredentialStore
-	if storeLabel == "" {
-		storeLabel = "file"
-	}
 	if config.KeyringAvailable() {
-		check("credential-store", storeLabel+" (OS keyring available)", "")
+		result.CredentialStore = config.CredentialStoreKeyring
+		check("credential-store", "pass", "")
 	} else {
-		check("credential-store", storeLabel+" (OS keyring unavailable, using plaintext fallback)", "")
+		result.CredentialStore = config.CredentialStoreNone
+		check("credential-store", "warn", "OS keyring unavailable; auth login cannot persist credentials securely. Use env vars for one-shot commands or enable the OS credential store")
 	}
 
 	// Test connectivity by attempting to authenticate or verify token
@@ -216,12 +222,24 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	if result.Username != "" {
 		output.Success(fmt.Sprintf("Authenticated as %s", result.Username))
 	}
-	output.Gray(fmt.Sprintf("  Credential store: %s", storeLabel))
+	output.Gray(fmt.Sprintf("  Credential store: %s", result.CredentialStore))
 	if result.LatencyMs >= 0 {
 		output.Gray(fmt.Sprintf("  Latency: %dms", result.LatencyMs))
 	}
 	fmt.Println()
 	return nil
+}
+
+func versionMeetsSkillMinimum(current, minimum string) bool {
+	current = strings.TrimSpace(current)
+	minimum = strings.TrimSpace(minimum)
+	if minimum == "" || strings.EqualFold(minimum, "Unreleased") {
+		return true
+	}
+	if current == "" || current == "dev" || current == "(devel)" || strings.Contains(current, "devel") {
+		return true
+	}
+	return compareVersions(current, minimum) >= 0
 }
 
 // asAPI is a small helper to keep doctor.go decoupled from errors.As call site sprawl.

@@ -25,7 +25,7 @@ func failAuth(msg string) error {
 
 // failConfirmRequired reports a missing non-interactive confirmation token (exit 5).
 func failConfirmRequired(msg string) error {
-	emitError(msg, ExitConfirm, output.E_CONFIRM_REQUIRED)
+	emitError(msg, ExitConfirm, output.E_CONFIRMATION_REQUIRED)
 	return ErrSilent
 }
 

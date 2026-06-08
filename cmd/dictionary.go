@@ -96,7 +96,7 @@ var dictTablesCmd = &cobra.Command{
 			fields := getFieldsFlag(cmd)
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 			}
 			items := extractDictRows(raw)
 			if len(fields) > 0 {
@@ -168,7 +168,7 @@ var dictTableInfoCmd = &cobra.Command{
 			fields := getFieldsFlag(cmd)
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 			}
 			result := extractDictData(raw)
 			if result != nil && len(fields) > 0 {
@@ -176,12 +176,14 @@ var dictTableInfoCmd = &cobra.Command{
 					result = output.FilterMap(m, fields)
 				}
 			}
-			output.PrintJSON(map[string]any{
+			out := map[string]any{
 				"instance": instance,
 				"db":       db,
 				"table":    table,
 				"info":     result,
-			})
+			}
+			tagCommonUntrusted(out)
+			output.PrintJSON(out)
 			return nil
 		}
 
@@ -267,7 +269,7 @@ var dictViewsCmd = &cobra.Command{
 			fields := getFieldsFlag(cmd)
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 			}
 			items := extractDictRows(raw)
 			if len(fields) > 0 {
@@ -330,7 +332,7 @@ var dictTriggersCmd = &cobra.Command{
 			fields := getFieldsFlag(cmd)
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 			}
 			items := extractDictRows(raw)
 			if len(fields) > 0 {
@@ -393,7 +395,7 @@ var dictProceduresCmd = &cobra.Command{
 			fields := getFieldsFlag(cmd)
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 			}
 			items := extractDictRows(raw)
 			if len(fields) > 0 {
@@ -459,12 +461,14 @@ var dictExportCmd = &cobra.Command{
 		}
 
 		// JSON mode: wrap HTML in envelope
-		output.PrintJSON(map[string]any{
+		result := map[string]any{
 			"instance": instance,
 			"db":       db,
 			"format":   "html",
 			"content":  string(data),
-		})
+		}
+		tagCommonUntrusted(result)
+		output.PrintJSON(result)
 		return nil
 	},
 }
@@ -495,7 +499,7 @@ func extractDictRows(raw any) []map[string]any {
 				items := make([]map[string]any, 0, len(arr))
 				for _, v := range arr {
 					if item, ok := v.(map[string]any); ok {
-						items = append(items, item)
+						items = append(items, normalizeAgentMap(item))
 					}
 				}
 				return items
@@ -507,7 +511,7 @@ func extractDictRows(raw any) []map[string]any {
 		items := make([]map[string]any, 0, len(arr))
 		for _, v := range arr {
 			if item, ok := v.(map[string]any); ok {
-				items = append(items, item)
+				items = append(items, normalizeAgentMap(item))
 			}
 		}
 		return items
@@ -531,10 +535,10 @@ func extractDictData(raw any) any {
 	}
 	if m, ok := raw.(map[string]any); ok {
 		if data, ok := m["data"]; ok {
-			return data
+			return normalizeAgentValue(data)
 		}
 	}
-	return raw
+	return normalizeAgentValue(raw)
 }
 
 // printDictField prints a labeled field for text mode detail output.

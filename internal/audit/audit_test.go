@@ -61,6 +61,13 @@ func TestLogEntry(t *testing.T) {
 	if got["ms"].(float64) != 15 {
 		t.Errorf("ms = %v, want 15", got["ms"])
 	}
+	ts, err := time.Parse(time.RFC3339Nano, got["ts"].(string))
+	if err != nil {
+		t.Fatalf("ts is not RFC3339Nano: %v", err)
+	}
+	if ts.Location() != time.UTC {
+		t.Errorf("ts location = %v, want UTC", ts.Location())
+	}
 }
 
 func TestSanitizeArgs(t *testing.T) {

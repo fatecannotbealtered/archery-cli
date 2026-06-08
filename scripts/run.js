@@ -11,7 +11,7 @@ try {
   execFileSync(bin, process.argv.slice(2), { stdio: "inherit" });
 } catch (e) {
   if (e.code === "ENOENT") {
-    console.error("Binary not found. Run 'npm install -g @fatecannotbealtered/archery-cli' to reinstall.");
+    console.error(`Binary not found. This package is unreleased; build from source with 'go build -o bin/archery-cli${ext} ./cmd/archery-cli'.`);
   }
   process.exit(e.status || 1);
 }

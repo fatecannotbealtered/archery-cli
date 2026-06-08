@@ -13,11 +13,11 @@ const (
 
 	// CredentialStoreKeyring stores secrets in the OS credential manager.
 	CredentialStoreKeyring = "keyring"
-	// CredentialStoreFile stores secrets in config.json (discouraged).
-	CredentialStoreFile = "file"
+	// CredentialStoreNone means no persistent credential store is available.
+	CredentialStoreNone = "none"
 )
 
-// CredentialStore abstracts secret persistence (OS keyring or plaintext file).
+// CredentialStore abstracts secret persistence.
 type CredentialStore interface {
 	// Store saves a secret value under the given service and key.
 	Store(service, key, value string) error
@@ -65,28 +65,6 @@ func (k *KeyringStore) IsAvailable() bool {
 	return true
 }
 
-// FileStore implements CredentialStore backed by the config file (plaintext).
-type FileStore struct{}
-
-func (f *FileStore) Store(service, key, value string) error {
-	// FileStore is a no-op for individual key/value pairs;
-	// secrets are persisted as part of the full config Save.
-	return nil
-}
-
-func (f *FileStore) Retrieve(service, key string) (string, error) {
-	// FileStore retrieval is handled by reading the config file directly.
-	return "", errors.New("not found in file store")
-}
-
-func (f *FileStore) Delete(service, key string) error {
-	return nil
-}
-
-func (f *FileStore) IsAvailable() bool {
-	return true
-}
-
 // credentialKey builds a stable keyring account name for region + username.
 func credentialKey(region, username string) string {
 	region = strings.TrimSpace(region)
@@ -97,7 +75,7 @@ func credentialKey(region, username string) string {
 	return region + "|jwt|" + user
 }
 
-// TokenStore manages JWT token persistence with keyring-first, file-fallback strategy.
+// TokenStore manages JWT token persistence through the OS keyring.
 type TokenStore struct {
 	keyring *KeyringStore
 }
@@ -112,11 +90,11 @@ func (ts *TokenStore) ActiveStore() string {
 	if ts.keyring.IsAvailable() {
 		return CredentialStoreKeyring
 	}
-	return CredentialStoreFile
+	return CredentialStoreNone
 }
 
 // SaveTokens persists access and refresh tokens for a region.
-// Tokens are stored in the keyring when available; otherwise they remain in the config file.
+// Tokens are stored in the keyring. If the keyring is unavailable, persistence fails.
 func (ts *TokenStore) SaveTokens(region, username, accessToken, refreshToken string) error {
 	if ts.keyring.IsAvailable() {
 		key := credentialKey(region, username)
@@ -126,8 +104,7 @@ func (ts *TokenStore) SaveTokens(region, username, accessToken, refreshToken str
 		}
 		return nil
 	}
-	// Fallback: tokens stay in config file (caller must Save the config).
-	return nil
+	return errors.New("OS credential store unavailable")
 }
 
 // LoadTokens retrieves access and refresh tokens for a region.
@@ -148,7 +125,7 @@ func (ts *TokenStore) LoadTokens(region, username string) (accessToken, refreshT
 		}
 		return parts[0], "", nil
 	}
-	// Fallback: tokens are in the config file.
+	// No persistent credential store is available.
 	return "", "", nil
 }
 
@@ -162,10 +139,4 @@ func (ts *TokenStore) DeleteTokens(region, username string) error {
 		}
 	}
 	return nil
-}
-
-// MigrateTokensToFile moves tokens from the keyring back into the config file.
-// Used when downgrading from keyring to file store.
-func (ts *TokenStore) MigrateTokensToFile(region, username string) (accessToken, refreshToken string, err error) {
-	return ts.LoadTokens(region, username)
 }

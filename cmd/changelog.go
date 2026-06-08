@@ -1,16 +1,15 @@
 package cmd
 
 import (
-	_ "embed"
 	"fmt"
 	"strings"
 
+	archerycli "github.com/fatecannotbealtered/archery-cli"
 	"github.com/fatecannotbealtered/archery-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
-//go:embed CHANGELOG.md
-var changelogContent string
+var changelogContent = archerycli.Changelog
 
 var changelogCmd = &cobra.Command{
 	Use:   "changelog",
@@ -29,8 +28,8 @@ func init() {
 
 // changelogEntry represents a single version entry in structured form.
 type changelogEntry struct {
-	Version string            `json:"version"`
-	Date    string            `json:"date,omitempty"`
+	Version string              `json:"version"`
+	Date    string              `json:"date,omitempty"`
 	Changes map[string][]string `json:"changes"`
 }
 
@@ -121,7 +120,7 @@ func parseChangelogEntries(content string) []changelogEntry {
 // filterEntriesSince returns only entries with versions strictly newer than sinceVersion.
 func filterEntriesSince(entries []changelogEntry, sinceVersion string) []changelogEntry {
 	since := normalizeVersion(sinceVersion)
-	var result []changelogEntry
+	result := []changelogEntry{}
 	for _, e := range entries {
 		if compareVersions(normalizeVersion(e.Version), since) > 0 {
 			result = append(result, e)

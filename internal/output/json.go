@@ -95,19 +95,19 @@ func NewErrorEnvelope(msg string, statusCode int, code ErrorCode) ErrorEnvelope 
 type ErrorCode string
 
 const (
-	E_CONFIG            ErrorCode = "E_CONFIG"
-	E_AUTH              ErrorCode = "E_AUTH"
-	E_FORBIDDEN         ErrorCode = "E_FORBIDDEN"
-	E_NOT_FOUND         ErrorCode = "E_NOT_FOUND"
-	E_BAD_ARGS          ErrorCode = "E_BAD_ARGS"
-	E_VALIDATION        ErrorCode = "E_VALIDATION"
-	E_CONFIRM_REQUIRED  ErrorCode = "E_CONFIRM_REQUIRED"
-	E_CONFLICT          ErrorCode = "E_CONFLICT"
-	E_RATE_LIMIT        ErrorCode = "E_RATE_LIMIT"
-	E_SERVER            ErrorCode = "E_SERVER"
-	E_NETWORK           ErrorCode = "E_NETWORK"
-	E_TIMEOUT           ErrorCode = "E_TIMEOUT"
-	E_UNKNOWN           ErrorCode = "E_UNKNOWN"
+	E_CONFIG                ErrorCode = "E_CONFIG"
+	E_AUTH                  ErrorCode = "E_AUTH"
+	E_FORBIDDEN             ErrorCode = "E_FORBIDDEN"
+	E_NOT_FOUND             ErrorCode = "E_NOT_FOUND"
+	E_USAGE                 ErrorCode = "E_USAGE"
+	E_VALIDATION            ErrorCode = "E_VALIDATION"
+	E_CONFIRMATION_REQUIRED ErrorCode = "E_CONFIRMATION_REQUIRED"
+	E_CONFLICT              ErrorCode = "E_CONFLICT"
+	E_RATE_LIMIT            ErrorCode = "E_RATE_LIMIT"
+	E_SERVER                ErrorCode = "E_SERVER"
+	E_NETWORK               ErrorCode = "E_NETWORK"
+	E_TIMEOUT               ErrorCode = "E_TIMEOUT"
+	E_UNKNOWN               ErrorCode = "E_UNKNOWN"
 )
 
 // ExitCode constants for process exit codes.
@@ -140,7 +140,7 @@ func ErrorCodeFromStatus(statusCode int) ErrorCode {
 			return E_SERVER
 		}
 		if statusCode >= 400 {
-			return E_BAD_ARGS
+			return E_USAGE
 		}
 		return E_UNKNOWN
 	}
@@ -150,18 +150,18 @@ func ErrorCodeFromStatus(statusCode int) ErrorCode {
 func HintForErrorCode(code ErrorCode) string {
 	switch code {
 	case E_CONFIG:
-		return "Run 'archery-cli auth login' or set ARCHERY_HOST and ARCHERY_TOKEN environment variables"
+		return "Run 'archery-cli auth login --url <url> --username <user> --password <pass>' or set ARCHERY_CLI_URL, ARCHERY_CLI_USERNAME, and ARCHERY_CLI_PASSWORD"
 	case E_AUTH:
 		return "Check your credentials; run 'archery-cli auth login' to re-authenticate"
 	case E_FORBIDDEN:
 		return "Check your permissions and role on the target project or group"
 	case E_NOT_FOUND:
 		return "Verify the resource exists and you have permission to view it"
-	case E_BAD_ARGS:
+	case E_USAGE:
 		return "Check command arguments and flags"
 	case E_VALIDATION:
 		return "Check command arguments and flags"
-	case E_CONFIRM_REQUIRED:
+	case E_CONFIRMATION_REQUIRED:
 		return "Run the same command with --dry-run, inspect the preview, then retry with --confirm <confirm_token>"
 	case E_CONFLICT:
 		return "Resource conflict; another change may have happened concurrently. Re-fetch and retry"
@@ -208,7 +208,7 @@ func PrintJSONErr(v any) error {
 	return nil
 }
 
-// PrintErrorJSON outputs a machine-readable error envelope as JSON to stdout.
+// PrintErrorJSON outputs a machine-readable error envelope as JSON to stderr.
 func PrintErrorJSON(msg string, statusCode int) {
 	code := ErrorCodeFromStatus(statusCode)
 	if statusCode == 0 {
@@ -217,7 +217,7 @@ func PrintErrorJSON(msg string, statusCode int) {
 	emitErrorPayload(msg, statusCode, code)
 }
 
-// PrintErrorJSONWithCode outputs an error envelope with an explicit error code.
+// PrintErrorJSONWithCode outputs an error envelope with an explicit error code to stderr.
 // The exitCode parameter is for the caller's use; it is not emitted in the JSON.
 func PrintErrorJSONWithCode(msg string, exitCode int, code ErrorCode) {
 	emitErrorPayload(msg, exitCode, code)

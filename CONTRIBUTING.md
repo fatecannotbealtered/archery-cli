@@ -6,7 +6,7 @@ Thank you for your interest in contributing to archery-cli.
 
 ### Prerequisites
 
-- Go 1.23 or later
+- Go version declared in `go.mod`
 - Git
 - golangci-lint (for linting)
 
@@ -70,6 +70,8 @@ Before submitting a PR, ensure:
 - [ ] All tests pass: `go test -race ./...`
 - [ ] Code is formatted: `gofmt -s -w .`
 - [ ] No vet warnings: `go vet ./...`
+- [ ] npm dependencies are installed from the lockfile: `npm ci --ignore-scripts`
+- [ ] npm dependency audit passes: `npm audit --audit-level=high`
 - [ ] Linter passes: `golangci-lint run`
 - [ ] Documentation is updated if behavior changed
 - [ ] `CHANGELOG.md` is updated under `[Unreleased]`
@@ -105,4 +107,4 @@ go test -race ./internal/api/...
 
 - Use GitHub Issues for bug reports and feature requests
 - Include steps to reproduce for bugs
-- Include your Go version and OS
+- Include your Go version (`go version`) and OS

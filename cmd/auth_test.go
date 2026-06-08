@@ -11,6 +11,7 @@ func TestAuthLoginFlags(t *testing.T) {
 		wantType  string // "string"
 		wantValue string // default value
 	}{
+		{"url", "url", "string", ""},
 		{"username", "username", "string", ""},
 		{"password", "password", "string", ""},
 		{"region", "region", "string", ""},
@@ -35,6 +36,46 @@ func TestAuthLoginFlags(t *testing.T) {
 				if got != tt.wantValue {
 					t.Errorf("flag %q default = %q, want %q", tt.flagName, got, tt.wantValue)
 				}
+			}
+		})
+	}
+}
+
+func TestValidateAuthURL(t *testing.T) {
+	origExit := lastExit
+	t.Cleanup(func() { lastExit = origExit })
+
+	valid := []string{
+		"https://archery.example.com",
+		"https://archery.example.com/base",
+		"http://localhost:9123",
+		"http://127.0.0.1:9123",
+		"http://[::1]:9123",
+	}
+	for _, url := range valid {
+		t.Run("valid "+url, func(t *testing.T) {
+			lastExit = 0
+			if err := validateAuthURL(url); err != nil {
+				t.Fatalf("validateAuthURL(%q) returned error: %v", url, err)
+			}
+		})
+	}
+
+	invalid := []string{
+		"",
+		"archery.example.com",
+		"ftp://archery.example.com",
+		"http://archery.example.com",
+		"http://10.0.0.10",
+	}
+	for _, url := range invalid {
+		t.Run("invalid "+url, func(t *testing.T) {
+			lastExit = 0
+			if err := validateAuthURL(url); err == nil {
+				t.Fatalf("validateAuthURL(%q) returned nil, want error", url)
+			}
+			if lastExit != ExitBadArgs {
+				t.Fatalf("lastExit = %d, want %d", lastExit, ExitBadArgs)
 			}
 		})
 	}

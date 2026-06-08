@@ -51,16 +51,19 @@ func init() {
 	archiveAuditCmd.Flags().String("remark", "", "Audit remark/comment")
 	archiveCmd.AddCommand(archiveAuditCmd)
 	markWrite(archiveAuditCmd)
+	markRiskLevel(archiveAuditCmd, "medium")
 
 	// archive switch
 	archiveSwitchCmd.Flags().String("state", "", "Target state: enable|disable (required)")
 	archiveCmd.AddCommand(archiveSwitchCmd)
 	markWrite(archiveSwitchCmd)
+	markRiskLevel(archiveSwitchCmd, "medium")
 
 	// archive once
 	archiveOnceCmd.Flags().String("fields", "", "Comma-separated fields for JSON output")
 	archiveCmd.AddCommand(archiveOnceCmd)
 	markWrite(archiveOnceCmd)
+	markRiskLevel(archiveOnceCmd, "high")
 
 	// archive log
 	archiveLogCmd.Flags().Int("limit", 20, "Max results (1-500)")
@@ -126,7 +129,7 @@ var archiveListCmd = &cobra.Command{
 			fields := getFieldsFlag(cmd)
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 			}
 			items := extractArchiveItems(raw)
 			total := extractArchiveTotal(raw)
@@ -232,18 +235,13 @@ var archiveApplyCmd = &cobra.Command{
 			}
 		}
 
-		client, _, _, err := newClient()
-		if err != nil {
-			return err
-		}
-
 		form := url.Values{
-			"title":         {title},
-			"group_name":    {group},
-			"src_instance":  {srcInstance},
-			"src_db":        {srcDB},
-			"src_table":     {srcTable},
-			"mode":          {mode},
+			"title":        {title},
+			"group_name":   {group},
+			"src_instance": {srcInstance},
+			"src_db":       {srcDB},
+			"src_table":    {srcTable},
+			"mode":         {mode},
 		}
 		if mode == "dest" {
 			form.Set("dest_instance", destInstance)
@@ -268,8 +266,31 @@ var archiveApplyCmd = &cobra.Command{
 			"srcTable":    srcTable,
 			"mode":        mode,
 		}
+		if destInstance != "" {
+			detail["destInstance"] = destInstance
+		}
+		if destDB != "" {
+			detail["destDb"] = destDB
+		}
+		if destTable != "" {
+			detail["destTable"] = destTable
+		}
+		if condition != "" {
+			detail["condition"] = condition
+		}
+		if noDelete {
+			detail["noDelete"] = true
+		}
+		if sleep > 0 {
+			detail["sleep"] = sleep
+		}
 		if markDryRunOrConfirm("apply archive task", detail) {
 			return nil
+		}
+
+		client, _, _, err := newClient()
+		if err != nil {
+			return err
 		}
 
 		data, err := client.InternalPost(apiCtx(), "/archive/apply/", form)
@@ -280,9 +301,9 @@ var archiveApplyCmd = &cobra.Command{
 		if jsonMode {
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 			}
-			output.PrintJSON(raw)
+			output.PrintJSON(normalizeAgentValue(raw))
 			return nil
 		}
 
@@ -323,11 +344,6 @@ var archiveAuditCmd = &cobra.Command{
 		}
 		remark, _ := cmd.Flags().GetString("remark")
 
-		client, _, _, err := newClient()
-		if err != nil {
-			return err
-		}
-
 		form := url.Values{
 			"archive_id": {strconv.Itoa(id)},
 			"action":     {action},
@@ -337,11 +353,16 @@ var archiveAuditCmd = &cobra.Command{
 		}
 
 		detail := map[string]any{
-			"archiveId": id,
+			"archiveId": strconv.Itoa(id),
 			"action":    action,
 		}
 		if markDryRunOrConfirm("audit archive task", detail) {
 			return nil
+		}
+
+		client, _, _, err := newClient()
+		if err != nil {
+			return err
 		}
 
 		data, err := client.InternalPost(apiCtx(), "/archive/audit/", form)
@@ -352,9 +373,9 @@ var archiveAuditCmd = &cobra.Command{
 		if jsonMode {
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 			}
-			output.PrintJSON(raw)
+			output.PrintJSON(normalizeAgentValue(raw))
 			return nil
 		}
 
@@ -394,22 +415,22 @@ var archiveSwitchCmd = &cobra.Command{
 			return failArg("--state must be 'enable' or 'disable'")
 		}
 
-		client, _, _, err := newClient()
-		if err != nil {
-			return err
-		}
-
 		form := url.Values{
 			"archive_id": {strconv.Itoa(id)},
 			"state":      {state},
 		}
 
 		detail := map[string]any{
-			"archiveId": id,
+			"archiveId": strconv.Itoa(id),
 			"state":     state,
 		}
 		if markDryRunOrConfirm("switch archive state", detail) {
 			return nil
+		}
+
+		client, _, _, err := newClient()
+		if err != nil {
+			return err
 		}
 
 		data, err := client.InternalPost(apiCtx(), "/archive/switch/", form)
@@ -420,9 +441,9 @@ var archiveSwitchCmd = &cobra.Command{
 		if jsonMode {
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 			}
-			output.PrintJSON(raw)
+			output.PrintJSON(normalizeAgentValue(raw))
 			return nil
 		}
 
@@ -453,18 +474,18 @@ var archiveOnceCmd = &cobra.Command{
 			return err
 		}
 
-		client, _, _, err := newClient()
-		if err != nil {
-			return err
-		}
-
 		form := url.Values{
 			"archive_id": {strconv.Itoa(id)},
 		}
 
-		detail := map[string]any{"archiveId": id}
+		detail := map[string]any{"archiveId": strconv.Itoa(id)}
 		if markDryRunOrConfirm("run archive once", detail) {
 			return nil
+		}
+
+		client, _, _, err := newClient()
+		if err != nil {
+			return err
 		}
 
 		data, err := client.InternalGet(apiCtx(), "/archive/once/?"+form.Encode())
@@ -476,12 +497,12 @@ var archiveOnceCmd = &cobra.Command{
 			fields := getFieldsFlag(cmd)
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 			}
 			if m, ok := raw.(map[string]any); ok && len(fields) > 0 {
-				output.PrintJSON(output.FilterMap(m, fields))
+				output.PrintJSON(output.FilterMap(normalizeAgentMap(m), fields))
 			} else {
-				output.PrintJSON(raw)
+				output.PrintJSON(normalizeAgentValue(raw))
 			}
 			return nil
 		}
@@ -543,7 +564,7 @@ var archiveLogCmd = &cobra.Command{
 			fields := getFieldsFlag(cmd)
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 			}
 			items := extractArchiveLogItems(raw)
 			total := extractArchiveTotal(raw)
@@ -661,7 +682,7 @@ func extractRows(raw any) []map[string]any {
 		items := make([]map[string]any, 0, len(arr))
 		for _, v := range arr {
 			if m, ok := v.(map[string]any); ok {
-				items = append(items, m)
+				items = append(items, normalizeAgentMap(m))
 			}
 		}
 		return items

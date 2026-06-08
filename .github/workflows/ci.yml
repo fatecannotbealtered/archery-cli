@@ -18,7 +18,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version-file: go.mod
 
       - name: Check formatting
         run: test -z "$(gofmt -l .)"
@@ -37,24 +37,40 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        go-version: ['1.23', '1.24']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version: ${{ matrix.go-version }}
+          go-version-file: go.mod
 
       - name: Run tests with coverage
         run: go test -coverprofile=coverage.out -race ./...
 
       - name: Upload coverage artifact
-        if: runner.os == 'Linux' && matrix.go-version == '1.24'
+        if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
           path: coverage.out
+
+  npm-audit:
+    name: npm audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install package metadata
+        run: npm ci --ignore-scripts
+
+      - name: Audit npm dependencies
+        run: npm audit --audit-level=high
 
   build:
     name: Build
@@ -62,15 +78,14 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        go-version: ['1.23', '1.24']
     runs-on: ${{ matrix.os }}
-    needs: [lint, test]
+    needs: [lint, test, npm-audit]
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version: ${{ matrix.go-version }}
+          go-version-file: go.mod
 
       - name: Build
         run: go build -o archery-cli ./cmd/archery-cli

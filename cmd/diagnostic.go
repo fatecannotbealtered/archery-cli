@@ -94,7 +94,7 @@ var diagnosticProcessCmd = &cobra.Command{
 			fields := getFieldsFlag(cmd)
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 			}
 			items := extractDiagnosticRows(raw)
 			for _, m := range items {
@@ -172,13 +172,15 @@ var diagnosticKillCmd = &cobra.Command{
 		if jsonMode {
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 			}
-			output.PrintJSON(map[string]any{
+			result := map[string]any{
 				"instance": instance,
 				"threads":  threadIDs,
-				"result":   raw,
-			})
+				"result":   normalizeAgentValue(raw),
+			}
+			tagCommonUntrusted(result)
+			output.PrintJSON(result)
 			return nil
 		}
 
@@ -224,7 +226,7 @@ var diagnosticTablespaceCmd = &cobra.Command{
 			fields := getFieldsFlag(cmd)
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 			}
 			items := extractDiagnosticRows(raw)
 			if len(fields) > 0 && len(items) > 0 {
@@ -279,15 +281,15 @@ var diagnosticLocksCmd = &cobra.Command{
 			fields := getFieldsFlag(cmd)
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 			}
 			if len(fields) > 0 {
 				if m, ok := raw.(map[string]any); ok {
-					output.PrintJSON(output.FilterMap(m, fields))
+					output.PrintJSON(output.FilterMap(normalizeAgentMap(m), fields))
 					return nil
 				}
 			}
-			output.PrintJSON(raw)
+			output.PrintJSON(normalizeAgentValue(raw))
 			return nil
 		}
 
@@ -340,7 +342,7 @@ var diagnosticTransactionsCmd = &cobra.Command{
 			fields := getFieldsFlag(cmd)
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitError, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 			}
 			items := extractDiagnosticRows(raw)
 			if len(fields) > 0 && len(items) > 0 {
@@ -381,7 +383,7 @@ func extractDiagnosticRows(raw any) []map[string]any {
 		items := make([]map[string]any, 0, len(arr))
 		for _, v := range arr {
 			if m, ok := v.(map[string]any); ok {
-				items = append(items, m)
+				items = append(items, normalizeAgentMap(m))
 			}
 		}
 		return items

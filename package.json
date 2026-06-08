@@ -1,6 +1,5 @@
 {
   "name": "@fatecannotbealtered/archery-cli",
-  "version": "0.1.0",
   "description": "CLI tool for managing the Archery SQL audit platform",
   "keywords": [
     "archery",
@@ -23,6 +22,7 @@
     "access": "public"
   },
   "bin": {
+    "archery-cli": "scripts/run.js",
     "archery": "scripts/run.js"
   },
   "scripts": {

@@ -133,8 +133,8 @@ func (w *WorkflowAPI) Detail(ctx context.Context, id int) (*SQLWorkflowDetail, e
 
 // sqlWorkflowContentRow is the internal API response shape for detail_content.
 type sqlWorkflowContentRow struct {
-	SQLContent string                   `json:"sql_content"`
-	AuditLog   []SQLWorkflowAuditEntry  `json:"audit_log"`
+	SQLContent string                  `json:"sql_content"`
+	AuditLog   []SQLWorkflowAuditEntry `json:"audit_log"`
 }
 
 // Audit approves or rejects a workflow.
@@ -164,8 +164,7 @@ func (w *WorkflowAPI) Execute(ctx context.Context, req WorkflowExecuteRequest) e
 // POST /sqlworkflow/cancel/ (internal, form-encoded)
 func (w *WorkflowAPI) Cancel(ctx context.Context, req WorkflowCancelRequest) error {
 	form := url.Values{
-		"workflow_id": {strconv.Itoa(req.WorkflowID),
-		},
+		"workflow_id": {strconv.Itoa(req.WorkflowID)},
 	}
 	if req.Remark != "" {
 		form.Set("remark", req.Remark)
@@ -200,9 +199,9 @@ func (w *WorkflowAPI) SQLCheck(ctx context.Context, req WorkflowSQLCheckRequest)
 
 	// Try {status: 0, msg: "...", data: [...]} with data as raw array.
 	var rawResp struct {
-		Status int              `json:"status"`
-		Msg    string           `json:"msg"`
-		Data   json.RawMessage  `json:"data"`
+		Status int             `json:"status"`
+		Msg    string          `json:"msg"`
+		Data   json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(data, &rawResp); err == nil && rawResp.Data != nil {
 		_ = json.Unmarshal(rawResp.Data, &results)
