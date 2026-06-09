@@ -14,6 +14,7 @@ Closes #(issue number)
 ## Checklist
 
 - [ ] Tests pass
+- [ ] Functional Contract Coverage remains 100% for public behavior
 - [ ] No hardcoded secrets or credentials
 - [ ] CHANGELOG.md updated (if user-facing change)
 - [ ] Docs / README / SKILL.md synced (if behavior or interface changed)

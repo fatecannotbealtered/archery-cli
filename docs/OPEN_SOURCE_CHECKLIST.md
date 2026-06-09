@@ -21,6 +21,7 @@ Security and compliance gate before the first public push.
 ## Code Quality
 
 - [ ] All tests pass (`go test ./...`)
+- [ ] Functional Contract Coverage is 100%: public README, Skill, `reference`, `--help`, `context`, `doctor`, `changelog`, and `update` behavior has command-level tests.
 - [ ] No `TODO` or `FIXME` comments referencing security issues
 - [ ] No debug logging that could leak credentials
 - [ ] Error messages do not expose internal infrastructure details
