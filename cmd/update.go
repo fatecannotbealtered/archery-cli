@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -32,6 +33,7 @@ const (
 	updatePipPackage    = "archery-cli"
 	updateChannelStable = "stable"
 	updateChannelCanary = "canary"
+	updateSkillRepo     = updateDefaultRepo
 )
 
 var updateCmd = &cobra.Command{
@@ -40,7 +42,8 @@ var updateCmd = &cobra.Command{
 	Long: `Check GitHub Releases for a newer archery-cli binary and install it.
 
 The update flow downloads the platform archive and checksums.txt, verifies the
-archive SHA256, extracts the archery-cli binary, and replaces the current binary.
+signed checksum when possible, verifies the archive SHA256, extracts the
+archery-cli binary, and replaces the current binary.
 
 Use --check to inspect availability without installing. Writes require
 --dry-run first, then --confirm <confirm_token> in non-interactive agent runs.`,
@@ -60,16 +63,18 @@ type updateRelease struct {
 }
 
 type updatePlan struct {
-	CurrentVersion  string
-	TargetVersion   string
-	ReleaseURL      string
-	AssetName       string
-	AssetURL        string
-	ChecksumURL     string
-	UpdateAvailable bool
-	Downgrade       bool
-	InstallMethod   string
-	Channel         string
+	CurrentVersion     string
+	TargetVersion      string
+	ReleaseURL         string
+	AssetName          string
+	AssetURL           string
+	ChecksumURL        string
+	SignatureBundleURL string
+	UpdateAvailable    bool
+	Downgrade          bool
+	InstallMethod      string
+	Channel            string
+	SkillSyncCommand   string
 }
 
 type updateApplyResult struct {
@@ -85,6 +90,7 @@ var (
 	updatePlatform   = func() (string, string) { return runtime.GOOS, runtime.GOARCH }
 	updateExecutable = os.Executable
 	updateApply      = applyUpdateBinary
+	updateSkillSync  = runUpdateSkillSync
 )
 
 func init() {
@@ -121,6 +127,7 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	}
 	plan.InstallMethod = installMethod
 	plan.Channel = channel
+	plan.SkillSyncCommand = updateSkillSyncCommand()
 
 	result := updateResultMap(plan, updateStatus(plan, targetVersion))
 	if plan.Downgrade {
@@ -147,19 +154,25 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	}
 
 	confirmPayload := map[string]any{
-		"currentVersion": plan.CurrentVersion,
-		"targetVersion":  plan.TargetVersion,
-		"assetName":      plan.AssetName,
-		"assetURL":       plan.AssetURL,
-		"reinstall":      reinstall,
-		"channel":        channel,
+		"currentVersion":     plan.CurrentVersion,
+		"targetVersion":      plan.TargetVersion,
+		"assetName":          plan.AssetName,
+		"assetURL":           plan.AssetURL,
+		"checksumURL":        plan.ChecksumURL,
+		"signatureBundleURL": plan.SignatureBundleURL,
+		"reinstall":          reinstall,
+		"channel":            channel,
+		"skillSyncCommand":   plan.SkillSyncCommand,
 	}
 	if dryRun {
 		confirmToken, expires := newConfirmToken(cmd.CommandPath(), "", confirmPayload)
 		result["status"] = "dry_run"
 		result["preview"] = map[string]any{
-			"action":  "update archery-cli",
-			"changes": []map[string]any{confirmPayload},
+			"action": "update archery-cli",
+			"changes": []map[string]any{
+				confirmPayload,
+				{"action": "sync skill directory", "command": plan.SkillSyncCommand},
+			},
 		}
 		result["confirm_token"] = confirmToken
 		result["expires_at"] = expires.Format(time.RFC3339)
@@ -190,6 +203,10 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	if err := downloadUpdateFile(cmd.Context(), plan.ChecksumURL, checksumPath); err != nil {
 		return failWithCode("downloading checksums: "+err.Error(), ExitNetwork, output.E_NETWORK)
 	}
+	signatureStatus, err := verifyUpdateChecksumSignature(cmd.Context(), checksumPath, plan.SignatureBundleURL, tmpDir)
+	if err != nil {
+		return failWithCode(err.Error(), ExitNetwork, output.E_NETWORK)
+	}
 	if err := verifyUpdateChecksum(archivePath, checksumPath, plan.AssetName); err != nil {
 		return failWithCode("verifying archive: "+err.Error(), ExitNetwork, output.E_NETWORK)
 	}
@@ -203,17 +220,43 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return failWithCode("installing update: "+err.Error(), ExitNetwork, output.E_NETWORK)
 	}
+	if err := updateSkillSync(cmd.Context(), updateSkillRepo); err != nil {
+		return failWithCode("syncing skill directory: "+err.Error(), ExitNetwork, output.E_NETWORK)
+	}
 
 	result = updateResultMap(plan, applied.Status)
 	result["path"] = applied.Path
 	result["previous_version"] = plan.CurrentVersion
 	result["current_version"] = plan.TargetVersion
+	result["checksum_verified"] = true
+	result["signature_status"] = signatureStatus
+	if signatureStatus == "verified" {
+		result["signature_verified"] = true
+	}
+	result["skill_sync_status"] = "synced"
 	result["hint"] = fmt.Sprintf("run \"archery-cli changelog --since %s\" to see what changed", plan.CurrentVersion)
 	if applied.PendingPath != "" {
 		result["pendingPath"] = applied.PendingPath
 		result["pending_path"] = applied.PendingPath
 	}
 	printUpdateResult(result)
+	return nil
+}
+
+func updateSkillSyncCommand() string {
+	return "npx skills add " + updateSkillRepo + " -y -g"
+}
+
+func runUpdateSkillSync(ctx context.Context, repo string) error {
+	command := exec.CommandContext(ctx, "npx", "skills", "add", repo, "-y", "-g")
+	outputBytes, err := command.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(outputBytes))
+		if msg != "" {
+			return fmt.Errorf("%w: %s", err, truncateForError(msg, 300))
+		}
+		return err
+	}
 	return nil
 }
 
@@ -275,18 +318,20 @@ func buildUpdatePlan(rel *updateRelease, currentVersion string) (updatePlan, err
 	if checksumURL == "" {
 		return updatePlan{}, fmt.Errorf("release %s does not include checksums.txt", rel.TagName)
 	}
+	signatureBundleURL := findUpdateAssetURL(rel.Assets, "checksums.txt.sigstore.json")
 
 	current := normalizeVersion(currentVersion)
 	cmp := compareVersions(current, target)
 	return updatePlan{
-		CurrentVersion:  currentVersion,
-		TargetVersion:   target,
-		ReleaseURL:      rel.HTMLURL,
-		AssetName:       assetName,
-		AssetURL:        assetURL,
-		ChecksumURL:     checksumURL,
-		UpdateAvailable: cmp < 0,
-		Downgrade:       cmp > 0,
+		CurrentVersion:     currentVersion,
+		TargetVersion:      target,
+		ReleaseURL:         rel.HTMLURL,
+		AssetName:          assetName,
+		AssetURL:           assetURL,
+		ChecksumURL:        checksumURL,
+		SignatureBundleURL: signatureBundleURL,
+		UpdateAvailable:    cmp < 0,
+		Downgrade:          cmp > 0,
 	}, nil
 }
 
@@ -427,6 +472,47 @@ func verifyUpdateChecksum(archivePath, checksumPath, assetName string) error {
 		return fmt.Errorf("checksum mismatch for %s", assetName)
 	}
 	return nil
+}
+
+func verifyUpdateChecksumSignature(ctx context.Context, checksumPath, bundleURL, tmpDir string) (string, error) {
+	if strings.TrimSpace(bundleURL) == "" {
+		if updateRequireSignature() {
+			return "missing_bundle", fmt.Errorf("release does not include checksums.txt.sigstore.json")
+		}
+		return "missing_bundle", nil
+	}
+	if _, err := exec.LookPath("cosign"); err != nil {
+		if updateRequireSignature() {
+			return "cosign_missing", fmt.Errorf("cosign is not installed; checksum signature verification cannot run")
+		}
+		return "skipped_cosign_missing", nil
+	}
+
+	bundlePath := filepath.Join(tmpDir, "checksums.txt.sigstore.json")
+	if err := downloadUpdateFile(ctx, bundleURL, bundlePath); err != nil {
+		return "download_failed", fmt.Errorf("downloading checksum signature bundle: %w", err)
+	}
+	identity := "^https://github\\.com/" + regexp.QuoteMeta(updateDefaultRepo) + "/\\.github/workflows/release\\.yml@refs/tags/v.*$"
+	command := exec.CommandContext(ctx, "cosign",
+		"verify-blob",
+		"--bundle", bundlePath,
+		"--certificate-identity-regexp", identity,
+		"--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
+		checksumPath,
+	)
+	outputBytes, err := command.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(outputBytes))
+		if msg != "" {
+			return "failed", fmt.Errorf("verifying checksum signature: %w: %s", err, truncateForError(msg, 300))
+		}
+		return "failed", fmt.Errorf("verifying checksum signature: %w", err)
+	}
+	return "verified", nil
+}
+
+func updateRequireSignature() bool {
+	return os.Getenv("ARCHERY_CLI_REQUIRE_SIGNATURE") == "1"
 }
 
 func extractUpdateArchive(archivePath, assetName, tmpDir string) (string, error) {
@@ -591,19 +677,22 @@ func copyFile(src, dst string, mode os.FileMode) error {
 
 func updateResultMap(plan updatePlan, status string) map[string]any {
 	result := map[string]any{
-		"status":           status,
-		"currentVersion":   plan.CurrentVersion,
-		"targetVersion":    plan.TargetVersion,
-		"updateAvailable":  plan.UpdateAvailable,
-		"releaseUrl":       plan.ReleaseURL,
-		"asset":            plan.AssetName,
-		"installMethod":    plan.InstallMethod,
-		"channel":          plan.Channel,
-		"current_version":  plan.CurrentVersion,
-		"target_version":   plan.TargetVersion,
-		"update_available": plan.UpdateAvailable,
-		"release_url":      plan.ReleaseURL,
-		"install_method":   plan.InstallMethod,
+		"status":             status,
+		"currentVersion":     plan.CurrentVersion,
+		"targetVersion":      plan.TargetVersion,
+		"updateAvailable":    plan.UpdateAvailable,
+		"releaseUrl":         plan.ReleaseURL,
+		"asset":              plan.AssetName,
+		"installMethod":      plan.InstallMethod,
+		"channel":            plan.Channel,
+		"current_version":    plan.CurrentVersion,
+		"target_version":     plan.TargetVersion,
+		"update_available":   plan.UpdateAvailable,
+		"release_url":        plan.ReleaseURL,
+		"install_method":     plan.InstallMethod,
+		"signature_status":   "not_checked",
+		"skill_sync_command": plan.SkillSyncCommand,
+		"skill_sync_status":  "not_run",
 	}
 	return result
 }
