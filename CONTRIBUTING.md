@@ -63,11 +63,20 @@ fix: handle nil pointer in workflow status check
 docs: update README install instructions
 ```
 
+## Functional contract coverage
+
+Release standard: **Functional Contract Coverage = 100%**. Every public behavior documented in README, Skill, `archery-cli reference`, `--help`, `context`, `doctor`, `changelog`, or `update` must have automated command-level tests.
+
+For each new or changed command, cover success, invalid arguments, config/auth/permission failure where applicable, upstream failure or timeout where applicable, JSON envelope shape, output schema, exit code, stdout/stderr boundary, and non-interactive behavior. Every bug fix that changes observable behavior needs a regression test.
+
+Numeric line coverage is tracked separately and may ratchet upward, but it does not replace missing contract tests.
+
 ## Pull Request Checklist
 
 Before submitting a PR, ensure:
 
 - [ ] All tests pass: `go test -race ./...`
+- [ ] Functional Contract Coverage remains 100% for public behavior
 - [ ] Code is formatted: `gofmt -s -w .`
 - [ ] No vet warnings: `go vet ./...`
 - [ ] npm dependencies are installed from the lockfile: `npm ci --ignore-scripts`
