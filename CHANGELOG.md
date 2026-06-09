@@ -32,10 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Write commands now consistently require `--dry-run` followed by `--confirm <confirm_token>`, including authentication, query execution/favorite, workflow, instance, archive, binlog, diagnostic, and self-update writes.
 - `auth login` now uses explicit `--url` in non-interactive JSON mode and validates HTTPS by default, allowing HTTP only for loopback development URLs.
 - Agent-facing JSON output normalizes IDs to strings and tags common external/generated content fields with `_untrusted`.
-- Skill, README, and reference docs now point agents to `reference` as the machine truth and document the current confirmation flow.
+- Self-update now syncs the whole Agent Skill directory through `npx skills add fatecannotbealtered/archery-cli -y -g` and reports `skill_sync_status`.
+- Skill, README, `.agent/` specs, and reference docs now point agents to `reference` as the machine truth and document the current confirmation flow.
 
 ### Security
 - Confirm tokens bind command path, operation payload, region, and username context; dry-run previews redact secrets while confirmation tokens bind the full payload.
 - High and critical write commands now require explicit `--dangerous` in both dry-run and confirm steps as the T2 second gate.
+- Release checksums are signed with Sigstore/Cosign, and install/update paths report signature verification status separately from checksum verification.
 - npm installer checksum verification hard-fails when integrity cannot be verified.
 - Credential persistence now uses OS keyring-only storage; passwords and tokens are never written to the config file.

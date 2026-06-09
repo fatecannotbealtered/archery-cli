@@ -42,6 +42,16 @@ archives:
 checksum:
   name_template: checksums.txt
 
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sigstore.json"
+    args:
+      - "sign-blob"
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+
 release:
   # Idempotent re-tagging: overwrite artifacts if the release already exists.
   replace_existing_artifacts: true

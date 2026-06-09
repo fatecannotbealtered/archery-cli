@@ -40,3 +40,10 @@ When using archery-cli:
 - **Least privilege**: Grant only the minimum permissions required. Do not use admin-level credentials for routine operations.
 - **Keep updated**: Run `archery-cli update` regularly to get the latest security patches.
 - **Protect credentials**: archery-cli stores credentials only in the OS keyring. Passwords and tokens are not written to the config file; if the keyring is unavailable, use environment variables for one-shot commands and never commit config files.
+
+## Supply Chain
+
+- Release artifacts are built by GitHub Actions from tagged source through GoReleaser.
+- npm installation downloads release archives and verifies `checksums.txt`; checksum mismatch, missing checksum files, or a missing archive checksum hard-fails installation.
+- Releases sign `checksums.txt` with Sigstore/Cosign keyless signing from the tagged GitHub Actions release workflow and publish `checksums.txt.sigstore.json`.
+- Self-update results must sync the whole `skills/archery-cli/` directory or return a `skill_sync_command` equivalent to `npx skills add fatecannotbealtered/archery-cli -y -g`.
