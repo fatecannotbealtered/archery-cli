@@ -25,11 +25,15 @@
   "bin": {
     "archery-cli": "scripts/run.js"
   },
-  "scripts": {
-    "postinstall": "node scripts/install.js"
+  "optionalDependencies": {
+    "@fatecannotbealtered-/archery-cli-darwin-arm64": "0.1.0",
+    "@fatecannotbealtered-/archery-cli-darwin-x64": "0.1.0",
+    "@fatecannotbealtered-/archery-cli-linux-arm64": "0.1.0",
+    "@fatecannotbealtered-/archery-cli-linux-x64": "0.1.0",
+    "@fatecannotbealtered-/archery-cli-win32-arm64": "0.1.0",
+    "@fatecannotbealtered-/archery-cli-win32-x64": "0.1.0"
   },
   "files": [
-    "scripts/install.js",
     "scripts/run.js",
     "skills/",
     "README.md",
@@ -44,15 +48,6 @@
     "AGENTS.md",
     ".agent/",
     "docs/"
-  ],
-  "os": [
-    "darwin",
-    "linux",
-    "win32"
-  ],
-  "cpu": [
-    "x64",
-    "arm64"
   ],
   "engines": {
     "node": ">=16"
