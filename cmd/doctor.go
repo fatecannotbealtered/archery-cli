@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -30,19 +31,20 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 		Fix    *string `json:"fix"`
 	}
 	type doctorResult struct {
-		Version         string        `json:"version"`
-		Checks          []doctorCheck `json:"checks"`
-		ConfigExists    bool          `json:"configExists"`
-		AuthValid       bool          `json:"authValid"`
-		LatencyMs       int64         `json:"latencyMs"`
-		Region          string        `json:"region,omitempty"`
-		URL             string        `json:"url,omitempty"`
-		Username        string        `json:"username,omitempty"`
-		CredentialStore string        `json:"credentialStore,omitempty"`
-		Error           string        `json:"error,omitempty"`
+		Version         string         `json:"version"`
+		Notices         []updateNotice `json:"notices,omitempty"`
+		Checks          []doctorCheck  `json:"checks"`
+		ConfigExists    bool           `json:"configExists"`
+		AuthValid       bool           `json:"authValid"`
+		LatencyMs       int64          `json:"latencyMs"`
+		Region          string         `json:"region,omitempty"`
+		URL             string         `json:"url,omitempty"`
+		Username        string         `json:"username,omitempty"`
+		CredentialStore string         `json:"credentialStore,omitempty"`
+		Error           string         `json:"error,omitempty"`
 	}
 
-	result := doctorResult{Version: version}
+	result := doctorResult{Version: version, Notices: refreshUpdateNotices(apiCtx(), "doctor")}
 	check := func(name, status, fix string) {
 		var fixPtr *string
 		if fix != "" {
@@ -226,6 +228,7 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	if result.LatencyMs >= 0 {
 		output.Gray(fmt.Sprintf("  Latency: %dms", result.LatencyMs))
 	}
+	printUpdateNoticeHint(os.Stdout, result.Notices)
 	fmt.Println()
 	return nil
 }

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/fatecannotbealtered/archery-cli/internal/config"
 	"github.com/fatecannotbealtered/archery-cli/internal/output"
@@ -53,6 +54,7 @@ type contextResult struct {
 	Regions       []contextRegion    `json:"regions"`
 	ConfigPath    string             `json:"configPath"`
 	Credentials   contextCredentials `json:"credentials"`
+	Notices       []updateNotice     `json:"notices,omitempty"`
 }
 
 func runContext(cmd *cobra.Command, _ []string) error {
@@ -68,6 +70,7 @@ func runContext(cmd *cobra.Command, _ []string) error {
 			Env:         "local",
 			ConfigPath:  config.FilePath(),
 			Credentials: contextCredentials{Configured: false},
+			Notices:     readCachedUpdateNotices(),
 		}
 		return renderContext(result, true)
 	}
@@ -79,6 +82,7 @@ func runContext(cmd *cobra.Command, _ []string) error {
 		DefaultRegion: cfg.DefaultRegion,
 		ActiveRegion:  activeRegion,
 		ConfigPath:    config.FilePath(),
+		Notices:       readCachedUpdateNotices(),
 	}
 
 	for name, r := range cfg.Regions {
@@ -156,12 +160,14 @@ func renderContext(r *contextResult, unauthenticated bool) error {
 
 	if unauthenticated && !jsonMode {
 		if contextStrict {
+			printUpdateNoticeHint(os.Stdout, r.Notices)
 			output.Warn("Not authenticated. Run 'archery-cli auth login'.")
 			setExitCode(ExitAuth)
 			return ErrSilent
 		}
 		output.Warn("Not fully authenticated for active region.")
 	}
+	printUpdateNoticeHint(os.Stdout, r.Notices)
 
 	return nil
 }

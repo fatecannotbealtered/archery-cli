@@ -29,7 +29,7 @@ const (
 	updateDefaultRepo   = "fatecannotbealtered/archery-cli"
 	updateBinaryName    = "archery-cli"
 	updateAPIBaseURL    = "https://api.github.com"
-	updateNPMPackage    = "@fatecannotbealtered/archery-cli"
+	updateNPMPackage    = "@fatecannotbealtered-/archery-cli"
 	updatePipPackage    = "archery-cli"
 	updateChannelStable = "stable"
 	updateChannelCanary = "canary"
@@ -135,6 +135,11 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	}
 
 	if checkOnly {
+		notices := updateNoticesFromPlan(plan, "update_check")
+		if len(notices) > 0 {
+			result["notices"] = notices
+		}
+		writeUpdateNoticeCache(notices)
 		printUpdateResult(result)
 		return nil
 	}
