@@ -16,6 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Go version is sourced from go.mod — the single source of truth.
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -26,9 +27,24 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Project-specific clean check
+        if: runner.os == 'Linux'
+        run: |
+          if [ -f scripts/check-clean.sh ]; then
+            if ! command -v rg >/dev/null 2>&1; then
+              sudo apt-get update -qq
+              sudo apt-get install -y ripgrep
+            fi
+            bash scripts/check-clean.sh
+          else
+            echo "No scripts/check-clean.sh; skipping project-specific clean check."
+          fi
+
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
+          # 'latest' tracks the newest linter release; pin to a specific
+          # version (e.g. v1.62.0) once you want reproducible lint results.
           version: latest
 
   test:
@@ -46,7 +62,21 @@ jobs:
           go-version-file: go.mod
 
       - name: Run tests with coverage
-        run: go test -coverprofile=coverage.out -race ./...
+        run: go test -coverprofile=coverage.out ./...
+
+      - name: Ensure race detector toolchain
+        if: runner.os == 'Linux'
+        run: |
+          if ! command -v gcc >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y build-essential
+          fi
+
+      - name: Run race tests
+        if: runner.os == 'Linux'
+        env:
+          CGO_ENABLED: "1"
+        run: go test -race ./...
 
       - name: Upload coverage artifact
         if: runner.os == 'Linux'

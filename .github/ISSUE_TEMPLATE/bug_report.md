@@ -28,8 +28,18 @@ What actually happened. Include the full error output if applicable.
 
 - **archery-cli version**: (run `archery-cli --version`)
 - **OS**: (e.g., Windows 11, macOS 15, Ubuntu 24.04)
-- **Archery version**: (the Archery platform version you connect to)
-- **Database type**: (e.g., MySQL 8.0, PostgreSQL 16)
+- **Install method**: (e.g., npm, prebuilt binary, built from source)
+
+## Doctor Output
+
+<details>
+<summary><code>archery-cli doctor</code> output</summary>
+
+```
+(paste the output of `archery-cli doctor` here)
+```
+
+</details>
 
 ## Additional Context
 
