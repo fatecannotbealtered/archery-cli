@@ -1,8 +1,38 @@
+# Common base — concatenate with template/<lang>/.gitignore
+
+node_modules/
+.env
+.env.local
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+.claude/
+
+# Go-specific — append to common/.gitignore
+
+# Build output
 bin/
 dist/
-node_modules/
+
+# Windows executables
 *.exe
+
+# Go test cache / coverage
+*.test
+*.out
+coverage.txt
+coverage.out
+
+# goreleaser
+.goreleaser-dist/
+
+# Derived release artifact — must not be committed
+release-notes.md
+
+# --- project-specific ---
 *.new
-.env
 .archery-cli/
-.idea/

@@ -20,6 +20,8 @@ builds:
     goarch:
       - amd64
       - arm64
+    # Windows ARM64 is not built natively; the install script falls back to
+    # the amd64 binary which runs via Windows x64 emulation on ARM devices.
     ignore:
       - goos: windows
         goarch: arm64
@@ -33,8 +35,13 @@ archives:
           - zip
     name_template: "{{ .ProjectName }}-{{ .Version }}-{{ .Os }}-{{ .Arch }}"
     wrap_in_directory: false
+    # Ship CLI binary only — skills install via npx.
     files:
       - none*
 
 checksum:
   name_template: checksums.txt
+
+release:
+  # Idempotent re-tagging: overwrite artifacts if the release already exists.
+  replace_existing_artifacts: true

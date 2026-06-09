@@ -97,7 +97,7 @@ var rootCmd = &cobra.Command{
 	SilenceUsage:  true,
 	Long: fmt.Sprintf("\n  %s\n  %s",
 		output.FormatCyanBold("archery-cli"),
-		output.FormatGray("AI-Agent-friendly Archery SQL audit platform control from your terminal")),
+		output.FormatGray("Agent-native Archery SQL audit platform control")),
 }
 
 func init() {

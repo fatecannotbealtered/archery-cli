@@ -24,5 +24,5 @@ Describe the specific use case or workflow this feature would support.
 
 ## Additional Context
 
-- Links to relevant Archery platform documentation
+- Links to relevant documentation
 - Examples from similar tools

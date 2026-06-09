@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var changelogContent = archerycli.Changelog
+var changelogContent = archerycli.ChangelogMarkdown
 
 var changelogCmd = &cobra.Command{
 	Use:   "changelog",

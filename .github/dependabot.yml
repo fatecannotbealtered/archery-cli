@@ -1,11 +1,7 @@
 version: 2
 updates:
+  # Always enabled: CI workflows and the npm wrapper manifest.
   - package-ecosystem: github-actions
-    directory: /
-    schedule:
-      interval: weekly
-
-  - package-ecosystem: gomod
     directory: /
     schedule:
       interval: weekly
@@ -14,3 +10,14 @@ updates:
     directory: /
     schedule:
       interval: weekly
+
+  # uncomment the entry matching your language
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+  #
+  # - package-ecosystem: pip
+  #   directory: /
+  #   schedule:
+  #     interval: weekly
