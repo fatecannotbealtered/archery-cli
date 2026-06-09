@@ -114,6 +114,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&insecureTLS, "insecure", false, "Skip TLS certificate verification (corporate/self-signed CA)")
 	rootCmd.PersistentFlags().IntVar(&timeoutSeconds, "timeout", defaultTimeoutSeconds, "HTTP request timeout in seconds")
 	initConfirmFlag()
+	installUpdateNoticeHelp(rootCmd)
 
 	cobra.OnInitialize(func() {
 		output.Quiet = quietMode
