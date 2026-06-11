@@ -230,8 +230,8 @@ func emitErrorPayload(msg string, statusCode int, code ErrorCode) {
 	}
 	data, err := emitJSONMarshal(payload)
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, `{"ok":false,"schema_version":%q,"error":{"code":%q,"message":%q,"details":{},"retryable":false}}`+"\n", SchemaVersion, code, msg)
+		_, _ = fmt.Fprintf(os.Stdout, `{"ok":false,"schema_version":%q,"error":{"code":%q,"message":%q,"details":{},"retryable":false}}`+"\n", SchemaVersion, code, msg)
 		return
 	}
-	_, _ = fmt.Fprintln(os.Stderr, string(data))
+	fmt.Println(string(data))
 }

@@ -104,16 +104,16 @@ func TestPrintErrorJSON(t *testing.T) {
 	defer func() { Compact = origCompact }()
 	Compact = false
 
-	// emitErrorPayload writes to stderr in archery-cli.
-	_, stderr := captureStdoutStderr(func() {
+	// emitErrorPayload writes the failure envelope to stdout (CLI-SPEC §4).
+	stdout, _ := captureStdoutStderr(func() {
 		PrintErrorJSON("not found", 404)
 		PrintErrorJSON("local", 0)
 	})
-	if !strings.Contains(stderr, `"ok": false`) || !strings.Contains(stderr, `"code": "E_NOT_FOUND"`) {
-		t.Errorf("stderr = %q", stderr)
+	if !strings.Contains(stdout, `"ok": false`) || !strings.Contains(stdout, `"code": "E_NOT_FOUND"`) {
+		t.Errorf("stdout = %q", stdout)
 	}
-	if !strings.Contains(stderr, `"code": "E_UNKNOWN"`) {
-		t.Errorf("status 0 stderr = %q", stderr)
+	if !strings.Contains(stdout, `"code": "E_UNKNOWN"`) {
+		t.Errorf("status 0 stdout = %q", stdout)
 	}
 }
 
@@ -122,28 +122,28 @@ func TestPrintErrorJSONWithCode(t *testing.T) {
 	defer func() { Compact = origCompact }()
 	Compact = false
 
-	_, stderr := captureStdoutStderr(func() {
+	stdout, _ := captureStdoutStderr(func() {
 		PrintErrorJSONWithCode("rate limited", 429, E_RATE_LIMIT)
 	})
-	if stderr == "" {
-		t.Fatal("expected error JSON on stderr")
+	if stdout == "" {
+		t.Fatal("expected error JSON on stdout")
 	}
-	if !strings.Contains(stderr, `"ok": false`) {
-		t.Errorf("stderr missing ok=false: %q", stderr)
+	if !strings.Contains(stdout, `"ok": false`) {
+		t.Errorf("stdout missing ok=false: %q", stdout)
 	}
-	if !strings.Contains(stderr, `"code": "E_RATE_LIMIT"`) {
-		t.Errorf("stderr missing code: %q", stderr)
+	if !strings.Contains(stdout, `"code": "E_RATE_LIMIT"`) {
+		t.Errorf("stdout missing code: %q", stdout)
 	}
-	if !strings.Contains(stderr, `"message": "rate limited"`) {
-		t.Errorf("stderr missing message: %q", stderr)
+	if !strings.Contains(stdout, `"message": "rate limited"`) {
+		t.Errorf("stdout missing message: %q", stdout)
 	}
-	if !strings.Contains(stderr, `"retryable": true`) {
-		t.Errorf("E_RATE_LIMIT should be retryable: %q", stderr)
+	if !strings.Contains(stdout, `"retryable": true`) {
+		t.Errorf("E_RATE_LIMIT should be retryable: %q", stdout)
 	}
 
 	var env ErrorEnvelope
-	if err := json.Unmarshal([]byte(stderr), &env); err != nil {
-		t.Fatalf("invalid JSON on stderr: %v\nraw: %s", err, stderr)
+	if err := json.Unmarshal([]byte(stdout), &env); err != nil {
+		t.Fatalf("invalid JSON on stdout: %v\nraw: %s", err, stdout)
 	}
 	if env.SchemaVersion != SchemaVersion {
 		t.Errorf("schema_version = %q, want %q", env.SchemaVersion, SchemaVersion)
@@ -214,10 +214,10 @@ func TestEmitErrorPayload_Fallback(t *testing.T) {
 	emitJSONMarshal = func(any) ([]byte, error) { return nil, errors.New("boom") }
 	defer func() { emitJSONMarshal = orig }()
 
-	_, stderr := captureStdoutStderr(func() {
+	stdout, _ := captureStdoutStderr(func() {
 		emitErrorPayload("fail", 500, E_SERVER)
 	})
-	if !strings.Contains(stderr, `"code":"E_SERVER"`) {
-		t.Errorf("fallback stderr = %q", stderr)
+	if !strings.Contains(stdout, `"code":"E_SERVER"`) {
+		t.Errorf("fallback stdout = %q", stdout)
 	}
 }

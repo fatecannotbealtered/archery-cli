@@ -241,7 +241,6 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	result["skill_sync_status"] = "synced"
 	result["hint"] = fmt.Sprintf("run \"archery-cli changelog --since %s\" to see what changed", plan.CurrentVersion)
 	if applied.PendingPath != "" {
-		result["pendingPath"] = applied.PendingPath
 		result["pending_path"] = applied.PendingPath
 	}
 	printUpdateResult(result)
@@ -683,12 +682,7 @@ func copyFile(src, dst string, mode os.FileMode) error {
 func updateResultMap(plan updatePlan, status string) map[string]any {
 	result := map[string]any{
 		"status":             status,
-		"currentVersion":     plan.CurrentVersion,
-		"targetVersion":      plan.TargetVersion,
-		"updateAvailable":    plan.UpdateAvailable,
-		"releaseUrl":         plan.ReleaseURL,
 		"asset":              plan.AssetName,
-		"installMethod":      plan.InstallMethod,
 		"channel":            plan.Channel,
 		"current_version":    plan.CurrentVersion,
 		"target_version":     plan.TargetVersion,
@@ -708,8 +702,8 @@ func printUpdateResult(result map[string]any) {
 		return
 	}
 	status, _ := result["status"].(string)
-	current, _ := result["currentVersion"].(string)
-	target, _ := result["targetVersion"].(string)
+	current, _ := result["current_version"].(string)
+	target, _ := result["target_version"].(string)
 	command, _ := result["command"].(string)
 	switch status {
 	case "up_to_date":

@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"crypto/sha256"
 	"encoding/hex"
 	"strconv"
 	"strings"
@@ -49,7 +48,7 @@ func TestNewConfirmToken(t *testing.T) {
 
 	// Verify the hash portion matches the canonical seed.
 	seed := canonicalConfirmSeed(action, region, payload, wantExpires.Unix())
-	sum := sha256.Sum256(seed)
+	sum := confirmDigest32(seed)
 	wantHash := hex.EncodeToString(sum[:8])
 	if parts[2] != wantHash {
 		t.Errorf("token hash = %s, want %s", parts[2], wantHash)
