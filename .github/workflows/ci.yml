@@ -41,10 +41,12 @@ jobs:
           fi
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        # Action v8 pairs with golangci-lint v2 (the .golangci.yml `version: "2"`
+        # config format); action v6 only drives v1 binaries.
+        uses: golangci/golangci-lint-action@v8
         with:
-          # 'latest' tracks the newest linter release; pin to a specific
-          # version (e.g. v1.62.0) once you want reproducible lint results.
+          # 'latest' tracks the newest v2 linter release; pin to a specific
+          # version (e.g. v2.1.0) once you want reproducible lint results.
           version: latest
 
   test:

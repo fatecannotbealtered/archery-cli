@@ -20,8 +20,8 @@ builds:
     goarch:
       - amd64
       - arm64
-    # Windows ARM64 is not built natively; the install script falls back to
-    # the amd64 binary which runs via Windows x64 emulation on ARM devices.
+    # Windows ARM64 is not built natively; prepare-npm-platform-packages.js
+    # reuses the amd64 binary, which runs via Windows x64 emulation on ARM.
     ignore:
       - goos: windows
         goarch: arm64

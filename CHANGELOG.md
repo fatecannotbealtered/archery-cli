@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - npm lockfile and CI npm audit coverage.
 
 ### Changed
+- In JSON mode the failure envelope is now the single JSON document on stdout, matching CLI-SPEC §4; stderr stays a human-readable side channel.
+- Unified the golangci-lint v2 toolchain: Makefile installs from the `/v2` module path and CI uses `golangci-lint-action@v8` to match the v2 config format.
 - Write commands now consistently require `--dry-run` followed by `--confirm <confirm_token>`, including authentication, query execution/favorite, workflow, instance, archive, binlog, diagnostic, and self-update writes.
 - `auth login` now uses explicit `--url` in non-interactive JSON mode and validates HTTPS by default, allowing HTTP only for loopback development URLs.
 - Agent-facing JSON output normalizes IDs to strings and tags common external/generated content fields with `_untrusted`.
@@ -36,8 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Skill, README, `.agent/` specs, and reference docs now point agents to `reference` as the machine truth and document the current confirmation flow.
 
 ### Security
+- Confirm tokens are now signed with a machine-local HMAC key (`confirm.secret`, created on first use with 0600 permissions) so they cannot be fabricated without running `--dry-run` on the same machine.
 - Confirm tokens bind command path, operation payload, region, and username context; dry-run previews redact secrets while confirmation tokens bind the full payload.
 - High and critical write commands now require explicit `--dangerous` in both dry-run and confirm steps as the T2 second gate.
 - Release checksums are signed with Sigstore/Cosign, and install/update paths report signature verification status separately from checksum verification.
 - npm installer checksum verification hard-fails when integrity cannot be verified.
 - Credential persistence now uses OS keyring-only storage; passwords and tokens are never written to the config file.
+
+### Fixed
+
+- `update` text output now reads the snake_case result fields, so version numbers render instead of empty strings; removed duplicated camelCase keys (`currentVersion`, `targetVersion`, `updateAvailable`, `releaseUrl`, `installMethod`, `pendingPath`) from the top-level update JSON in favor of the snake_case set.
+
