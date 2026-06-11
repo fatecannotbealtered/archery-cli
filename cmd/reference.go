@@ -70,6 +70,7 @@ type refTree struct {
 	Tool             string                  `json:"tool"`
 	Version          string                  `json:"version"`
 	SecurityTier     string                  `json:"security_tier"`
+	ReleaseReadiness releaseReadiness        `json:"release_readiness"`
 	GlobalFlags      []refFlag               `json:"globalFlags"`
 	GlobalFlagsSnake []refFlag               `json:"global_flags"`
 	ExitCodes        map[int]string          `json:"exitCodes"`
@@ -99,6 +100,7 @@ func buildReferenceTree(root *cobra.Command) refTree {
 		Tool:             "archery-cli",
 		Version:          root.Version,
 		SecurityTier:     "T2",
+		ReleaseReadiness: buildReleaseReadiness(),
 		GlobalFlags:      globalFlags,
 		GlobalFlagsSnake: globalFlags,
 		ExitCodes:        exitCodes,

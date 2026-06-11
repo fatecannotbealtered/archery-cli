@@ -15,6 +15,7 @@ Closes #(issue number)
 
 - [ ] Tests pass
 - [ ] Functional Contract Coverage remains 100% for public behavior
+- [ ] `release_readiness` remains accurate (`stable` has recorded live smoke/E2E evidence)
 - [ ] No hardcoded secrets or credentials
 - [ ] CHANGELOG.md updated (if user-facing change)
 - [ ] Docs / README / SKILL.md synced (if behavior or interface changed)

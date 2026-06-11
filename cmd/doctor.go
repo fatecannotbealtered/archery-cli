@@ -58,6 +58,7 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	} else {
 		check("version", "fail", "upgrade archery-cli to at least "+skillMinVersion)
 	}
+	check("release_readiness", releaseReadinessCheckStatus(), releaseReadinessCheckFix())
 
 	cfg, err := config.Load()
 	if err != nil {

@@ -22,6 +22,8 @@ Security and compliance gate before the first public push.
 
 - [ ] All tests pass (`go test ./...`)
 - [ ] Functional Contract Coverage is 100%: public README, Skill, `reference`, `--help`, `context`, `doctor`, `changelog`, and `update` behavior has command-level tests.
+- [ ] `reference.release_readiness.level` is accurate: `stable` has FCC 100%, mock upstream/contract tests, and recorded live smoke/E2E evidence; missing live evidence is `beta`; missing command-level coverage is `unpublishable`.
+- [ ] `doctor` includes a `release_readiness` check whose status matches the declared release level.
 - [ ] No `TODO` or `FIXME` comments referencing security issues
 - [ ] No debug logging that could leak credentials
 - [ ] Error messages do not expose internal infrastructure details
