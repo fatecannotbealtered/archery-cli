@@ -14,14 +14,14 @@ type releaseReadiness struct {
 
 func buildReleaseReadiness() releaseReadiness {
 	return releaseReadiness{
-		Level:                      "beta",
+		Level:                      "unpublishable",
 		FCCRequired:                true,
-		FCCStatus:                  "verified",
+		FCCStatus:                  "missing",
 		MockUpstreamRequired:       true,
 		MockUpstreamStatus:         "verified",
 		LiveSmokeRequiredForStable: true,
 		LiveSmokeStatus:            "missing",
-		Reason:                     "FCC and mock upstream/contract tests are required; recorded live smoke/E2E evidence is missing, so this release is beta.",
+		Reason:                     "Command-level (CLI boundary) tests are missing for most leaf commands: existing cmd tests inspect cobra flag definitions instead of executing commands. FCC must reach 100% before any release.",
 		RequiredEvidence: []string{
 			"functional_contract_coverage_100",
 			"mock_upstream_contract_tests",
