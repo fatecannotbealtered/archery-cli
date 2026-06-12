@@ -122,7 +122,8 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	}
 
 	// Try to verify the token if we have one
-	if region.AccessToken != "" {
+	switch {
+	case region.AccessToken != "":
 		start := time.Now()
 		err := client.Auth.Verify(apiCtx(), region.AccessToken)
 		latency := time.Since(start).Milliseconds()
@@ -160,7 +161,7 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 		result.AuthValid = true
 		check("network", "pass", "")
 		check("auth", "pass", "")
-	} else if region.Username != "" && region.Password != "" {
+	case region.Username != "" && region.Password != "":
 		// No cached token; try logging in to verify credentials
 		start := time.Now()
 		_, _, loginErr := client.Auth.Login(apiCtx(), region.Username, region.Password)
@@ -199,7 +200,7 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 		result.AuthValid = true
 		check("network", "pass", "")
 		check("auth", "pass", "")
-	} else {
+	default:
 		result.LatencyMs = -1
 		check("network", "pass", "")
 		check("auth", "skip", "no credentials configured; run 'archery-cli auth login'")

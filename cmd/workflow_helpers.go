@@ -251,22 +251,22 @@ func workflowDetailToMap(d *api.SQLWorkflowDetail, host string) map[string]any {
 
 func workflowStatusBadge(status int) string {
 	label := workflowStatusLabel(status)
-	switch {
-	case status == 0:
+	switch status {
+	case 0:
 		return output.StatusBadge("created")
-	case status == 1:
+	case 1:
 		return output.StatusBadge("pending")
-	case status == 2:
+	case 2:
 		return output.StatusBadge("approved")
-	case status == 3:
+	case 3:
 		return output.StatusBadge("rejected")
-	case status == 4:
+	case 4:
 		return output.StatusBadge("executing")
-	case status == 5:
+	case 5:
 		return output.StatusBadge("success")
-	case status == 6:
+	case 6:
 		return output.StatusBadge("failed")
-	case status == 7:
+	case 7:
 		return output.StatusBadge("cancelled")
 	default:
 		return output.StatusBadge(label)

@@ -172,10 +172,6 @@ var slowqueryReviewCmd = &cobra.Command{
 		headers := []string{"SQL_ID", "DB", "TOTAL", "AVG_TIME", "MAX_TIME", "ROWS_EXAMINED", "LAST_SEEN"}
 		rows := make([][]string, len(resp.Data.Rows))
 		for i, r := range resp.Data.Rows {
-			sqlPreview := r.SQLText
-			if len(sqlPreview) > 40 {
-				sqlPreview = sqlPreview[:37] + "..."
-			}
 			rows[i] = []string{
 				r.SQLID,
 				r.DBName,

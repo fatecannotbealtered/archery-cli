@@ -27,8 +27,7 @@ func TestAuthLoginFlags(t *testing.T) {
 				t.Errorf("flag %q type = %q, want %q", tt.flagName, f.Value.Type(), tt.wantType)
 			}
 
-			switch tt.wantType {
-			case "string":
+			if tt.wantType == "string" {
 				got, err := cmd.Flags().GetString(tt.flagName)
 				if err != nil {
 					t.Fatalf("GetString(%q): %v", tt.flagName, err)

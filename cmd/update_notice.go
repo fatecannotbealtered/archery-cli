@@ -42,13 +42,13 @@ type updateNoticeCache struct {
 func installUpdateNoticeHelp(root *cobra.Command) {
 	root.SetHelpFunc(func(cmd *cobra.Command, _ []string) {
 		if cmd.Long != "" {
-			fmt.Fprintln(cmd.OutOrStdout(), cmd.Long)
-			fmt.Fprintln(cmd.OutOrStdout())
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), cmd.Long)
+			_, _ = fmt.Fprintln(cmd.OutOrStdout())
 		} else if cmd.Short != "" {
-			fmt.Fprintln(cmd.OutOrStdout(), cmd.Short)
-			fmt.Fprintln(cmd.OutOrStdout())
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), cmd.Short)
+			_, _ = fmt.Fprintln(cmd.OutOrStdout())
 		}
-		fmt.Fprint(cmd.OutOrStdout(), cmd.UsageString())
+		_, _ = fmt.Fprint(cmd.OutOrStdout(), cmd.UsageString())
 		printUpdateNoticeHint(cmd.OutOrStdout(), readCachedUpdateNotices())
 	})
 }
@@ -194,5 +194,5 @@ func printUpdateNoticeHint(w io.Writer, notices []updateNotice) {
 		return
 	}
 	notice := notices[0]
-	fmt.Fprintf(w, "\nUpdate available: archery-cli %s -> %s. Run: %s\n", notice.CurrentVersion, notice.LatestVersion, notice.RecommendedCommand)
+	_, _ = fmt.Fprintf(w, "\nUpdate available: archery-cli %s -> %s. Run: %s\n", notice.CurrentVersion, notice.LatestVersion, notice.RecommendedCommand)
 }
