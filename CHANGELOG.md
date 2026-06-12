@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Boundary test suite (`test/e2e`): all 55 leaf commands now execute through the real binary against a universal mock Archery upstream — read commands assert the ok envelope, write commands assert the dry-run `confirm_token`, plus full dry-run→confirm cycle, cross-machine token rejection, missing-credential, and usage-error paths.
+- Command-level `update --check` test against a mock GitHub releases API.
 - FCC enumeration guard (`TestFCC_EveryLeafCommandHasTest`): enumerates every leaf command from live `reference` output and asserts each has a command-level test; skips while `fcc_status` is honestly declared non-verified, so the claim cannot be flipped without coverage.
 - Initial unreleased implementation.
 - Multi-region support (cn/overseas).
@@ -30,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - npm lockfile and CI npm audit coverage.
 
 ### Changed
+- `release_readiness` is back to `beta` with `fcc_status: verified` — now machine-backed by the enumeration guard over the new boundary suite instead of hand-declared.
 - `release_readiness` now declares `unpublishable` with `fcc_status: missing`: existing cmd tests inspect cobra flag definitions instead of executing commands, so CLI-boundary coverage is absent. `doctor` reports the matching `fail` with an actionable fix.
 - In JSON mode the failure envelope is now the single JSON document on stdout, matching CLI-SPEC §4; stderr stays a human-readable side channel.
 - Synced the `.agent/` spec copies from the ai-native-cli-spec template: stdout failure envelope (§4), HMAC confirm-token requirement (§7), signature_status/signature_verified fields (§14), Skill frontmatter `version` rule.
