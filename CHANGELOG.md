@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - npm lockfile and CI npm audit coverage.
 
 ### Changed
+- Synced `.agent/` SEC-SPEC from the template: credential-at-rest is now the keyring three-part pattern (password discarded after login / secrets in the OS keyring / zero-secret config), file encryption demoted to a visible fallback, env vars as the recommended secret channel, and an honest note on Windows `0600` semantics.
 - `release_readiness` is back to `beta` with `fcc_status: verified` — now machine-backed by the enumeration guard over the new boundary suite instead of hand-declared.
 - `release_readiness` now declares `unpublishable` with `fcc_status: missing`: existing cmd tests inspect cobra flag definitions instead of executing commands, so CLI-boundary coverage is absent. `doctor` reports the matching `fail` with an actionable fix.
 - In JSON mode the failure envelope is now the single JSON document on stdout, matching CLI-SPEC §4; stderr stays a human-readable side channel.
