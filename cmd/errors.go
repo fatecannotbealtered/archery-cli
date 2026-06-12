@@ -17,13 +17,11 @@ func failNotFound(msg string) error {
 	return ErrSilent
 }
 
-
 // failConfirmRequired reports a missing non-interactive confirmation token (exit 5).
 func failConfirmRequired(msg string) error {
 	emitError(msg, ExitConfirm, output.E_CONFIRMATION_REQUIRED)
 	return ErrSilent
 }
-
 
 // failWithCode reports an error with a custom exit code and error code.
 func failWithCode(msg string, exit int, code output.ErrorCode) error {

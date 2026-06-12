@@ -77,4 +77,3 @@ func clearConfirmFlag() {
 		flag.Changed = false
 	}
 }
-

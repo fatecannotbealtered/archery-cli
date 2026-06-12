@@ -210,7 +210,6 @@ func exitCodeForStatus(status int) int {
 	}
 }
 
-
 func dryRunOutputWithPayload(action string, detail map[string]any, confirmPayload any) bool {
 	if !dryRun {
 		return false
@@ -425,7 +424,6 @@ func markRiskLevel(cmd *cobra.Command, level string) {
 	}
 	cmd.Annotations["riskLevel"] = level
 }
-
 
 func markOutputFormats(cmd *cobra.Command, formats ...string) {
 	if cmd.Annotations == nil {
