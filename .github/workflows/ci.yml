@@ -119,13 +119,12 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build
-        run: go build -o archery-cli ./cmd/archery-cli
-
-      - name: Smoke test (Unix)
-        if: runner.os != 'Windows'
-        run: ./archery-cli --help
-
-      - name: Smoke test (Windows)
-        if: runner.os == 'Windows'
-        run: ./archery-cli.exe --help
+      - name: Build and smoke test
+        # explicit -o never appends .exe, so name the output per-OS;
+        # bash keeps one step working across all three runners
+        shell: bash
+        run: |
+          BIN=archery-cli
+          [ "$RUNNER_OS" = "Windows" ] && BIN=archery-cli.exe
+          go build -o "$BIN" ./cmd/archery-cli
+          "./$BIN" --help
