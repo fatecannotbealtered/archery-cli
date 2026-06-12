@@ -67,7 +67,6 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic("temp dir: " + err.Error())
 	}
-	defer func() { _ = os.RemoveAll(dir) }()
 
 	name := "archery-cli"
 	if runtime.GOOS == "windows" {
@@ -83,10 +82,12 @@ func TestMain(m *testing.M) {
 	}
 
 	server := httptest.NewServer(universalMux())
-	defer server.Close()
 	mockURL = server.URL
 
-	os.Exit(m.Run())
+	code := m.Run()
+	server.Close()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
 }
 
 func projectRoot() string {
@@ -139,7 +140,7 @@ func runCLI(home string, extraEnv map[string]string, args ...string) cmdResult {
 		"HOME": true, "USERPROFILE": true,
 	}
 	for _, kv := range os.Environ() {
-		key := kv[:strings.Index(kv, "=")]
+		key, _, _ := strings.Cut(kv, "=")
 		if !drop[key] {
 			env = append(env, kv)
 		}

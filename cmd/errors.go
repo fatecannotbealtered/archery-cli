@@ -17,11 +17,6 @@ func failNotFound(msg string) error {
 	return ErrSilent
 }
 
-// failAuth reports an authentication error (exit 4).
-func failAuth(msg string) error {
-	emitError(msg, ExitAuth, output.E_AUTH)
-	return ErrSilent
-}
 
 // failConfirmRequired reports a missing non-interactive confirmation token (exit 5).
 func failConfirmRequired(msg string) error {
@@ -29,11 +24,6 @@ func failConfirmRequired(msg string) error {
 	return ErrSilent
 }
 
-// failConflict reports a resource conflict (exit 6).
-func failConflict(msg string) error {
-	emitError(msg, ExitConflict, output.E_CONFLICT)
-	return ErrSilent
-}
 
 // failWithCode reports an error with a custom exit code and error code.
 func failWithCode(msg string, exit int, code output.ErrorCode) error {

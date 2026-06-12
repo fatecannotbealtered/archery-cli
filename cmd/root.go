@@ -210,12 +210,6 @@ func exitCodeForStatus(status int) int {
 	}
 }
 
-// dryRunOutput outputs a dry-run message and returns true if --dry-run is set.
-// The confirm token binds the command path (not the human-readable action) so that
-// token validation is tied to the exact command, not an arbitrary label.
-func dryRunOutput(action string, detail map[string]any) bool {
-	return dryRunOutputWithPayload(action, detail, detail)
-}
 
 func dryRunOutputWithPayload(action string, detail map[string]any, confirmPayload any) bool {
 	if !dryRun {
@@ -432,13 +426,6 @@ func markRiskLevel(cmd *cobra.Command, level string) {
 	cmd.Annotations["riskLevel"] = level
 }
 
-// markOutputType sets the default stdout type for agent reference (json, text, raw).
-func markOutputType(cmd *cobra.Command, outputType string) {
-	if cmd.Annotations == nil {
-		cmd.Annotations = map[string]string{}
-	}
-	cmd.Annotations["outputType"] = outputType
-}
 
 func markOutputFormats(cmd *cobra.Command, formats ...string) {
 	if cmd.Annotations == nil {
