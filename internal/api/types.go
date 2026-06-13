@@ -169,7 +169,9 @@ type Instance struct {
 	Charset      string      `json:"charset"`
 	IsActive     bool        `json:"is_active"`
 	Environment  string      `json:"environment"`
-	InstanceTag  string      `json:"instance_tag"`
+	// Archery's instance_tag is a ManyToMany relation serialized as an array,
+	// not a string (empty M2M -> []).
+	InstanceTag []any `json:"instance_tag"`
 }
 
 // ===== Query =====
