@@ -155,12 +155,7 @@ var slowqueryReviewCmd = &cobra.Command{
 				}
 				items[i] = m
 			}
-			output.PrintJSON(map[string]any{
-				"items":    items,
-				"total":    resp.Data.Total,
-				"count":    len(items),
-				"has_more": offset+len(items) < resp.Data.Total,
-			})
+			output.PrintJSON(offsetListEnvelope(items, offset, len(items), resp.Data.Total))
 			return nil
 		}
 
@@ -259,13 +254,9 @@ var slowqueryHistoryCmd = &cobra.Command{
 				}
 				items[i] = m
 			}
-			output.PrintJSON(map[string]any{
-				"items":    items,
-				"total":    resp.Data.Total,
-				"count":    len(items),
-				"has_more": offset+len(items) < resp.Data.Total,
-				"sql_id":   sqlID,
-			})
+			env := offsetListEnvelope(items, offset, len(items), resp.Data.Total)
+			env["sql_id"] = sqlID
+			output.PrintJSON(env)
 			return nil
 		}
 

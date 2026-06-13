@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Offset-paginated list commands (`archive`, `slowquery`, `query`) now return an explicit `offset` echo and a `next_offset` cursor (present only when more rows remain), so an agent can page deterministically instead of re-deriving `offset + count` from `has_more`.
+
+### Fixed
+
+- Corrected `PrintErrorJSON`/`PrintErrorJSONWithCode` docstrings: the JSON failure envelope is emitted on **stdout** (the single document agents parse, per CLI-SPEC §4), which the code already did — only the comments wrongly said stderr.
+
 ## [1.0.0] - 2026-06-14
 
 First stable release: recorded live smoke against a real Archery v1.8.5 stack (`docs/LIVE-SMOKE-EVIDENCE.md`); `release_readiness` is now `stable` with `live_smoke_status: verified`.

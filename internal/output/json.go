@@ -208,7 +208,8 @@ func PrintJSONErr(v any) error {
 	return nil
 }
 
-// PrintErrorJSON outputs a machine-readable error envelope as JSON to stderr.
+// PrintErrorJSON outputs a machine-readable error envelope as JSON to stdout —
+// the failure envelope is the single document agents parse (CLI-SPEC §4).
 func PrintErrorJSON(msg string, statusCode int) {
 	code := ErrorCodeFromStatus(statusCode)
 	if statusCode == 0 {
@@ -217,7 +218,7 @@ func PrintErrorJSON(msg string, statusCode int) {
 	emitErrorPayload(msg, statusCode, code)
 }
 
-// PrintErrorJSONWithCode outputs an error envelope with an explicit error code to stderr.
+// PrintErrorJSONWithCode outputs an error envelope with an explicit error code to stdout.
 // The exitCode parameter is for the caller's use; it is not emitted in the JSON.
 func PrintErrorJSONWithCode(msg string, exitCode int, code ErrorCode) {
 	emitErrorPayload(msg, exitCode, code)

@@ -453,12 +453,7 @@ var queryLogCmd = &cobra.Command{
 				api.TagUntrusted(m, "sql")
 				out[i] = output.FilterMap(m, fields)
 			}
-			output.PrintJSON(map[string]any{
-				"items":    out,
-				"total":    resp.Data.Total,
-				"count":    len(out),
-				"has_more": offset+len(out) < resp.Data.Total,
-			})
+			output.PrintJSON(offsetListEnvelope(out, offset, len(out), resp.Data.Total))
 			return nil
 		}
 
