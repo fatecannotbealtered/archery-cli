@@ -457,14 +457,13 @@ var instanceCreateCmd = &cobra.Command{
 
 		payload := map[string]any{
 			"instance_name": name,
-			"type":          0, // 0=master in Archery
-			"db_type":       dbType,
-			"host":          host,
-			"port":          port,
-			"user":          user,
-		}
-		if instanceType == "slave" {
-			payload["type"] = 1
+			// Archery's Instance.type is a CharField with choices
+			// ('master','slave'); it must be the string, not a numeric enum.
+			"type":    instanceType,
+			"db_type": dbType,
+			"host":    host,
+			"port":    port,
+			"user":    user,
 		}
 		if password != "" {
 			payload["password"] = password
@@ -854,7 +853,8 @@ type instanceResult struct {
 	Charset      string `json:"charset"`
 	IsActive     bool   `json:"is_active"`
 	Environment  string `json:"environment"`
-	InstanceTag  string `json:"instance_tag"`
+	// Archery's instance_tag is a ManyToMany relation serialized as an array.
+	InstanceTag []any `json:"instance_tag"`
 }
 
 // UnmarshalJSON implements custom JSON unmarshaling to handle the Archery API
@@ -892,7 +892,7 @@ func instanceResultToMap(inst instanceResult) map[string]any {
 	if inst.Environment != "" {
 		m["environment"] = inst.Environment
 	}
-	if inst.InstanceTag != "" {
+	if len(inst.InstanceTag) > 0 {
 		m["instanceTag"] = inst.InstanceTag
 	}
 	m["isActive"] = inst.IsActive
