@@ -64,6 +64,9 @@ jobs:
           go-version-file: go.mod
 
       - name: Run tests with coverage
+        # bash on all platforms: pwsh splits the unquoted -coverprofile=coverage.out
+        # at the dot, passing a stray ".out" package arg to go test
+        shell: bash
         run: go test -coverprofile=coverage.out ./...
 
       - name: Ensure race detector toolchain
