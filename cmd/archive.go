@@ -140,12 +140,7 @@ var archiveListCmd = &cobra.Command{
 				}
 				items = filtered
 			}
-			output.PrintJSON(map[string]any{
-				"items":    items,
-				"total":    total,
-				"count":    len(items),
-				"has_more": offset+len(items) < total,
-			})
+			output.PrintJSON(offsetListEnvelope(items, offset, len(items), total))
 			return nil
 		}
 
@@ -575,12 +570,7 @@ var archiveLogCmd = &cobra.Command{
 				}
 				items = filtered
 			}
-			output.PrintJSON(map[string]any{
-				"items":    items,
-				"total":    total,
-				"count":    len(items),
-				"has_more": offset+len(items) < total,
-			})
+			output.PrintJSON(offsetListEnvelope(items, offset, len(items), total))
 			return nil
 		}
 
