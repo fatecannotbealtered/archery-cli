@@ -106,6 +106,14 @@ func (c *Client) applyInternalHeaders(req *http.Request) {
 	req.Header.Set("User-Agent", defaultUserAgent())
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	// Django's CSRF middleware rejects unsafe methods on a session without a
+	// matching csrftoken; mirror the csrftoken cookie into the header.
+	if req.Method != http.MethodGet && req.Method != http.MethodHead {
+		if csrf := c.csrfTokenFromJar(); csrf != "" {
+			req.Header.Set("X-CSRFToken", csrf)
+			req.Header.Set("Referer", c.host+"/")
+		}
+	}
 }
 
 // APIError represents an error returned by the Archery API.
@@ -198,6 +206,14 @@ type Client struct {
 	httpClient   *http.Client
 	Auth         *AuthAPI
 	Workflows    *WorkflowAPI
+
+	// Session-mode credentials for Archery's legacy Django web endpoints
+	// (e.g. /data_dictionary/, /db_diagnostic/): JWT alone cannot authenticate
+	// them — they need a session cookie from a form login. ensureSession
+	// performs that login lazily on the first internal-mode request.
+	sessionUser  string
+	sessionPass  string
+	sessionReady bool
 }
 
 // NewClient creates a new API client using global HTTP options.
@@ -215,6 +231,122 @@ func NewClient(host string) *Client {
 func (c *Client) SetTokens(accessToken, refreshToken string) {
 	c.accessToken = accessToken
 	c.refreshToken = refreshToken
+}
+
+// SetSessionCredentials supplies the username/password used to establish a
+// Django session for internal-mode (legacy web endpoint) commands. JWT-only
+// configs (keyring) leave these empty; ensureSession then returns a clear
+// error directing the caller to provide credentials.
+func (c *Client) SetSessionCredentials(username, password string) {
+	c.sessionUser = username
+	c.sessionPass = password
+}
+
+// csrfTokenFromJar returns the Django csrftoken cookie value, if present.
+func (c *Client) csrfTokenFromJar() string {
+	u, err := url.Parse(c.host)
+	if err != nil {
+		return ""
+	}
+	for _, ck := range c.httpClient.Jar.Cookies(u) {
+		if ck.Name == "csrftoken" {
+			return ck.Value
+		}
+	}
+	return ""
+}
+
+// ensureSession lazily establishes a Django session cookie for internal-mode
+// requests. It performs Archery's form login: GET /login/ to obtain the
+// csrftoken cookie, then POST /login/ with csrfmiddlewaretoken + credentials.
+// The cookie jar carries csrftoken/sessionid across the two calls and into the
+// subsequent internal request. Idempotent: a no-op once the session is ready.
+func (c *Client) ensureSession(ctx context.Context) error {
+	if c.sessionReady {
+		return nil
+	}
+	if strings.TrimSpace(c.sessionUser) == "" || strings.TrimSpace(c.sessionPass) == "" {
+		return &APIError{
+			StatusCode:    http.StatusUnauthorized,
+			ErrorMessages: []string{"this command uses Archery's session-based endpoints, which need a username and password; set ARCHERY_CLI_USERNAME and ARCHERY_CLI_PASSWORD (a cached JWT alone is not enough)"},
+		}
+	}
+
+	// Step 1: prime the csrftoken cookie.
+	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.host+"/login/", nil)
+	if err != nil {
+		return fmt.Errorf("session login (csrf prime): %w", err)
+	}
+	getReq.Header.Set("User-Agent", defaultUserAgent())
+	getResp, err := c.httpClient.Do(getReq)
+	if err != nil {
+		return fmt.Errorf("session login (csrf prime): %w", err)
+	}
+	_, _ = io.Copy(io.Discard, getResp.Body)
+	_ = getResp.Body.Close()
+
+	csrf := c.csrfTokenFromJar()
+
+	// Step 2: post credentials to Archery's AJAX auth endpoint. On success it
+	// returns JSON {"status":0,...} and calls Django login() to set the
+	// sessionid cookie; on failure {"status":1,"msg":"..."}. Django validates
+	// the csrfmiddlewaretoken form field against the csrftoken cookie and
+	// checks Referer for same-origin.
+	form := url.Values{
+		"username":            {c.sessionUser},
+		"password":            {c.sessionPass},
+		"csrfmiddlewaretoken": {csrf},
+	}
+	postReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.host+"/authenticate/", strings.NewReader(form.Encode()))
+	if err != nil {
+		return fmt.Errorf("session login: %w", err)
+	}
+	postReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	postReq.Header.Set("User-Agent", defaultUserAgent())
+	postReq.Header.Set("Referer", c.host+"/login/")
+	if csrf != "" {
+		postReq.Header.Set("X-CSRFToken", csrf)
+	}
+	postResp, err := c.httpClient.Do(postReq)
+	if err != nil {
+		return fmt.Errorf("session login: %w", err)
+	}
+	body, _ := io.ReadAll(postResp.Body)
+	_ = postResp.Body.Close()
+
+	// Success: status==0 and Django set a sessionid cookie. A status!=0 carries
+	// Archery's reason (wrong password, 2FA required, etc.).
+	var ar struct {
+		Status int    `json:"status"`
+		Msg    string `json:"msg"`
+	}
+	_ = json.Unmarshal(body, &ar)
+	if ar.Status == 0 && c.hasSessionCookie() {
+		c.sessionReady = true
+		return nil
+	}
+	msg := strings.TrimSpace(ar.Msg)
+	if msg == "" {
+		msg = "check ARCHERY_CLI_USERNAME / ARCHERY_CLI_PASSWORD"
+	}
+	return &APIError{
+		StatusCode:    http.StatusUnauthorized,
+		ErrorMessages: []string{"session login failed: " + msg},
+	}
+}
+
+// hasSessionCookie reports whether the jar holds a non-empty sessionid cookie.
+func (c *Client) hasSessionCookie() bool {
+	u, err := url.Parse(c.host)
+	if err != nil {
+		return false
+	}
+	for _, ck := range c.httpClient.Jar.Cookies(u) {
+		if ck.Name == "sessionid" && ck.Value != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // Host returns the underlying Archery host (without trailing slash).
@@ -304,6 +436,10 @@ func (c *Client) restRequest(ctx context.Context, method, path string, body any)
 // and retry logic. Used for Archery's internal Django endpoints that use
 // session-based authentication instead of JWT.
 func (c *Client) internalRequest(ctx context.Context, method, path string, form url.Values) ([]byte, int, http.Header, error) {
+	// Internal Django endpoints need a session cookie, not just a JWT.
+	if err := c.ensureSession(ctx); err != nil {
+		return nil, 0, nil, err
+	}
 	for attempt := 0; ; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return nil, 0, nil, err

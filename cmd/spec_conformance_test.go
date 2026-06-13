@@ -40,11 +40,11 @@ func TestReferenceReportsErrorCodesAndOutputSchema(t *testing.T) {
 	if tree.SecurityTier != "T2" {
 		t.Fatalf("security tier = %q, want T2", tree.SecurityTier)
 	}
-	if tree.ReleaseReadiness.Level != "beta" {
-		t.Fatalf("release level = %q, want beta", tree.ReleaseReadiness.Level)
+	if tree.ReleaseReadiness.Level != "stable" {
+		t.Fatalf("release level = %q, want stable", tree.ReleaseReadiness.Level)
 	}
-	if tree.ReleaseReadiness.LiveSmokeStatus != "missing" {
-		t.Fatalf("live smoke status = %q, want missing", tree.ReleaseReadiness.LiveSmokeStatus)
+	if tree.ReleaseReadiness.LiveSmokeStatus != "verified" {
+		t.Fatalf("live smoke status = %q, want verified", tree.ReleaseReadiness.LiveSmokeStatus)
 	}
 	if len(tree.ErrorCodesSnake) == 0 {
 		t.Fatal("reference error_codes is empty")
@@ -64,14 +64,14 @@ func TestReferenceReportsErrorCodesAndOutputSchema(t *testing.T) {
 
 func TestReleaseReadinessDoctorContract(t *testing.T) {
 	readiness := buildReleaseReadiness()
-	if readiness.Level != "beta" || readiness.FCCStatus != "verified" {
+	if readiness.Level != "stable" || readiness.FCCStatus != "verified" {
 		t.Fatalf("unexpected readiness: %+v", readiness)
 	}
-	if releaseReadinessCheckStatus() != "warn" {
-		t.Fatalf("release readiness doctor status = %q, want warn", releaseReadinessCheckStatus())
+	if releaseReadinessCheckStatus() != "pass" {
+		t.Fatalf("release readiness doctor status = %q, want pass", releaseReadinessCheckStatus())
 	}
-	if releaseReadinessCheckFix() == "" {
-		t.Fatal("beta release readiness should include a fix")
+	if releaseReadinessCheckFix() != "" {
+		t.Fatal("stable release readiness should not include a fix")
 	}
 }
 

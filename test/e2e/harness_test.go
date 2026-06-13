@@ -47,6 +47,19 @@ var pathOverrides = map[string]string{
 
 func universalMux() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Django session login flow for internal-mode commands: GET /login/
+		// primes the csrftoken cookie, POST /authenticate/ sets sessionid.
+		switch {
+		case r.URL.Path == "/login/" && r.Method == http.MethodGet:
+			http.SetCookie(w, &http.Cookie{Name: "csrftoken", Value: "test-csrf", Path: "/"})
+			w.WriteHeader(http.StatusOK)
+			return
+		case r.URL.Path == "/authenticate/" && r.Method == http.MethodPost:
+			http.SetCookie(w, &http.Cookie{Name: "sessionid", Value: "test-session", Path: "/"})
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":0,"msg":"ok"}`))
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		best := ""
 		for prefix := range pathOverrides {

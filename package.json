@@ -1,6 +1,6 @@
 {
   "name": "@fatecannotbealtered-/archery-cli",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Archery SQL audit CLI for AI Agents - manage SQL workflows, queries, instances, diagnostics, and data dictionaries with a machine-readable contract",
   "keywords": [
     "archery",
@@ -26,12 +26,12 @@
     "archery-cli": "scripts/run.js"
   },
   "optionalDependencies": {
-    "@fatecannotbealtered-/archery-cli-darwin-arm64": "0.1.0",
-    "@fatecannotbealtered-/archery-cli-darwin-x64": "0.1.0",
-    "@fatecannotbealtered-/archery-cli-linux-arm64": "0.1.0",
-    "@fatecannotbealtered-/archery-cli-linux-x64": "0.1.0",
-    "@fatecannotbealtered-/archery-cli-win32-arm64": "0.1.0",
-    "@fatecannotbealtered-/archery-cli-win32-x64": "0.1.0"
+    "@fatecannotbealtered-/archery-cli-darwin-arm64": "1.0.0",
+    "@fatecannotbealtered-/archery-cli-darwin-x64": "1.0.0",
+    "@fatecannotbealtered-/archery-cli-linux-arm64": "1.0.0",
+    "@fatecannotbealtered-/archery-cli-linux-x64": "1.0.0",
+    "@fatecannotbealtered-/archery-cli-win32-arm64": "1.0.0",
+    "@fatecannotbealtered-/archery-cli-win32-x64": "1.0.0"
   },
   "files": [
     "scripts/run.js",
