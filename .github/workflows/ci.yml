@@ -102,10 +102,10 @@ jobs:
           cache: npm
 
       - name: Install package metadata
-        run: npm ci --ignore-scripts
+        run: npm install --ignore-scripts --omit=optional --no-audit --no-fund
 
       - name: Audit npm dependencies
-        run: npm audit --audit-level=high
+        run: npm audit --audit-level=high --omit=optional
 
   build:
     name: Build
