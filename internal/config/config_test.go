@@ -7,7 +7,17 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/zalando/go-keyring"
 )
+
+// TestMain installs the in-memory keyring mock so config tests never touch the
+// real OS secret store — a locked macOS Keychain on CI runners blocks on the
+// keyring probe instead of failing fast, hanging the package to its timeout.
+func TestMain(m *testing.M) {
+	keyring.MockInit()
+	os.Exit(m.Run())
+}
 
 // withTempHome redirects the user home directory to a temp dir for the duration of fn.
 func withTempHome(t *testing.T, fn func(string)) {

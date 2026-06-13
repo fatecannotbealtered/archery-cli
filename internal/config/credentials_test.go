@@ -195,3 +195,18 @@ func TestUsesKeyringStore(t *testing.T) {
 		t.Error("expected usesKeyringStore() = false for empty store")
 	}
 }
+
+// TestKeyringDisabledByEnv verifies ARCHERY_CLI_NO_KEYRING forces the keyring
+// store to report unavailable without probing the OS secret store (prevents a
+// locked macOS Keychain from hanging the probe on CI/headless hosts).
+func TestKeyringDisabledByEnv(t *testing.T) {
+	t.Setenv("ARCHERY_CLI_NO_KEYRING", "1")
+	if NewKeyringStore().IsAvailable() {
+		t.Fatal("IsAvailable() should be false when ARCHERY_CLI_NO_KEYRING=1")
+	}
+	t.Setenv("ARCHERY_CLI_NO_KEYRING", "")
+	// With the mock keyring (TestMain) and the flag cleared, the probe succeeds.
+	if !NewKeyringStore().IsAvailable() {
+		t.Fatal("IsAvailable() should be true with the mock keyring and no disable flag")
+	}
+}

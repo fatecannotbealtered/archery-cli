@@ -3,10 +3,19 @@ package config
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/zalando/go-keyring"
 )
+
+// keyringDisabled reports whether the OS keyring is explicitly turned off via
+// ARCHERY_CLI_NO_KEYRING. Useful on headless/CI hosts where probing the OS
+// secret store (e.g. a locked macOS Keychain) blocks instead of failing fast.
+func keyringDisabled() bool {
+	v := strings.TrimSpace(os.Getenv("ARCHERY_CLI_NO_KEYRING"))
+	return v == "1" || strings.EqualFold(v, "true")
+}
 
 const (
 	keyringService = "archery-cli"
@@ -57,6 +66,9 @@ func (k *KeyringStore) Delete(service, key string) error {
 }
 
 func (k *KeyringStore) IsAvailable() bool {
+	if keyringDisabled() {
+		return false
+	}
 	probe := "archery-cli-probe"
 	if err := keyring.Set(k.Service, probe, "ok"); err != nil {
 		return false

@@ -163,6 +163,9 @@ func runCLI(home string, extraEnv map[string]string, args ...string) cmdResult {
 		"ARCHERY_CLI_USERNAME=tester",
 		"ARCHERY_CLI_PASSWORD=secret",
 		"ARCHERY_CLI_NO_UPDATE_CHECK=1",
+		// Don't probe the real OS keyring from the spawned binary: a locked
+		// macOS Keychain on CI runners blocks the probe and hangs the suite.
+		"ARCHERY_CLI_NO_KEYRING=1",
 		"HOME="+home,
 		"USERPROFILE="+home,
 	)
