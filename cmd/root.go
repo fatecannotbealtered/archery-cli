@@ -476,6 +476,10 @@ func newClient() (*api.Client, *config.Config, *config.RegionConfig, error) {
 		}
 		client.SetTokens(accessToken, refreshToken)
 	}
+	// Session-mode commands (legacy Django endpoints) need a form login; pass
+	// the credentials when available. JWT-only configs leave these empty and
+	// such commands return a clear "needs username/password" error.
+	client.SetSessionCredentials(region.Username, region.Password)
 	return client, cfg, &region, nil
 }
 

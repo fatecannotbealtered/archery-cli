@@ -14,14 +14,14 @@ type releaseReadiness struct {
 
 func buildReleaseReadiness() releaseReadiness {
 	return releaseReadiness{
-		Level:                      "beta",
+		Level:                      "stable",
 		FCCRequired:                true,
 		FCCStatus:                  "verified",
 		MockUpstreamRequired:       true,
 		MockUpstreamStatus:         "verified",
 		LiveSmokeRequiredForStable: true,
-		LiveSmokeStatus:            "missing",
-		Reason:                     "FCC is enforced by the enumeration guard (TestFCC_EveryLeafCommandHasTest) over the boundary suite in test/e2e; recorded live smoke/E2E evidence is missing, so this release is beta.",
+		LiveSmokeStatus:            "verified",
+		Reason:                     "FCC (TestFCC_EveryLeafCommandHasTest) and mock upstream tests are verified; recorded live smoke against a real Archery v1.8.5 stack (docs/LIVE-SMOKE-EVIDENCE.md, 2026-06-14: REST/JWT + session-mode GET/POST commands PASS) supports stable.",
 		RequiredEvidence: []string{
 			"functional_contract_coverage_100",
 			"mock_upstream_contract_tests",

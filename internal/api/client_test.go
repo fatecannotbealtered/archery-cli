@@ -28,6 +28,9 @@ var testCtx = context.Background()
 func newTestClient(serverURL string) *Client {
 	c := NewClient(serverURL)
 	c.SetTokens("test-token", "test-refresh")
+	// Internal-mode mechanics tests exercise internalRequest directly; mark the
+	// Django session as already established so ensureSession is a no-op.
+	c.sessionReady = true
 	return c
 }
 
@@ -1039,5 +1042,58 @@ func TestParseLinkHeader_NoRel(t *testing.T) {
 	parseLinkHeader(&p)
 	if p.NextPage != 0 || p.PrevPage != 0 {
 		t.Errorf("expected 0 for links without rel, got NextPage=%d PrevPage=%d", p.NextPage, p.PrevPage)
+	}
+}
+
+// TestEnsureSession_FormLoginFlow verifies internal-mode requests perform the
+// Django form login (GET /login/ for csrf, POST /authenticate/) and then send
+// the session cookie + X-CSRFToken on the actual request. Regression guard for
+// the live-smoke finding that session-mode commands never authenticated.
+func TestEnsureSession_FormLoginFlow(t *testing.T) {
+	var sawAuthenticate, sawCSRFHeader bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/login/" && r.Method == http.MethodGet:
+			http.SetCookie(w, &http.Cookie{Name: "csrftoken", Value: "csrf-xyz", Path: "/"})
+			w.WriteHeader(http.StatusOK)
+		case r.URL.Path == "/authenticate/" && r.Method == http.MethodPost:
+			sawAuthenticate = true
+			http.SetCookie(w, &http.Cookie{Name: "sessionid", Value: "sess-abc", Path: "/"})
+			_, _ = w.Write([]byte(`{"status":0,"msg":"ok"}`))
+		default:
+			if r.Header.Get("X-CSRFToken") == "csrf-xyz" {
+				sawCSRFHeader = true
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"status":0,"msg":"ok","data":{}}`))
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	c.SetSessionCredentials("admin", "secret")
+	form := url.Values{}
+	form.Set("k", "v")
+	if _, err := c.InternalPost(testCtx, "/db_diagnostic/process/", form); err != nil {
+		t.Fatalf("InternalPost: %v", err)
+	}
+	if !sawAuthenticate {
+		t.Error("expected a POST /authenticate/ session login")
+	}
+	if !sawCSRFHeader {
+		t.Error("expected X-CSRFToken header on the POST internal request")
+	}
+	if !c.sessionReady {
+		t.Error("session should be marked ready after successful login")
+	}
+}
+
+// TestEnsureSession_NoCredentials returns a clear error when only a JWT is
+// present (keyring config) but a session-mode command is invoked.
+func TestEnsureSession_NoCredentials(t *testing.T) {
+	c := NewClient("http://127.0.0.1:0")
+	_, err := c.InternalGet(testCtx, "/data_dictionary/table_list/")
+	if err == nil {
+		t.Fatal("expected an error when session credentials are absent")
 	}
 }

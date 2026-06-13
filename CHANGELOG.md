@@ -5,7 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0] - 2026-06-14
+
+First stable release: recorded live smoke against a real Archery v1.8.5 stack (`docs/LIVE-SMOKE-EVIDENCE.md`); `release_readiness` is now `stable` with `live_smoke_status: verified`.
+
+### Fixed
+- **Session-mode commands never authenticated.** `dict`, `diagnostic`, `query`, `slowquery`, `binlog`, and `archive` use Archery's legacy Django endpoints, which need a session cookie — but the client only sent a JWT Bearer, so every request was redirected to `/login/` and the HTML page was parsed as JSON. `LoginWithSession` existed but was never called. Now `ensureSession` performs the Django form login lazily (GET `/login/` for the csrftoken, POST `/authenticate/` with `csrfmiddlewaretoken` + credentials), wired into `internalRequest`, and unsafe methods carry the `X-CSRFToken` header. Credentials come from the resolved region (env vars when the keyring holds only a JWT). Found by live smoke.
+- **`instance create` sent `type` as an integer.** Archery's `Instance.type` is a `CharField` with choices `('master','slave')`; the API rejected `type 0`. Now sends the string.
+- **`instance_tag` typed as `string`.** It is a ManyToMany relation serialized as an array, so `instance list`/`describe` failed to parse against a real server. Now `[]any`.
 
 ### Added
 - Boundary test suite (`test/e2e`): all 55 leaf commands now execute through the real binary against a universal mock Archery upstream — read commands assert the ok envelope, write commands assert the dry-run `confirm_token`, plus full dry-run→confirm cycle, cross-machine token rejection, missing-credential, and usage-error paths.
