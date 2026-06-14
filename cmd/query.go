@@ -21,12 +21,14 @@ func init() {
 	rootCmd.AddCommand(queryCmd)
 
 	// run
-	queryRunCmd.Flags().String("instance", "", "Instance name (required)")
+	queryRunCmd.Flags().String("instance", "", "Instance name (compatibility alias of --instances; deprecated)")
+	queryRunCmd.Flags().StringSlice("instances", nil, "Instance names to run the SQL against (comma-separated or repeatable; batch)")
 	queryRunCmd.Flags().String("db", "", "Database name (required)")
 	queryRunCmd.Flags().String("sql", "", "SQL to execute (required)")
 	queryRunCmd.Flags().Int("limit", 0, "Row limit (0 = server default)")
 	queryRunCmd.Flags().String("table", "", "Table name (for context)")
 	queryRunCmd.Flags().String("schema", "", "Schema name")
+	queryRunCmd.Flags().Bool("continue-on-error", true, "Keep running after an instance fails (batch; default true)")
 	queryRunCmd.Flags().String("fields", "", "Comma-separated fields for JSON output")
 	queryCmd.AddCommand(queryRunCmd)
 	markWrite(queryRunCmd)
@@ -96,12 +98,15 @@ type queryRunResponse struct {
 
 var queryRunCmd = &cobra.Command{
 	Use:   "run",
-	Short: "Execute a SQL query",
+	Short: "Execute a SQL query (single instance, or batch across --instances)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		instance, _ := cmd.Flags().GetString("instance")
-		if instance == "" {
-			return failArg("--instance is required")
-		}
+		// Resolve the target set: --instances is the plural form; --instance is a
+		// deprecated single-value compatibility alias. The plural flag, when set,
+		// drives the batch envelope even for one target (CLI-SPEC §15.1).
+		single, _ := cmd.Flags().GetString("instance")
+		plural, _ := cmd.Flags().GetStringSlice("instances")
+		pluralSet := cmd.Flags().Changed("instances")
+
 		db, _ := cmd.Flags().GetString("db")
 		if db == "" {
 			return failArg("--db is required")
@@ -117,7 +122,16 @@ var queryRunCmd = &cobra.Command{
 		table, _ := cmd.Flags().GetString("table")
 		schema, _ := cmd.Flags().GetString("schema")
 
-		detail := map[string]any{"instance": instance, "db": db, "sql": sql}
+		if pluralSet {
+			return runQueryBatch(cmd, parsePluralTargets(plural), db, sql, limit, table, schema)
+		}
+
+		// Legacy single-instance path: same envelope as before for backwards compat.
+		if single == "" {
+			return failArg("--instance or --instances is required")
+		}
+
+		detail := map[string]any{"instance": single, "db": db, "sql": sql}
 		if limit > 0 {
 			detail["limit"] = limit
 		}
@@ -136,53 +150,13 @@ var queryRunCmd = &cobra.Command{
 			return err
 		}
 
-		form := url.Values{
-			"instance_name": {instance},
-			"db_name":       {db},
-			"sql":           {sql},
-		}
-		if limit > 0 {
-			form.Set("limit", strconv.Itoa(limit))
-		}
-		if table != "" {
-			form.Set("table_name", table)
-		}
-		if schema != "" {
-			form.Set("schema_name", schema)
-		}
-
-		data, err := client.InternalPost(apiCtx(), "/query/", form)
-		if err != nil {
-			return handleAPIError(err)
-		}
-
-		var resp queryRunResponse
-		if err := json.Unmarshal(data, &resp); err != nil {
-			return failArg("failed to parse query response: " + err.Error())
-		}
-
-		if resp.Status != 0 && resp.ErrorMessage != "" {
-			return failArg(resp.ErrorMessage)
-		}
-
-		out := QueryRunOutput{
-			Columns:     resp.ColumnList,
-			Rows:        resp.Rows,
-			RowCount:    resp.RowCount,
-			QueryTimeMS: int(resp.QueryTime * 1000),
-			Masked:      resp.IsMasked,
+		out, errMsg, code := runQueryOnInstance(client, single, db, sql, limit, table, schema)
+		if errMsg != "" {
+			return failWithCode(errMsg, exitForErrorCode(code), code)
 		}
 
 		if jsonMode {
-			// Tag rows as untrusted: raw database data may contain injection payloads (SEC-SPEC §2).
-			outMap := map[string]any{
-				"columns":       out.Columns,
-				"rows":          out.Rows,
-				"row_count":     out.RowCount,
-				"query_time_ms": out.QueryTimeMS,
-				"masked":        out.Masked,
-			}
-			api.TagUntrusted(outMap, "rows")
+			outMap := queryRunOutputToMap(out)
 			if fields := getFieldsFlag(cmd); len(fields) > 0 {
 				outMap = output.FilterMap(outMap, fields)
 			}
@@ -192,13 +166,109 @@ var queryRunCmd = &cobra.Command{
 
 		// text/raw format
 		if formatMode == formatRaw {
-			printRawQueryResult(resp.ColumnList, resp.Rows)
+			printRawQueryResult(out.Columns, out.Rows)
 			return nil
 		}
 
 		printTextQueryResult(out)
 		return nil
 	},
+}
+
+// runQueryOnInstance executes the SQL against one instance and returns either the
+// structured result or an error message + code. Shared by the single-instance
+// path and the batch loop so both speak the identical contract.
+func runQueryOnInstance(client *api.Client, instance, db, sql string, limit int, table, schema string) (QueryRunOutput, string, output.ErrorCode) {
+	form := url.Values{
+		"instance_name": {instance},
+		"db_name":       {db},
+		"sql":           {sql},
+	}
+	if limit > 0 {
+		form.Set("limit", strconv.Itoa(limit))
+	}
+	if table != "" {
+		form.Set("table_name", table)
+	}
+	if schema != "" {
+		form.Set("schema_name", schema)
+	}
+
+	data, err := client.InternalPost(apiCtx(), "/query/", form)
+	if err != nil {
+		return QueryRunOutput{}, err.Error(), errorCodeForAPIErr(err)
+	}
+
+	var resp queryRunResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return QueryRunOutput{}, "failed to parse query response: " + err.Error(), output.E_SERVER
+	}
+	if resp.Status != 0 && resp.ErrorMessage != "" {
+		return QueryRunOutput{}, resp.ErrorMessage, output.E_VALIDATION
+	}
+
+	return QueryRunOutput{
+		Columns:     resp.ColumnList,
+		Rows:        resp.Rows,
+		RowCount:    resp.RowCount,
+		QueryTimeMS: int(resp.QueryTime * 1000),
+		Masked:      resp.IsMasked,
+	}, "", ""
+}
+
+// queryRunOutputToMap builds the per-result JSON map, tagging rows as untrusted
+// (raw database data may carry injection payloads, SEC-SPEC §2).
+func queryRunOutputToMap(out QueryRunOutput) map[string]any {
+	m := map[string]any{
+		"columns":       out.Columns,
+		"rows":          out.Rows,
+		"row_count":     out.RowCount,
+		"query_time_ms": out.QueryTimeMS,
+		"masked":        out.Masked,
+	}
+	api.TagUntrusted(m, "rows")
+	return m
+}
+
+// runQueryBatch runs one SQL across many instances, grouped per instance, failing
+// soft (CLI-SPEC §15). This is a class-B client loop: Archery has no native
+// cross-instance read, so results are NOT atomic and per-instance status lives in
+// items[]. query run is high risk → the --dangerous gate applies to the batch.
+func runQueryBatch(cmd *cobra.Command, instances []string, db, sql string, limit int, table, schema string) error {
+	if len(instances) == 0 {
+		return failArg("--instances must list at least one instance")
+	}
+
+	changes := make([]map[string]any, len(instances))
+	for i, inst := range instances {
+		changes[i] = map[string]any{"action": "query", "instance": inst, "db": db}
+	}
+	if batchDryRunOrConfirm("query run", instances, changes) {
+		return nil
+	}
+
+	client, _, _, err := newClient()
+	if err != nil {
+		return err
+	}
+
+	continueOnError := continueOnErrorFlag(cmd, true)
+	fields := getFieldsFlag(cmd)
+
+	items, summary := runBatch(instances, continueOnError, func(target string) (map[string]any, output.ErrorCode, bool, error) {
+		out, errMsg, code := runQueryOnInstance(client, target, db, sql, limit, table, schema)
+		if errMsg != "" {
+			return nil, code, output.RetryableErrorCode(code), errBatch(errMsg)
+		}
+		m := queryRunOutputToMap(out)
+		if len(fields) > 0 {
+			m = output.FilterMap(m, fields)
+		}
+		return m, "", false, nil
+	})
+
+	printBatchResult(items, summary)
+	return nil
 }
 
 func printTextQueryResult(out QueryRunOutput) {
