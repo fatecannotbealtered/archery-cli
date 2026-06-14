@@ -82,18 +82,24 @@ type QueryRunOutput struct {
 	Masked      bool     `json:"masked"`
 }
 
-// queryRunResponse is the raw API response from POST /query/.
+// queryRunResponse is the raw API response from POST /query/. Archery wraps the
+// result in {status, msg, data:{...}}: the outer status/msg report whether the
+// request was accepted, while the row payload and any per-query DB error live
+// under data.
 type queryRunResponse struct {
-	Status       int      `json:"status"`
-	Msg          string   `json:"msg"`
+	Status int               `json:"status"`
+	Msg    string            `json:"msg"`
+	Data   queryRunResultSet `json:"data"`
+}
+
+// queryRunResultSet is the nested data object of POST /query/.
+type queryRunResultSet struct {
 	ColumnList   []string `json:"column_list"`
 	Rows         [][]any  `json:"rows"`
-	RowCount     int      `json:"row_count"`
 	AffectedRows int      `json:"affected_rows"`
 	QueryTime    float64  `json:"query_time"`
 	IsMasked     bool     `json:"is_masked"`
-	IsExecute    bool     `json:"is_execute"`
-	ErrorMessage string   `json:"error_message"`
+	Error        string   `json:"error"`
 }
 
 var queryRunCmd = &cobra.Command{
@@ -179,16 +185,18 @@ var queryRunCmd = &cobra.Command{
 // structured result or an error message + code. Shared by the single-instance
 // path and the batch loop so both speak the identical contract.
 func runQueryOnInstance(client *api.Client, instance, db, sql string, limit int, table, schema string) (QueryRunOutput, string, output.ErrorCode) {
+	// Archery's /query/ view reads sql_content/limit_num/tb_name (not sql/limit/
+	// table_name); a mismatched name lands the value in None and the view rejects
+	// the request with "页面提交参数可能为空". limit_num is in the view's not-None
+	// check, so always send it.
 	form := url.Values{
 		"instance_name": {instance},
 		"db_name":       {db},
-		"sql":           {sql},
-	}
-	if limit > 0 {
-		form.Set("limit", strconv.Itoa(limit))
+		"sql_content":   {sql},
+		"limit_num":     {strconv.Itoa(limit)},
 	}
 	if table != "" {
-		form.Set("table_name", table)
+		form.Set("tb_name", table)
 	}
 	if schema != "" {
 		form.Set("schema_name", schema)
@@ -203,16 +211,24 @@ func runQueryOnInstance(client *api.Client, instance, db, sql string, limit int,
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return QueryRunOutput{}, "failed to parse query response: " + err.Error(), output.E_SERVER
 	}
-	if resp.Status != 0 && resp.ErrorMessage != "" {
-		return QueryRunOutput{}, resp.ErrorMessage, output.E_VALIDATION
+	// Archery signals request-level errors with {"status":1,"msg":"..."} (e.g.
+	// RBAC "你所在组未关联该实例" or "页面提交参数可能为空"). Surface msg so
+	// per-instance failures aren't swallowed as empty-row successes in a batch.
+	if resp.Status != 0 {
+		return QueryRunOutput{}, resp.Msg, output.E_VALIDATION
+	}
+	// A query accepted by Archery can still fail at the database; that error is
+	// reported inside data.error, not the outer status.
+	if resp.Data.Error != "" {
+		return QueryRunOutput{}, resp.Data.Error, output.E_VALIDATION
 	}
 
 	return QueryRunOutput{
-		Columns:     resp.ColumnList,
-		Rows:        resp.Rows,
-		RowCount:    resp.RowCount,
-		QueryTimeMS: int(resp.QueryTime * 1000),
-		Masked:      resp.IsMasked,
+		Columns:     resp.Data.ColumnList,
+		Rows:        resp.Data.Rows,
+		RowCount:    len(resp.Data.Rows),
+		QueryTimeMS: int(resp.Data.QueryTime * 1000),
+		Masked:      resp.Data.IsMasked,
 	}, "", ""
 }
 

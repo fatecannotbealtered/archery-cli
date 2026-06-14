@@ -124,7 +124,9 @@ type WorkflowSubmitResponse struct {
 type WorkflowAuditRequest struct {
 	WorkflowID int    `json:"workflow_id"`
 	Action     string `json:"audit_type"`
-	Remark     string `json:"remark,omitempty"`
+	// Archery's AuditWorkflowSerializer names this audit_remark and treats it as
+	// required; sending "remark" left it empty and the API rejected the audit.
+	Remark string `json:"audit_remark"`
 }
 
 // WorkflowExecuteRequest is the payload for POST /api/v1/workflow/execute/.

@@ -13,6 +13,61 @@ from scratch for this acceptance.
   asserted. JWT cached in the OS keyring; session-mode commands authenticate
   via the Django form login.
 
+## 2026-06-15 — batch commands (`--ids` / `--instances` / `--file`)
+
+Smoke for the new client-side batch contract (CLI-SPEC §15) against the same
+`hhyo/archery:v1.8.5` stack on `localhost:9123`, restarted for this run.
+
+- **Method:** each batch command run with `--compact`; the aggregated envelope
+  (`items[]` + `summary{total,succeeded,failed,skipped}`) and the per-item
+  `error{code,message,retryable}` shape were asserted. No real query results,
+  hostnames, credentials, or workflow contents are reproduced here.
+
+### Result by command
+
+| Command | Mode | Result |
+|---|---|---|
+| `query run --instances` | **live (read)** | PASS — real SELECT executed; partial-batch (1 good + 1 bad instance) aggregated `succeeded:1 / failed:1`; `--continue-on-error=false` marked the unattempted remainder `skipped`; per-item `error.code` populated |
+| `workflow audit --ids` | live (reversible) | PARTIAL — batch path reaches the real audit API per item and aggregates failures; full pass blocked because Archery's audit serializer also requires `engineer`+`workflow_type` and no auditable workflow could be created (`workflow submit` against this stack's REST endpoint returns `workflow 该字段是必填项`). Dry-run shape + medium-tier (no `--dangerous`) verified |
+| `workflow execute --ids` | **dry-run only** | PASS (dry-run) — irreversible; per safety policy not run for real. Preview/`confirm_token`/`dangerous:true` verified. NOT executed against real workflows |
+| `instance import --file` | **dry-run only** | PASS (dry-run) — write/irreversible; dry-run only. CSV/JSON manifest parsed, per-row `create` preview emitted, **password field not echoed in the preview envelope**. NOT imported for real |
+
+### Cross-cutting contract points (live-verified on `query run --instances`)
+
+- **Partial-failure aggregation** — `succeeded`/`failed`/`skipped` tally matches
+  per-item `items[]`; no rollback of already-applied items (non-atomic, as
+  documented).
+- **Single-use confirm token** — first `--confirm` consumes the token; a second
+  use of the same token is rejected with `E_CONFLICT` ("confirm token already
+  used").
+- **`--dangerous` gate** — high-risk batches (`query run`, `workflow execute`)
+  refuse even `--dry-run` without `--dangerous`, returning
+  `E_CONFIRMATION_REQUIRED`.
+- **Plural-target dedup** — duplicate targets in `--instances` collapse to one
+  resolved target (§15.1).
+
+### Defects found and fixed by the 2026-06-15 batch run
+
+1. **`query run` swallowed upstream errors as empty successes.** The result
+   guard checked `error_message` (rarely set) instead of Archery's
+   `{"status":1,"msg":"…"}`, so RBAC/param errors returned `ok:true` with
+   `rows:null` — fatal for batch, which then reported false `succeeded`. Now
+   surfaces `msg`, plus the per-query `data.error`.
+2. **`query run` sent wrong form field names.** Archery's `/query/` view reads
+   `sql_content`/`limit_num`/`tb_name`; the CLI sent `sql`/`limit`/`table_name`,
+   so every query was rejected with "页面提交参数可能为空". Fixed to the view's
+   names.
+3. **`query run` read the row payload from the wrong level.** The result set is
+   nested under `data` (`data.column_list`/`data.rows`); the struct read
+   top-level. Now reads the nested object; `row_count` derived from `len(rows)`.
+4. **`workflow audit` sent `remark` instead of `audit_remark`.** Archery's
+   `AuditWorkflowSerializer` requires `audit_remark`; the mismatch left it empty
+   and the audit was rejected. Fixed the JSON tag.
+
+All four fixes verified live for `query run`; the `audit_remark` fix verified to
+clear that specific validation error (audit still blocked by other required
+fields, see table). `go test ./...` stays green after the changes.
+
 ## Result by command class
 
 ### REST / JWT (`/api/`) — PASS
