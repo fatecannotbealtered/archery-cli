@@ -67,7 +67,22 @@ func validateConfirmToken(token, action, region string, payload any) error {
 // requireConfirm enforces non-interactive confirmation for destructive or high-impact writes.
 func requireConfirm(cmd *cobra.Command, action, region string, payload any) error {
 	defer clearConfirmFlag()
-	return validateConfirmToken(confirmFlag, action, region, payload)
+	token := confirmFlag
+	if err := validateConfirmToken(token, action, region, payload); err != nil {
+		return err
+	}
+	// Single-use: a confirm token may drive exactly one write. A replay (e.g. an
+	// agent retrying a confirmed write that timed out) is rejected so it cannot
+	// duplicate the operation; the agent must re-run --dry-run. archery has no
+	// upstream resource version to bind to, so single-use is the safe-retry
+	// mechanism here.
+	now := confirmNow().UTC()
+	if isConfirmTokenConsumed(token, now) {
+		return failWithCode("confirm token already used; the operation may have completed — re-run --dry-run to see current state", ExitConflict, output.E_CONFLICT)
+	}
+	// Mark consumed BEFORE the write runs so a crash mid-write still blocks replay.
+	markConfirmTokenConsumed(token, confirmTokenExpiryUnix(token), now)
+	return nil
 }
 
 func clearConfirmFlag() {
