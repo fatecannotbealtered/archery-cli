@@ -47,12 +47,17 @@ func init() {
 	// workflow audit
 	workflowAuditCmd.Flags().String("action", "", "Audit action: pass or cancel (required)")
 	workflowAuditCmd.Flags().String("remark", "", "Audit remark/comment")
+	workflowAuditCmd.Flags().StringSlice("ids", nil, "Workflow IDs to audit (comma-separated or repeatable; batch)")
+	workflowAuditCmd.Flags().Bool("continue-on-error", true, "Keep auditing after a workflow fails (batch; default true)")
 	workflowCmd.AddCommand(workflowAuditCmd)
 	markWrite(workflowAuditCmd)
 	markRiskLevel(workflowAuditCmd, "medium")
 
 	// workflow execute
 	workflowExecuteCmd.Flags().String("mode", "auto", "Execution mode: auto or manual")
+	workflowExecuteCmd.Flags().StringSlice("ids", nil, "Workflow IDs to execute (comma-separated or repeatable; batch)")
+	// execute is critical: default --continue-on-error false (stop at first failure).
+	workflowExecuteCmd.Flags().Bool("continue-on-error", false, "Keep executing after a workflow fails (batch; default false for execute)")
 	workflowCmd.AddCommand(workflowExecuteCmd)
 	markWrite(workflowExecuteCmd)
 	markRiskLevel(workflowExecuteCmd, "high")
@@ -236,15 +241,10 @@ var workflowDetailCmd = &cobra.Command{
 // ─── workflow audit ─────────────────────────────────────────────────────────
 
 var workflowAuditCmd = &cobra.Command{
-	Use:   "audit <WORKFLOW_ID>",
-	Short: "Audit (approve or reject) a workflow",
-	Args:  cobra.ExactArgs(1),
+	Use:   "audit [WORKFLOW_ID]",
+	Short: "Audit (approve or reject) one workflow, or a batch via --ids",
+	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		id, err := parseWorkflowID(args[0])
-		if err != nil {
-			return err
-		}
-
 		action, err := requireFlagString(cmd, "action", "--action")
 		if err != nil {
 			return err
@@ -254,6 +254,15 @@ var workflowAuditCmd = &cobra.Command{
 			return failArg("--action must be 'pass' or 'cancel'")
 		}
 		remark, _ := cmd.Flags().GetString("remark")
+
+		ids, err := resolveWorkflowTargets(cmd, args)
+		if err != nil {
+			return err
+		}
+		if len(ids) > 1 || cmd.Flags().Changed("ids") {
+			return runWorkflowAuditBatch(cmd, ids, action, remark)
+		}
+		id := ids[0]
 
 		req := api.WorkflowAuditRequest{
 			WorkflowID: id,
@@ -293,23 +302,61 @@ var workflowAuditCmd = &cobra.Command{
 	},
 }
 
+// runWorkflowAuditBatch audits many workflows in one batch (CLI-SPEC §15). audit
+// is not irreversible, so the whole batch shares one confirm token (no per-item
+// confirm) and defaults to --continue-on-error true. Client-side loop; not atomic.
+func runWorkflowAuditBatch(cmd *cobra.Command, ids []int, action, remark string) error {
+	targets := make([]string, len(ids))
+	changes := make([]map[string]any, len(ids))
+	for i, id := range ids {
+		targets[i] = strconv.Itoa(id)
+		changes[i] = map[string]any{"action": "audit:" + action, "workflowId": strconv.Itoa(id)}
+	}
+	if batchDryRunOrConfirm("audit workflows", targets, changes) {
+		return nil
+	}
+
+	client, _, _, err := newClient()
+	if err != nil {
+		return err
+	}
+
+	continueOnError := continueOnErrorFlag(cmd, true)
+	items, summary := runBatch(targets, continueOnError, func(target string) (map[string]any, output.ErrorCode, bool, error) {
+		id, _ := strconv.Atoi(target)
+		req := api.WorkflowAuditRequest{WorkflowID: id, Action: action, Remark: remark}
+		if err := client.Workflows.Audit(apiCtx(), req); err != nil {
+			code := errorCodeForAPIErr(err)
+			return nil, code, output.RetryableErrorCode(code), err
+		}
+		return map[string]any{"status": action}, "", false, nil
+	})
+
+	printBatchResult(items, summary)
+	return nil
+}
+
 // ─── workflow execute ───────────────────────────────────────────────────────
 
 var workflowExecuteCmd = &cobra.Command{
-	Use:   "execute <WORKFLOW_ID>",
-	Short: "Execute an approved workflow",
-	Args:  cobra.ExactArgs(1),
+	Use:   "execute [WORKFLOW_ID]",
+	Short: "Execute one approved workflow, or a batch via --ids",
+	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		id, err := parseWorkflowID(args[0])
-		if err != nil {
-			return err
-		}
-
 		mode, _ := cmd.Flags().GetString("mode")
 		mode = strings.ToLower(mode)
 		if mode != "auto" && mode != "manual" {
 			return failArg("--mode must be 'auto' or 'manual'")
 		}
+
+		ids, err := resolveWorkflowTargets(cmd, args)
+		if err != nil {
+			return err
+		}
+		if len(ids) > 1 || cmd.Flags().Changed("ids") {
+			return runWorkflowExecuteBatch(cmd, ids, mode)
+		}
+		id := ids[0]
 
 		req := api.WorkflowExecuteRequest{
 			WorkflowID: id,
@@ -344,6 +391,44 @@ var workflowExecuteCmd = &cobra.Command{
 		output.Success(fmt.Sprintf("Workflow %d execution started (%s)", id, mode))
 		return nil
 	},
+}
+
+// runWorkflowExecuteBatch executes many approved workflows in one batch. execute
+// is critical and irreversible, so it is more conservative than the generic
+// contract (CLI-SPEC §15.4): the --dangerous gate is required (enforced by the
+// high risk level), and --continue-on-error defaults to false so the batch stops
+// at the first failure rather than blasting through a bad release window.
+// Already-executed workflows stay executed (no rollback); the unattempted
+// remainder is reported as skipped so the agent can resume.
+func runWorkflowExecuteBatch(cmd *cobra.Command, ids []int, mode string) error {
+	targets := make([]string, len(ids))
+	changes := make([]map[string]any, len(ids))
+	for i, id := range ids {
+		targets[i] = strconv.Itoa(id)
+		changes[i] = map[string]any{"action": "execute", "workflowId": strconv.Itoa(id), "mode": mode}
+	}
+	if batchDryRunOrConfirm("execute workflows", targets, changes) {
+		return nil
+	}
+
+	client, _, _, err := newClient()
+	if err != nil {
+		return err
+	}
+
+	continueOnError := continueOnErrorFlag(cmd, false)
+	items, summary := runBatch(targets, continueOnError, func(target string) (map[string]any, output.ErrorCode, bool, error) {
+		id, _ := strconv.Atoi(target)
+		req := api.WorkflowExecuteRequest{WorkflowID: id, Mode: mode}
+		if err := client.Workflows.Execute(apiCtx(), req); err != nil {
+			code := errorCodeForAPIErr(err)
+			return nil, code, output.RetryableErrorCode(code), err
+		}
+		return map[string]any{"status": "executing", "mode": mode}, "", false, nil
+	})
+
+	printBatchResult(items, summary)
+	return nil
 }
 
 // ─── workflow cancel ────────────────────────────────────────────────────────
@@ -453,6 +538,43 @@ func parseWorkflowID(s string) (int, error) {
 		return 0, failArg("WORKFLOW_ID must be a positive integer")
 	}
 	return id, nil
+}
+
+// resolveWorkflowTargets returns the workflow IDs to act on, accepting either a
+// single positional arg or the plural --ids flag (comma-separated/repeatable),
+// but not both. IDs are de-duplicated in input order (CLI-SPEC §15.1). An empty
+// target set is a usage error.
+func resolveWorkflowTargets(cmd *cobra.Command, args []string) ([]int, error) {
+	plural, _ := cmd.Flags().GetStringSlice("ids")
+	pluralSet := cmd.Flags().Changed("ids")
+
+	if pluralSet && len(args) > 0 {
+		return nil, failArg("pass either a WORKFLOW_ID argument or --ids, not both")
+	}
+	if !pluralSet {
+		if len(args) == 0 {
+			return nil, failArg("a WORKFLOW_ID argument or --ids is required")
+		}
+		id, err := parseWorkflowID(args[0])
+		if err != nil {
+			return nil, err
+		}
+		return []int{id}, nil
+	}
+
+	targets := parsePluralTargets(plural)
+	if len(targets) == 0 {
+		return nil, failArg("--ids must list at least one workflow ID")
+	}
+	ids := make([]int, 0, len(targets))
+	for _, t := range targets {
+		id, err := parseWorkflowID(t)
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 // mustGetString returns the string flag value or empty string.
