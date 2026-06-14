@@ -133,6 +133,25 @@ archery-cli instance create ... --dangerous --confirm ct_...
 | `--db` | string | no | Default database name |
 | `--charset` | string | no | Character set |
 
+### Batch-onboard instances from a manifest
+
+```bash
+archery-cli instance import --file instances.csv --dangerous --dry-run
+archery-cli instance import --file instances.csv --dangerous --confirm ct_...
+archery-cli instance import --file instances.json --manifest-format json --dangerous --dry-run
+```
+
+| Flag | Type | Required | Description |
+|------|------|----------|-------------|
+| `--file` | string | yes | Path to a CSV or JSON manifest of instances |
+| `--manifest-format` | string | no | `csv` or `json` (default: inferred from file extension) |
+| `--continue-on-error` | bool | no | Keep importing after a row fails (default `true`) |
+
+- **CSV**: header row naming columns (`name,type,db_type,host,port,user[,password,mode,db_name,charset]`), one instance per data row. Column names accept `dbType`/`db-type`/`db_type` spellings.
+- **JSON**: an array of objects with the same keys; `port` may be a number or string.
+- Class-B client loop over the single create endpoint — **not** atomic. One dry-run returns the whole-batch preview + a single `confirm_token`; the confirm runs the batch. Output is `items[]` (each `{target, ok, data, error}`, `target` = instance name) + `summary{total, succeeded, failed, skipped}`. A partial failure does not roll back already-created instances.
+- Risk level: **high** -- requires `--dangerous` in both steps.
+
 ### Update an instance
 
 ```bash

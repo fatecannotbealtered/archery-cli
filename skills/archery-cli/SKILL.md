@@ -99,6 +99,9 @@ First-time setup: ask user for Archery URL + credentials, then run `archery-cli 
 | List processes | `archery-cli diagnostic process --instance mydb` |
 | List binlog files | `archery-cli binlog list --instance mydb` |
 | Browse tables | `archery-cli dict tables --instance mydb --db test` |
+| Run one SQL across many instances | `archery-cli query run --instances a,b,c --db app --sql "SELECT COUNT(*) FROM t" --dangerous --dry-run`, then `--dangerous --confirm <token>` |
+| Batch-onboard instances from a file | `archery-cli instance import --file instances.csv --dangerous --dry-run`, then `--dangerous --confirm <token>` |
+| Batch audit / execute workflows | `archery-cli workflow audit --ids 42,43 --action pass --dry-run` · `archery-cli workflow execute --ids 42,43 --dangerous --dry-run` |
 
 ## Write recipe (dry-run then confirm)
 
@@ -119,7 +122,17 @@ archery-cli query run --instance prod --db app --sql "UPDATE ..." --dangerous --
 archery-cli query run --instance prod --db app --sql "UPDATE ..." --dangerous --confirm ct_...
 ```
 
-Write commands include `auth login`, `auth logout`, `workflow submit`, `workflow audit`, `workflow execute`, `workflow cancel`, `query run`, `query favorite`, `instance create`, `instance update`, `instance delete`, `diagnostic kill`, `binlog parse`, `binlog purge`, `archive apply`, `archive audit`, `archive switch`, `archive once`, and `update`. Run `archery-cli reference` for the definitive installed-version list.
+Write commands include `auth login`, `auth logout`, `workflow submit`, `workflow audit`, `workflow execute`, `workflow cancel`, `query run`, `query favorite`, `instance create`, `instance import`, `instance update`, `instance delete`, `diagnostic kill`, `binlog parse`, `binlog purge`, `archive apply`, `archive audit`, `archive switch`, `archive once`, and `update`. Run `archery-cli reference` for the definitive installed-version list.
+
+## Batch operations
+
+Some write commands act on many objects in one call — still **one** command, **one** confirm token, **one** aggregated result (never a loop you drive):
+
+- `query run --instances a,b,c` — one SQL across many instances.
+- `instance import --file <csv|json>` — batch-onboard instances from a manifest.
+- `workflow audit --ids 1,2,3` / `workflow execute --ids 1,2` — batch audit / execute.
+
+The contract: plural inputs (comma-separated or repeatable, de-duplicated in order); one `--dry-run` returns the whole-batch preview + a single `confirm_token` over the resolved target set; one `--confirm` runs it. Results aggregate per item — `items[]` (each `{target, ok, data, error}`) plus `summary{total, succeeded, failed, skipped}`. `--continue-on-error` (default `true`, but **`false` for `workflow execute`**) controls whether the batch stops at the first failure. These are all **client-side loops** — Archery has no native bulk write endpoint, so a batch is **not atomic** and a partial failure does not roll back already-applied items.
 
 ## Checkpoints
 
@@ -163,7 +176,7 @@ Check `ok` first, then act on exit code:
 |------|----------|-------|
 | Read | `workflow list/detail/sqlcheck`, `query explain/log/generate`, `instance list/detail/resource/describe`, `slowquery review/history/optimize`, `diagnostic process/tablespace/locks/transactions`, `binlog list`, `archive list/log`, `dict *`, `user list/groups/resource-groups`, `auth status`, `context`, `doctor`, `reference`, `changelog` | Safe, no external writes |
 | Write (medium) | `auth login/logout`, `workflow submit/audit/cancel`, `query favorite`, `binlog parse`, `archive audit/switch`, `update` | Requires `--dry-run` then `--confirm` |
-| Write (high) | `query run`, `workflow execute`, `instance create/update/delete`, `binlog purge`, `archive apply/once` | Requires `--dangerous --dry-run` then `--dangerous --confirm`; confirm with user before executing |
+| Write (high) | `query run`, `workflow execute`, `instance create/import/update/delete`, `binlog purge`, `archive apply/once` | Requires `--dangerous --dry-run` then `--dangerous --confirm`; confirm with user before executing |
 | Dangerous (critical) | `diagnostic kill` | Requires `--dangerous --dry-run` then `--dangerous --confirm`; kills database threads |
 
 - The agent cannot self-escalate permissions.

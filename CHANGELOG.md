@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Batch operations (CLI-SPEC §15).** Write workflows that act on many objects at once now run as a single agent-facing command — one envelope, one confirm token over the whole resolved set, one aggregated `items[]` + `summary{total,succeeded,failed,skipped}` — instead of a loop the agent has to drive:
+  - `query run --instances a,b,c` runs one SQL across many instances, grouped per instance, failing soft (`--continue-on-error`, default `true`). The legacy `--instance` singular flag is kept as a compatibility alias.
+  - `instance import --file <csv|json>` batch-onboards instances from a manifest (format inferred from the extension or `--manifest-format`), creating each via the existing single-create payload.
+  - `workflow audit --ids 1,2,3` and `workflow execute --ids 1,2` batch-process workflows. `execute` is more conservative than the generic contract: the `--dangerous` gate is required and `--continue-on-error` defaults to `false` (stop at the first failure, report the unattempted remainder as `skipped`).
+  - All four are **class B** client-side loops — Archery's upstream has no native bulk write endpoint, so results are **not** atomic and partial failures do not roll back already-applied items. The external contract (plural inputs, dry-run summary, single single-use confirm token, dangerous gate, per-item aggregation) is identical to a native batch.
+  - `reference` gains a `batch_result` output schema plus runnable plural-input examples for each batch command.
+
 ## [1.0.2] - 2026-06-14
 
 ### Added
