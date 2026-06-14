@@ -89,6 +89,17 @@ archery-cli workflow audit 42 --action pass --remark "LGTM" --confirm ct_...
 |------|------|----------|-------------|
 | `--action` | string | yes | `pass` or `cancel` |
 | `--remark` | string | no | Audit remark/comment |
+| `--ids` | string | no | Workflow IDs for a batch audit (comma-separated or repeatable) |
+| `--continue-on-error` | bool | no | Keep auditing after a failure (batch; default `true`) |
+
+#### Batch audit
+
+```bash
+archery-cli workflow audit --ids 42,43,44 --action pass --dry-run
+archery-cli workflow audit --ids 42,43,44 --action pass --confirm ct_...
+```
+
+Pass either a positional `WORKFLOW_ID` or `--ids`, not both. Audit is reversible, so the whole batch shares one confirm token (no per-item confirm) and defaults to `--continue-on-error true`. Output is `items[]` + `summary{total, succeeded, failed, skipped}`. Client-side loop; not atomic.
 
 ### Execute an approved workflow
 
@@ -100,6 +111,17 @@ archery-cli workflow execute 42 --mode auto --dangerous --confirm ct_...
 | Flag | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
 | `--mode` | string | no | auto | `auto` or `manual` execution mode |
+| `--ids` | string | no | -- | Workflow IDs for a batch execute (comma-separated or repeatable) |
+| `--continue-on-error` | bool | no | `false` | Keep executing after a failure (batch) |
+
+#### Batch execute
+
+```bash
+archery-cli workflow execute --ids 42,43 --dangerous --dry-run
+archery-cli workflow execute --ids 42,43 --dangerous --confirm ct_...
+```
+
+Execute is irreversible, so the batch is **more conservative** than the generic contract: the `--dangerous` gate is required, and `--continue-on-error` defaults to **`false`** (stop at the first failure; unattempted workflows are reported as `skipped`). Already-executed workflows stay executed (no rollback). Client-side loop; not atomic.
 
 ### Cancel a running workflow
 
