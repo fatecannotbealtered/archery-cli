@@ -32,8 +32,8 @@ var referenceLeafSchemas = map[string]referenceLeaf{
 	"workflow list":     {schema: "workflow_list", examples: []string{"archery-cli workflow list --status workflow_finish --limit 20 --compact"}},
 	"workflow submit":   {schema: "workflow_submit", examples: []string{"archery-cli workflow submit --name 'add idx' --instance 1 --db app --sql 'ALTER TABLE t ADD INDEX(x)' --dry-run --compact", "archery-cli workflow submit --name 'add idx' --instance 1 --db app --sql 'ALTER TABLE t ADD INDEX(x)' --confirm <confirm_token> --compact"}},
 	"workflow detail":   {schema: "workflow_detail", examples: []string{"archery-cli workflow detail 42 --compact"}},
-	"workflow audit":    {schema: "workflow_audit", examples: []string{"archery-cli workflow audit 42 --action pass --dry-run --compact", "archery-cli workflow audit 42 --action pass --confirm <confirm_token> --compact"}},
-	"workflow execute":  {schema: "workflow_execute", examples: []string{"archery-cli workflow execute 42 --dangerous --dry-run --compact", "archery-cli workflow execute 42 --dangerous --confirm <confirm_token> --compact"}},
+	"workflow audit":    {schema: "workflow_audit", examples: []string{"archery-cli workflow audit 42 --action pass --dry-run --compact", "archery-cli workflow audit 42 --action pass --confirm <confirm_token> --compact", "archery-cli workflow audit --ids 42,43,44 --action pass --dry-run --compact", "archery-cli workflow audit --ids 42,43,44 --action pass --confirm <confirm_token> --compact"}},
+	"workflow execute":  {schema: "workflow_execute", examples: []string{"archery-cli workflow execute 42 --dangerous --dry-run --compact", "archery-cli workflow execute 42 --dangerous --confirm <confirm_token> --compact", "archery-cli workflow execute --ids 42,43 --dangerous --dry-run --compact", "archery-cli workflow execute --ids 42,43 --dangerous --confirm <confirm_token> --compact"}},
 	"workflow cancel":   {schema: "workflow_cancel", examples: []string{"archery-cli workflow cancel 42 --remark 'abort' --dry-run --compact", "archery-cli workflow cancel 42 --remark 'abort' --confirm <confirm_token> --compact"}},
 	"workflow sqlcheck": {schema: "sqlcheck_result", examples: []string{"archery-cli workflow sqlcheck --instance 1 --db app --sql 'SELECT 1' --compact"}},
 
@@ -43,13 +43,14 @@ var referenceLeafSchemas = map[string]referenceLeaf{
 	"instance resource":        {schema: "resource_item_list", examples: []string{"archery-cli instance resource --instance 1 --type database --compact"}},
 	"instance describe":        {schema: "instance_describe", examples: []string{"archery-cli instance describe --instance prod-mysql --db app --table users --compact"}},
 	"instance create":          {schema: "instance_detail", examples: []string{"archery-cli instance create --name prod-mysql --type master --db-type mysql --host db.example.com --port 3306 --user app --dangerous --dry-run --compact", "archery-cli instance create --name prod-mysql --type master --db-type mysql --host db.example.com --port 3306 --user app --dangerous --confirm <confirm_token> --compact"}},
+	"instance import":          {schema: "batch_result", examples: []string{"archery-cli instance import --file instances.csv --dangerous --dry-run --compact", "archery-cli instance import --file instances.csv --dangerous --confirm <confirm_token> --compact"}},
 	"instance update":          {schema: "instance_detail", examples: []string{"archery-cli instance update 1 --host db2.example.com --dangerous --dry-run --compact", "archery-cli instance update 1 --host db2.example.com --dangerous --confirm <confirm_token> --compact"}},
 	"instance delete":          {schema: "instance_delete", examples: []string{"archery-cli instance delete 1 --dangerous --dry-run --compact", "archery-cli instance delete 1 --dangerous --confirm <confirm_token> --compact"}},
 	"instance table-instances": {schema: "instance_item_list", examples: []string{"archery-cli instance table-instances --table users --compact"}},
 	"instance users":           {schema: "instance_user_list", examples: []string{"archery-cli instance users --instance 1 --compact"}},
 
 	// ─── query ────────────────────────────────────────────────────────────────
-	"query run":      {schema: "query_run", examples: []string{"archery-cli query run --instance prod-mysql --db app --sql 'SELECT * FROM users LIMIT 10' --dangerous --dry-run --compact", "archery-cli query run --instance prod-mysql --db app --sql 'SELECT * FROM users LIMIT 10' --dangerous --confirm <confirm_token> --compact"}},
+	"query run":      {schema: "query_run", examples: []string{"archery-cli query run --instance prod-mysql --db app --sql 'SELECT * FROM users LIMIT 10' --dangerous --dry-run --compact", "archery-cli query run --instance prod-mysql --db app --sql 'SELECT * FROM users LIMIT 10' --dangerous --confirm <confirm_token> --compact", "archery-cli query run --instances prod-mysql,prod-mysql-2 --db app --sql 'SELECT COUNT(*) FROM users' --dangerous --dry-run --compact", "archery-cli query run --instances prod-mysql,prod-mysql-2 --db app --sql 'SELECT COUNT(*) FROM users' --dangerous --confirm <confirm_token> --compact"}},
 	"query explain":  {schema: "query_explain", examples: []string{"archery-cli query explain --instance prod-mysql --db app --sql 'SELECT * FROM users' --compact"}},
 	"query log":      {schema: "query_log_list", examples: []string{"archery-cli query log --limit 20 --compact"}},
 	"query favorite": {schema: "query_favorite", examples: []string{"archery-cli query favorite 123 --star --dry-run --compact", "archery-cli query favorite 123 --star --confirm <confirm_token> --compact"}},
@@ -135,6 +136,14 @@ func referenceSchemas() map[string]refDataSchema {
 		"instance_user_list": {Shape: "array", Fields: []string{"<dynamic upstream user row keys>"}},
 		"instance_describe":  {Shape: "object", Fields: []string{"instance", "db", "table", "schema", "columns"}, UntrustedFields: []string{"columns[].comment", "columns[].Comment"}},
 		"resource_item_list": {Shape: "array", Fields: []string{"<dynamic resource row keys: database|schema|table|column>"}},
+
+		// ─── batch (CLI-SPEC §15) ──────────────────────────────────────────────
+		// Shared shape for client-side batch commands (class B): per-item items[]
+		// plus a {total,succeeded,failed,skipped} summary. dry-run instead returns
+		// {preview{action,total,targets,changes},confirm_token,expires_at}. Each
+		// item's data mirrors the single-target schema for that command. _untrusted
+		// is carried inside each item's data (e.g. query run rows).
+		"batch_result": {Shape: "object", Fields: []string{"items", "items[].target", "items[].ok", "items[].data", "items[].error", "items[].skipped", "summary", "summary.total", "summary.succeeded", "summary.failed", "summary.skipped", "preview", "confirm_token", "expires_at"}, UntrustedFields: []string{"items[].data.rows"}},
 
 		// ─── query ────────────────────────────────────────────────────────────
 		"query_run":      {Shape: "object", Fields: []string{"columns", "rows", "row_count", "query_time_ms", "masked"}, UntrustedFields: []string{"rows"}},
