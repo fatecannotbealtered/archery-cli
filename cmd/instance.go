@@ -83,6 +83,15 @@ func init() {
 	markConfirm(instanceDeleteCmd)
 	markRiskLevel(instanceDeleteCmd, "high")
 
+	// instance import (batch onboard from a CSV/JSON manifest)
+	instanceImportCmd.Flags().String("file", "", "Path to a CSV or JSON manifest of instances (required)")
+	instanceImportCmd.Flags().String("manifest-format", "", "Manifest format: csv|json (default: inferred from file extension)")
+	instanceImportCmd.Flags().Bool("continue-on-error", true, "Keep importing after an instance fails (default true)")
+	instanceCmd.AddCommand(instanceImportCmd)
+	markWrite(instanceImportCmd)
+	markConfirm(instanceImportCmd)
+	markRiskLevel(instanceImportCmd, "high")
+
 	// instance table-instances
 	instanceTableInstancesCmd.Flags().String("table", "", "Table name to search for (required)")
 	instanceCmd.AddCommand(instanceTableInstancesCmd)
@@ -426,14 +435,7 @@ var instanceCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		instanceType, err := requireFlagString(cmd, "type", "--type")
-		if err != nil {
-			return err
-		}
-		instanceType = strings.ToLower(instanceType)
-		if instanceType != "master" && instanceType != "slave" {
-			return failArg("--type must be 'master' or 'slave'")
-		}
+		instanceType, _ := cmd.Flags().GetString("type")
 		dbType, err := requireFlagString(cmd, "db-type", "--db-type")
 		if err != nil {
 			return err
@@ -443,9 +445,6 @@ var instanceCreateCmd = &cobra.Command{
 			return err
 		}
 		port, _ := cmd.Flags().GetInt("port")
-		if port <= 0 || port > 65535 {
-			return failArg("--port must be between 1 and 65535")
-		}
 		user, err := requireFlagString(cmd, "user", "--user")
 		if err != nil {
 			return err
@@ -455,48 +454,14 @@ var instanceCreateCmd = &cobra.Command{
 		dbName, _ := cmd.Flags().GetString("db")
 		charset, _ := cmd.Flags().GetString("charset")
 
-		payload := map[string]any{
-			"instance_name": name,
-			// Archery's Instance.type is a CharField with choices
-			// ('master','slave'); it must be the string, not a numeric enum.
-			"type":    instanceType,
-			"db_type": dbType,
-			"host":    host,
-			"port":    port,
-			"user":    user,
+		spec := instanceSpec{
+			Name: name, Type: instanceType, DBType: dbType, Host: host,
+			Port: port, User: user, Password: password, Mode: mode,
+			DBName: dbName, Charset: charset,
 		}
-		if password != "" {
-			payload["password"] = password
-		}
-		if mode != "" {
-			payload["mode"] = mode
-		}
-		if dbName != "" {
-			payload["db_name"] = dbName
-		}
-		if charset != "" {
-			payload["charset"] = charset
-		}
-
-		detail := map[string]any{
-			"name":   name,
-			"type":   instanceType,
-			"dbType": dbType,
-			"host":   host,
-			"port":   port,
-			"user":   user,
-		}
-		if password != "" {
-			detail["password"] = "***"
-		}
-		if mode != "" {
-			detail["mode"] = mode
-		}
-		if dbName != "" {
-			detail["db"] = dbName
-		}
-		if charset != "" {
-			detail["charset"] = charset
+		payload, detail, err := spec.buildPayload()
+		if err != nil {
+			return failArg(err.Error())
 		}
 		confirmPayload := map[string]any{
 			"payload": payload,
@@ -510,15 +475,9 @@ var instanceCreateCmd = &cobra.Command{
 			return err
 		}
 
-		path := client.APIPath("/v1/instance/")
-		data, err := client.Post(apiCtx(), path, payload)
-		if err != nil {
-			return handleAPIError(err)
-		}
-
-		var inst instanceResult
-		if err := json.Unmarshal(data, &inst); err != nil {
-			return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
+		inst, errMsg, code := createInstance(client, payload)
+		if errMsg != "" {
+			return failWithCode(errMsg, exitForErrorCode(code), code)
 		}
 
 		if jsonMode {
@@ -528,6 +487,93 @@ var instanceCreateCmd = &cobra.Command{
 		output.Success(fmt.Sprintf("Instance %q created (ID: %s)", inst.InstanceName, inst.ID))
 		return nil
 	},
+}
+
+// instanceSpec is the validated input for creating one instance. It is the
+// shared shape between `instance create` (flags) and `instance import` (manifest
+// rows), so both produce an identical upstream payload.
+type instanceSpec struct {
+	Name     string
+	Type     string
+	DBType   string
+	Host     string
+	Port     int
+	User     string
+	Password string
+	Mode     string
+	DBName   string
+	Charset  string
+}
+
+// buildPayload validates the spec and returns the upstream POST body plus a
+// secret-masked detail map for the dry-run preview. Validation errors return
+// failArg (exit 2) for the single-create path; the batch path wraps them per item.
+func (s instanceSpec) buildPayload() (payload map[string]any, detail map[string]any, err error) {
+	if s.Name == "" {
+		return nil, nil, errBatch("instance name is required")
+	}
+	instanceType := strings.ToLower(s.Type)
+	if instanceType != "master" && instanceType != "slave" {
+		return nil, nil, errBatch("type must be 'master' or 'slave'")
+	}
+	if s.DBType == "" {
+		return nil, nil, errBatch("db-type is required")
+	}
+	if s.Host == "" {
+		return nil, nil, errBatch("host is required")
+	}
+	if s.Port <= 0 || s.Port > 65535 {
+		return nil, nil, errBatch("port must be between 1 and 65535")
+	}
+	if s.User == "" {
+		return nil, nil, errBatch("user is required")
+	}
+
+	payload = map[string]any{
+		"instance_name": s.Name,
+		// Archery's Instance.type is a CharField with choices
+		// ('master','slave'); it must be the string, not a numeric enum.
+		"type":    instanceType,
+		"db_type": s.DBType,
+		"host":    s.Host,
+		"port":    s.Port,
+		"user":    s.User,
+	}
+	detail = map[string]any{
+		"name": s.Name, "type": instanceType, "dbType": s.DBType,
+		"host": s.Host, "port": s.Port, "user": s.User,
+	}
+	if s.Password != "" {
+		payload["password"] = s.Password
+		detail["password"] = "***"
+	}
+	if s.Mode != "" {
+		payload["mode"] = s.Mode
+		detail["mode"] = s.Mode
+	}
+	if s.DBName != "" {
+		payload["db_name"] = s.DBName
+		detail["db"] = s.DBName
+	}
+	if s.Charset != "" {
+		payload["charset"] = s.Charset
+		detail["charset"] = s.Charset
+	}
+	return payload, detail, nil
+}
+
+// createInstance POSTs one instance payload and parses the result. Shared by the
+// single create path and the import loop.
+func createInstance(client *api.Client, payload map[string]any) (instanceResult, string, output.ErrorCode) {
+	data, err := client.Post(apiCtx(), client.APIPath("/v1/instance/"), payload)
+	if err != nil {
+		return instanceResult{}, err.Error(), errorCodeForAPIErr(err)
+	}
+	var inst instanceResult
+	if err := json.Unmarshal(data, &inst); err != nil {
+		return instanceResult{}, "parsing response: " + err.Error(), output.E_SERVER
+	}
+	return inst, "", ""
 }
 
 // ─── instance update ────────────────────────────────────────────────────────
