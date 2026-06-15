@@ -43,6 +43,10 @@ var pathOverrides = map[string]string{
 	// generate_sql and the optimizers return data as a string payload
 	"/query/generate_sql/": `{"status":0,"msg":"ok","data":"SELECT COUNT(*) FROM t1"}`,
 	"/slowquery/optimize_": `{"status":0,"msg":"ok","data":"-- advice: add an index"}`,
+	// binlog list returns data as a row list (one map per binary log)
+	"/binlog/list/": `{"status":0,"msg":"ok","data":[]}`,
+	// my2sql returns data as a list of {sql, binlog_info} rows
+	"/binlog/my2sql/": `{"status":0,"msg":"ok","data":[]}`,
 }
 
 func universalMux() http.Handler {

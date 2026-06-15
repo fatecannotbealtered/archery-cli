@@ -61,6 +61,9 @@ func TestNewClient_InitializesSubAPIs(t *testing.T) {
 	if c.Workflows == nil {
 		t.Error("Workflows sub-API not initialized")
 	}
+	if c.Binlog == nil {
+		t.Error("Binlog sub-API not initialized")
+	}
 }
 
 func TestNewClient_SetTokens(t *testing.T) {
