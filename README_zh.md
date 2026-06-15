@@ -39,18 +39,20 @@ PowerShell 使用 `$env:NAME = "value"` 设置同样的环境变量。真实密�
 
 `archery-cli` 是 AI Agent 优先的 CLI。默认输出 JSON，实时命令面通过 `archery-cli reference` 发现；支持写操作的命令使用非交互的 `--dry-run` 到 `--confirm <confirm_token>` 流程。
 
+**双模传输 —— 普通开发者账号即可用。** CLI **默认走 Archery 网页端的 session + AJAX 端点**（`/authenticate/`、`/sqlworkflow_list/`、`/sqlquery/` 等）登录和请求。这条路径在所有 Archery 版本、对普通账号都可用；而 `/api/v1` REST 面通常对普通账号关闭（`403`）或根本未开启。REST + JWT 作为可选的高级模式保留：传 `--mode jwt` 或在 region 配置 `mode: jwt` 即可。模式优先级为 `--mode` 参数 → region 配置 → 默认 `session`。已在 `hhyo/archery:v1.8.5` 上用普通账号真机验证。
+
 最坏情况风险等级：**T2 高风险** - 可对已配置数据库实例执行和管理 SQL 工单。参见 [SECURITY.md](SECURITY.md) 和 [.agent/SEC-SPEC.md](.agent/SEC-SPEC.md)。
 
 ## 能力
 
 | 领域 | 命令 | Agent 用法 |
 |------|------|------------|
-| SQL 工单 | `workflow list / submit / detail / audit / execute / cancel / sqlcheck` | 提交、审核、执行和取消 SQL 工单。 |
+| SQL 工单 | `workflow list / submit / detail / audit / audit-list / auto-review / execute / cancel / sqlcheck` | 提交、审核、自动审核、执行和取消 SQL 工单。 |
 | 查询 | `query run / explain / log / favorite / generate` | 执行受控 SQL 查询并查看查询历史。 |
-| 实例 | `instance list / detail / resource / describe / create / update / delete` | 查看和管理 Archery 数据库实例元数据。 |
+| 实例 | `instance list / detail / resource / describe / create / update / delete / create-db / create-user / grant / test-instance` | 查看和管理实例、数据库、账号与权限。 |
 | 诊断 | `diagnostic process / kill / tablespace / locks / transactions` | 查看数据库运行状态并执行受控诊断操作。 |
 | Binlog 与归档 | `binlog list / parse / purge`, `archive list / apply / audit / switch / once / log` | 操作 Archery binlog 与归档流程。 |
-| 字典与账号 | `dict ...`, `user ...`, `auth ...`, `context`, `doctor`, `reference`, `changelog`, `update` | 发现元数据、账号状态和实时命令契约。 |
+| 字典与账号 | `dict ...`, `user list / groups / resource-groups / resourcegroup-add`, `auth ...`, `context`, `doctor`, `reference`, `changelog`, `update` | 发现元数据、管理资源组、账号状态和实时命令契约。 |
 
 README 只做地图，不做完整手册。Agent 在执行任务命令前，应调用 `archery-cli reference --compact` 获取准确的 flags、schemas、权限、退出码和错误码。
 

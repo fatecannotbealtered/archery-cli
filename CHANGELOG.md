@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.4] - 2026-06-16
+
+### Added
+
+- **Dual-mode transport — default `session`, REST `jwt` optional.** Login and every request now run over Archery's web (session + AJAX) endpoints by default, so a **plain developer account** can drive the CLI. REST + JWT is kept as an opt-in advanced mode via `--mode jwt` (a persistent flag) or a region's `mode` config. Mode precedence is `--mode` flag → region config → `session` default.
+  - **Why:** Archery's `/api/v1` REST surface is closed to ordinary accounts (`403`) and is not enabled on older or most real-world deployments. The web session path (`/authenticate/`, `/sqlworkflow_list/`, `/sqlquery/`, …) works on **all versions and for ordinary accounts**, which is what most users actually have.
+  - **Live-verified** against a local `hhyo/archery:v1.8.5` container with an ordinary (`cli_verify`) account: commands that return `403` under REST — `workflow list`, `instance list`, `user list`, `query log`, and others — all return `200` with real data over the session path.
+- **New operational commands** (learned from real Archery ops Skills), all supported on the session path:
+  - `instance create-db` — create a database on an instance.
+  - `instance create-user` — create a database account.
+  - `instance grant` — grant/revoke privileges (`--op grant|revoke`).
+  - `instance test-instance` — connectivity probe.
+  - `user resourcegroup-add` — add users/instances to a resource group.
+  - `workflow audit-list` — list workflows awaiting audit.
+  - `workflow auto-review` — classify SQL by the auto-review rules and optionally approve compliant workflows.
+
+### Changed
+
+- All 54 existing business commands now resolve over the session path by default; the JWT/REST path remains available unchanged via `--mode jwt`.
+
 ## [1.0.3] - 2026-06-15
 
 ### Added
