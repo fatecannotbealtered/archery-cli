@@ -333,11 +333,19 @@ type QueryExplainOutput struct {
 	Plan []map[string]any `json:"plan"`
 }
 
-// queryExplainResponse is the raw API response from POST /query/explain/.
+// queryExplainResponse is the raw API response from POST /query/explain/. The
+// view returns data as a separated dict ({column_list, rows}) via
+// ResultSet.to_sep_dict(), not a list of row maps — so the plan is reassembled
+// client-side by zipping column_list onto each row.
 type queryExplainResponse struct {
-	Status int              `json:"status"`
-	Msg    string           `json:"msg"`
-	Data   []map[string]any `json:"data"`
+	Status int                 `json:"status"`
+	Msg    string              `json:"msg"`
+	Data   queryExplainDataSet `json:"data"`
+}
+
+type queryExplainDataSet struct {
+	ColumnList []string `json:"column_list"`
+	Rows       [][]any  `json:"rows"`
 }
 
 var queryExplainCmd = &cobra.Command{
@@ -362,10 +370,12 @@ var queryExplainCmd = &cobra.Command{
 			return err
 		}
 
+		// The explain view reads sql_content (not sql); a mismatched key lands the
+		// value in None and the view rejects it with "页面提交参数可能为空".
 		form := url.Values{
 			"instance_name": {instance},
 			"db_name":       {db},
-			"sql":           {sql},
+			"sql_content":   {sql},
 		}
 
 		data, err := client.InternalPost(apiCtx(), "/query/explain/", form)
@@ -382,7 +392,9 @@ var queryExplainCmd = &cobra.Command{
 			return failArg(resp.Msg)
 		}
 
-		out := QueryExplainOutput{Plan: resp.Data}
+		// Reassemble the column-separated dict into one map per plan row, keeping
+		// the {plan:[{col:val}]} output schema stable across Archery versions.
+		out := QueryExplainOutput{Plan: zipExplainRows(resp.Data.ColumnList, resp.Data.Rows)}
 
 		if jsonMode {
 			m := map[string]any{"plan": out.Plan}
@@ -395,18 +407,15 @@ var queryExplainCmd = &cobra.Command{
 			return nil
 		}
 
-		if len(resp.Data) == 0 {
+		if len(out.Plan) == 0 {
 			output.Info("No explain plan returned.")
 			return nil
 		}
 
-		// Text format: print as table
-		var headers []string
-		for k := range resp.Data[0] {
-			headers = append(headers, k)
-		}
-		rows := make([][]string, len(resp.Data))
-		for i, row := range resp.Data {
+		// Text format: print as table, columns in the engine's declared order.
+		headers := resp.Data.ColumnList
+		rows := make([][]string, len(out.Plan))
+		for i, row := range out.Plan {
 			cells := make([]string, len(headers))
 			for j, h := range headers {
 				cells[j] = fmt.Sprintf("%v", row[h])
@@ -418,41 +427,66 @@ var queryExplainCmd = &cobra.Command{
 	},
 }
 
+// zipExplainRows turns the engine's column-separated result ({column_list, rows})
+// into one map per row keyed by column name. Cells beyond the declared columns
+// are dropped; missing cells are left unset.
+func zipExplainRows(columns []string, rows [][]any) []map[string]any {
+	plan := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		m := make(map[string]any, len(columns))
+		for i, col := range columns {
+			if i < len(row) {
+				m[col] = row[i]
+			}
+		}
+		plan = append(plan, m)
+	}
+	return plan
+}
+
 // ─── log ────────────────────────────────────────────────────────────────────
 
-// QueryLogEntry represents a single query log entry for output.
+// QueryLogEntry represents a single query log entry for output. Fields map to
+// the v1.8.5 _querylog projection: username←user_display, db←db_name,
+// exec_time←create_time. favorite/alias surface the star state set by
+// `query favorite`.
 type QueryLogEntry struct {
 	ID        int    `json:"id"`
 	Username  string `json:"username"`
-	DbUser    string `json:"db_user"`
+	DB        string `json:"db"`
 	SQL       string `json:"sql"`
 	EffectRow int    `json:"effect_row"`
 	CostTime  string `json:"cost_time"`
 	Instance  string `json:"instance_name"`
 	ExecTime  string `json:"exec_time"`
+	Favorite  bool   `json:"favorite"`
+	Alias     string `json:"alias"`
 }
 
-// queryLogResponse is the raw API response from GET /query/querylog/.
+// queryLogResponse is the raw API response from GET /query/querylog/. The
+// _querylog view emits the page payload at the top level ({total, rows}), not
+// wrapped in the usual {status, msg, data} envelope — so total/rows are decoded
+// directly here, not under a data object.
 type queryLogResponse struct {
-	Status int              `json:"status"`
-	Msg    string           `json:"msg"`
-	Data   queryLogPageData `json:"data"`
-}
-
-type queryLogPageData struct {
 	Total int                `json:"total"`
 	Rows  []queryLogEntryRaw `json:"rows"`
 }
 
+// queryLogEntryRaw mirrors the .values() projection in sql/query.py _querylog:
+// the row exposes user_display (the engineer's display name) and db_name; there
+// is no separate db_user or exec_time column in v1.8.5. create_time carries the
+// execution timestamp.
 type queryLogEntryRaw struct {
-	ID        int    `json:"id"`
-	Username  string `json:"username"`
-	DbUser    string `json:"db_user"`
-	SQLText   string `json:"sqllog"`
-	EffectRow int    `json:"effect_row"`
-	CostTime  string `json:"cost_time"`
-	Instance  string `json:"instance_name"`
-	ExecTime  string `json:"exec_time"`
+	ID         int    `json:"id"`
+	UserDisp   string `json:"user_display"`
+	DbName     string `json:"db_name"`
+	SQLText    string `json:"sqllog"`
+	EffectRow  int    `json:"effect_row"`
+	CostTime   string `json:"cost_time"`
+	Instance   string `json:"instance_name"`
+	CreateTime string `json:"create_time"`
+	Favorite   bool   `json:"favorite"`
+	Alias      string `json:"alias"`
 }
 
 var queryLogCmd = &cobra.Command{
@@ -513,21 +547,19 @@ var queryLogCmd = &cobra.Command{
 			return failArg("failed to parse query log response: " + err.Error())
 		}
 
-		if resp.Status != 0 && resp.Msg != "" {
-			return failArg(resp.Msg)
-		}
-
-		entries := make([]QueryLogEntry, len(resp.Data.Rows))
-		for i, r := range resp.Data.Rows {
+		entries := make([]QueryLogEntry, len(resp.Rows))
+		for i, r := range resp.Rows {
 			entries[i] = QueryLogEntry{
 				ID:        r.ID,
-				Username:  r.Username,
-				DbUser:    r.DbUser,
+				Username:  r.UserDisp,
+				DB:        r.DbName,
 				SQL:       r.SQLText,
 				EffectRow: r.EffectRow,
 				CostTime:  r.CostTime,
 				Instance:  r.Instance,
-				ExecTime:  r.ExecTime,
+				ExecTime:  r.CreateTime,
+				Favorite:  r.Favorite,
+				Alias:     r.Alias,
 			}
 		}
 
@@ -536,10 +568,10 @@ var queryLogCmd = &cobra.Command{
 			out := make([]map[string]any, len(entries))
 			for i, e := range entries {
 				m := queryLogEntryToMap(e)
-				api.TagUntrusted(m, "sql")
+				api.TagUntrusted(m, "sql", "alias")
 				out[i] = output.FilterMap(m, fields)
 			}
-			output.PrintJSON(offsetListEnvelope(out, offset, len(out), resp.Data.Total))
+			output.PrintJSON(offsetListEnvelope(out, offset, len(out), resp.Total))
 			return nil
 		}
 
@@ -574,12 +606,14 @@ func queryLogEntryToMap(e QueryLogEntry) map[string]any {
 	return normalizeAgentMap(map[string]any{
 		"id":         strconv.Itoa(e.ID),
 		"username":   e.Username,
-		"db_user":    e.DbUser,
+		"db":         e.DB,
 		"sql":        e.SQL,
 		"effect_row": e.EffectRow,
 		"cost_time":  e.CostTime,
 		"instance":   e.Instance,
 		"exec_time":  e.ExecTime,
+		"favorite":   e.Favorite,
+		"alias":      e.Alias,
 	})
 }
 
@@ -611,12 +645,15 @@ var queryFavoriteCmd = &cobra.Command{
 			return err
 		}
 
+		// The favorite view reads query_log_id (not id) from POST and treats
+		// star as the literal string "true"/"false"; FormatBool matches that.
+		// alias must always be sent: QueryLog.alias is NOT NULL, and the view
+		// writes request.POST.get('alias') verbatim — omitting it sends None and
+		// the save fails with an IntegrityError (500). An empty string clears it.
 		form := url.Values{
-			"id":   {strconv.Itoa(logID)},
-			"star": {strconv.FormatBool(star)},
-		}
-		if alias != "" {
-			form.Set("alias", alias)
+			"query_log_id": {strconv.Itoa(logID)},
+			"star":         {strconv.FormatBool(star)},
+			"alias":        {alias},
 		}
 
 		_, err = client.InternalPost(apiCtx(), "/query/favorite/", form)
@@ -643,87 +680,31 @@ var queryFavoriteCmd = &cobra.Command{
 
 // ─── generate ───────────────────────────────────────────────────────────────
 
-// QueryGenerateOutput is the structured output for AI SQL generation.
-type QueryGenerateOutput struct {
-	SQL string `json:"sql"`
-}
-
-// queryGenerateResponse is the raw API response from POST /query/generate_sql/.
-type queryGenerateResponse struct {
-	Status int    `json:"status"`
-	Msg    string `json:"msg"`
-	Data   string `json:"data"`
-}
-
 var queryGenerateCmd = &cobra.Command{
 	Use:   "generate",
-	Short: "Generate SQL using AI based on a description",
+	Short: "Generate SQL using AI based on a description (requires a newer Archery)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		instance, _ := cmd.Flags().GetString("instance")
-		if instance == "" {
+		// Validate the same arg contract first so the gate is the only reason
+		// this fails once the server-side route exists, not missing flags.
+		if instance, _ := cmd.Flags().GetString("instance"); instance == "" {
 			return failArg("--instance is required")
 		}
-		db, _ := cmd.Flags().GetString("db")
-		if db == "" {
+		if db, _ := cmd.Flags().GetString("db"); db == "" {
 			return failArg("--db is required")
 		}
-		table, _ := cmd.Flags().GetString("table")
-		if table == "" {
+		if table, _ := cmd.Flags().GetString("table"); table == "" {
 			return failArg("--table is required")
 		}
-		desc, _ := cmd.Flags().GetString("desc")
-		if desc == "" {
+		if desc, _ := cmd.Flags().GetString("desc"); desc == "" {
 			return failArg("--desc is required")
 		}
-		dbType, _ := cmd.Flags().GetString("db-type")
-		schema, _ := cmd.Flags().GetString("schema")
 
-		client, _, _, err := newClient()
-		if err != nil {
-			return err
-		}
-
-		form := url.Values{
-			"instance_name": {instance},
-			"db_name":       {db},
-			"table_name":    {table},
-			"desc":          {desc},
-		}
-		if dbType != "" {
-			form.Set("db_type", dbType)
-		}
-		if schema != "" {
-			form.Set("schema_name", schema)
-		}
-
-		data, err := client.InternalPost(apiCtx(), "/query/generate_sql/", form)
-		if err != nil {
-			return handleAPIError(err)
-		}
-
-		var resp queryGenerateResponse
-		if err := json.Unmarshal(data, &resp); err != nil {
-			return failArg("failed to parse generate response: " + err.Error())
-		}
-
-		if resp.Status != 0 && resp.Msg != "" {
-			return failArg(resp.Msg)
-		}
-
-		out := QueryGenerateOutput{SQL: resp.Data}
-
-		if jsonMode {
-			m := map[string]any{"sql": out.SQL}
-			api.TagUntrusted(m, "sql")
-			if fields := getFieldsFlag(cmd); len(fields) > 0 {
-				output.PrintJSON(output.FilterMap(m, fields))
-			} else {
-				output.PrintJSON(m)
-			}
-			return nil
-		}
-
-		fmt.Println(resp.Data)
-		return nil
+		// NL→SQL generation has no route in Archery v1.8.5 (the production
+		// version): /query/generate_sql/ is absent from sql/urls.py and was added
+		// in a later release. Fail fast with the server's missing-route semantics
+		// instead of issuing a request that would 404 and read as a transport bug.
+		return failWithCode(
+			"query generate is not available on this Archery server (no /query/generate_sql/ route in v1.8.5); upgrade Archery to a version that ships NL→SQL generation",
+			ExitNotFound, output.E_NOT_FOUND)
 	},
 }
