@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/fatecannotbealtered/archery-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/fatecannotbealtered/archery-cli/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/fatecannotbealtered/archery-cli)](https://goreportcard.com/report/github.com/fatecannotbealtered/archery-cli)
-[![npm version](https://img.shields.io/npm/v/@fatecannotbealtered-/archery-cli.svg)](https://www.npmjs.com/package/@fatecannotbealtered-/archery-cli)
+[![npm version](https://img.shields.io/npm/v/@ananke/archery-cli.svg)](https://www.npmjs.com/package/@ananke/archery-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 > Agent-native CLI for the Archery SQL audit platform. It gives AI Agents deterministic control over SQL workflows, queries, instances, diagnostics, binlog, archive jobs, and data dictionaries.
@@ -15,7 +15,7 @@ Paste this block into the AI Agent that will operate Archery SQL audit. It insta
 
 ```bash
 # Install CLI and Agent Skill.
-npm install -g @fatecannotbealtered-/archery-cli
+npm install -g @ananke/archery-cli
 npx skills add fatecannotbealtered/archery-cli -y -g
 
 # Provide runtime context. Replace placeholders in the local shell/secret manager.
