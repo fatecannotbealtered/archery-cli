@@ -234,59 +234,48 @@ container afterward; no `cli_verify*` tables were created on the target DB
 (execute never reached the apply stage). The enabling config above was left in
 place so the shared e2e stack stays workflow-capable.
 
-## 2026-06-15 — `binlog` group (session AJAX, v1.8.5)
+## 2026-06-15 — `dict` group, session path (v1.8.5)
 
-Live verification of the `binlog list` / `parse` / `purge` commands against the
-production-parity `hhyo/archery:v1.8.5` stack on `localhost:9123`, authenticated
-with the `cli_verify` superuser in **session mode** (Django form login; the
-binlog views have no REST/JWT equivalent). Each command was run with
-`--compact`; envelope `ok`/`error` and the documented field shapes were
-asserted. No hostnames, credentials, or instance internals are reproduced here.
-
-The stack's `mysql:5.7` had binary logging disabled, so it was enabled for this
-run (`server-id`, `log_bin`, `binlog_format=ROW` via `/etc/mysql/conf.d/`) and a
-throwaway `binlog_verify` schema with a few DML rows was created to give the
-parser real events. The Archery `my2sql` plugin path (a runtime SysConfig key)
-was pointed at the bundled `/opt/archery/src/plugins/my2sql` binary. All of this
-is local container/stack config — no CLI code is involved.
+Real-machine verification of the `dict` command group against
+`tools-e2e-archery` (`hhyo/archery:v1.8.5`) as `cli_verify` (superuser), session
+mode. Target instance `e2e-mysql` (mysql), db `archery` (45 tables). No secrets
+recorded.
 
 ### Result by command
 
-| Command | Mode | Result |
-|---|---|---|
-| `binlog list` | **live (read)** | PASS — `show binary logs` returned the live binlog file(s) with `Log_name`/`File_size`; JSON envelope and the table renderer (headers derived from the first row) both verified |
-| `binlog parse` | **live (write/medium)** | PASS — dry-run preview + `confirm_token`, then confirm returned **8 real parsed statements** (INSERT/UPDATE/DELETE) for the bounded range; `--rollback` returned the correct inverse SQL. No `--dangerous` needed (medium tier). Required three CLI fixes first (below) |
-| `binlog purge` | **live (write/high)** | PASS — `--dangerous` gate enforced in dry-run (omit → `E_CONFIRMATION_REQUIRED`); real purge to a flushed binlog deleted the older files (`purged:true`, confirmed via `show binary logs`); purge to a non-existent file surfaced the server's `status:2` message as `E_VALIDATION`; replaying a spent `confirm_token` → `E_CONFLICT` (single-use) |
+| Command | Class | Result |
+| --- | --- | --- |
+| `dict tables` | live (read) | PASS — `--instance e2e-mysql --db archery --db-type mysql` returns 45 tables, `{ok,data:{instance,db,tables[],count}}` envelope; `tables[].comment` tagged `_untrusted`. |
+| `dict table-info` | live (read) | PASS — `--table sql_instance` returns `meta_data`/`desc`/`index`/`create_sql`; text mode renders Metadata/Columns/Indexes tables. |
+| `dict export` | live (read) | PASS — `--db archery` streams the table-structure HTML FileResponse (≈254 KB); raw/text print it verbatim, JSON wraps it in `{format:"html",content}`. |
+| `dict views` | gate (contract) | PASS — no `/data_dictionary/view_list/` route in v1.8.5; fails fast with `E_NOT_FOUND` + upgrade message (exit 3), never touches upstream. |
+| `dict triggers` | gate (contract) | PASS — same gate for `trigger_list`. |
+| `dict procedures` | gate (contract) | PASS — same gate for `procedure_list`. |
 
-### Defects found and fixed by this run
+Gate honesty confirmed against `sql/urls.py` in the container: v1.8.5 ships only
+`table_list`, `table_info`, `export` under `data_dictionary/`.
 
-1. **`parse` 500'd when optional numeric fields were omitted.** The v1.8.5
-   `my2sql` view parses `num`/`threads`/`start_pos`/`end_pos` as
-   `int(value) unless value == ''`; an absent field is `None`, so `int(None)`
-   raised and the view returned HTTP 500. The web UI always submits these fields
-   (empty when blank). Fixed: `Parse` now always sends
-   `start_file/end_file/start_time/stop_time` and (via `emptyIfZero`)
-   `start_pos/end_pos/num/threads`, empty when unset, so the view applies its own
-   defaults (num=30, threads=4) instead of crashing.
-2. **`parse` returned zero rows because sql-types were uppercase.** The bundled
-   `my2sql` binary rejects anything but lowercase `insert,update,delete`
-   (`invalid sqltypes`), and the view forwards the values verbatim. Fixed:
-   `Parse` lowercases each `sql_type[]` before sending. With this fix the same
-   request that returned 0 rows now returns the 8 expected statements.
-3. **`parse` crashed decoding the view's error envelope.** On arg-check failure
-   the view returns `{"status":1,"data":{}}` — `data` is an object, not the
-   success path's list — which failed to unmarshal into `[]BinlogParseRow` and
-   surfaced as a bogus `E_NETWORK`. Fixed: `data` is now `json.RawMessage` and a
-   `Rows()` helper decodes the list only on success, so error envelopes surface
-   the server `msg` instead of a parse error.
+### Defect found and fixed by this run
 
-Unit tests added for all three: empty-when-unset field encoding, lowercase
-`sql_type[]`, and the `data:{}` error envelope. `go test ./...`,
-`golangci-lint run`, the FCC guard, and the reference guard all stay green.
+**`--db-type` was optional but the v1.8.5 view requires it.** `table_list` and
+`table_info` resolve the instance via
+`Instance.objects.get(instance_name=…, db_type=…)` — `db_type` is part of the
+lookup key. The CLI sent `db_type` only when the flag was present, so the common
+case (omitting it) returned `{"status":1,"msg":"Instance.DoesNotExist"}` and
+surfaced as a confusing `E_VALIDATION`. Fix: `--db-type` is now **required** for
+`dict tables` and `dict table-info` (validated before the request), with a guard
+test (`TestDictDbTypeRequired`) and updated flag help. `dict export` is
+unaffected — its view keys on `user_instances(...).get(instance_name=…)` with no
+`db_type`, so the CLI correctly omits it there.
 
-The throwaway `binlog_verify` schema and the test binlog files were left to the
-stack's `expire_logs_days=1`; no `cli_verify*` artifacts were created on the
-target DB.
+### Environment note (not a CLI change)
+
+`localhost` resolves to IPv6 `::1` on the verifier host, where the GET /login/
+csrftoken and the POST /authenticate/ landed on different bindings and login
+intermittently returned `用户名或密码错误`. Using `http://127.0.0.1:9123`
+(IPv4) made session login deterministic. This is a host DNS artifact, not a CLI
+defect; the session login flow itself (GET csrf → POST authenticate → cookie)
+matches the verified curl flow byte-for-byte.
 
 ## Reproduce
 
