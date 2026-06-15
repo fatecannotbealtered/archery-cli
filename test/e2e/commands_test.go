@@ -13,6 +13,7 @@ type boundaryCase struct {
 	args    []string
 	write   bool // append --dry-run and expect data.confirm_token
 	noToken bool // write command whose dry-run executes a read-only analysis
+	gated   bool // route absent in v1.8.5: command fails fast with E_NOT_FOUND (exit 3)
 }
 
 var boundaryCases = []boundaryCase{
@@ -90,10 +91,12 @@ var boundaryCases = []boundaryCase{
 	{name: "slowquery optimize", write: true, noToken: true, args: []string{
 		"slowquery", "optimize", "--instance", "inst1", "--db", "db1", "--sql", "select 1", "--dangerous"}},
 
-	// user
+	// user (default session transport: groups has no session route -> gated)
 	{name: "user list", args: []string{"user", "list"}},
-	{name: "user groups", args: []string{"user", "groups"}},
+	{name: "user groups", gated: true, args: []string{"user", "groups"}},
 	{name: "user resource-groups", args: []string{"user", "resource-groups"}},
+	{name: "user resourcegroup-add", write: true, args: []string{
+		"user", "resourcegroup-add", "--group", "1", "--type", "user", "--ids", "3,4"}},
 
 	// workflow
 	{name: "workflow list", args: []string{"workflow", "list"}},
@@ -116,6 +119,20 @@ func TestBoundary_AllLeafCommands(t *testing.T) {
 				args = append(args, "--dry-run")
 			}
 			r := runCLI(home, nil, args...)
+
+			// Gated commands have no route in v1.8.5 and must fail fast with an
+			// E_NOT_FOUND envelope (exit 3) instead of touching the upstream.
+			if tc.gated {
+				if r.ExitCode != 3 {
+					t.Fatalf("gated command exit = %d, want 3\nstdout: %s", r.ExitCode, r.Stdout)
+				}
+				env := decodeEnvelope(t, r.Stdout)
+				if env.OK || env.Error == nil || env.Error.Code != "E_NOT_FOUND" {
+					t.Fatalf("gated command wants E_NOT_FOUND envelope, got: %s", r.Stdout)
+				}
+				return
+			}
+
 			data := decodeOK(t, r)
 			if tc.write && !tc.noToken {
 				token, _ := data["confirm_token"].(string)
