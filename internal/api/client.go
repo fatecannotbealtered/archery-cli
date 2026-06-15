@@ -216,6 +216,7 @@ type Client struct {
 	Auth         *AuthAPI
 	Workflows    *WorkflowAPI
 	Binlog       *BinlogAPI
+	Users        *UserAPI
 
 	// Session-mode credentials for Archery's Django web endpoints (the default
 	// transport): JWT alone cannot authenticate them — they need a session
@@ -237,6 +238,7 @@ func NewClient(host string) *Client {
 	c.Auth = &AuthAPI{client: c}
 	c.Workflows = &WorkflowAPI{client: c}
 	c.Binlog = &BinlogAPI{client: c}
+	c.Users = &UserAPI{client: c}
 	return c
 }
 
