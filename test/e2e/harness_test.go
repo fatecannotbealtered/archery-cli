@@ -66,6 +66,15 @@ var pathOverrides = map[string]string{
 	"/instance/user/list": `{"status":0,"msg":"ok","rows":[]}`,
 	// grant (session) returns the executed SQL in data.
 	"/instance/user/grant/": `{"status":0,"msg":"ok","data":"GRANT SELECT ON *.* TO ` + "`app`@`%`" + `;"}`,
+	// user.lists returns data as a flat array of user rows (not a {total,rows}
+	// object); ids render as strings (bigint_as_string=True).
+	"/user/list/": `{"status":0,"msg":"ok","data":[` +
+		`{"id":"1","username":"alice","display":"Alice","email":"a@x.io","is_active":true,"is_staff":true,"is_superuser":true},` +
+		`{"id":"2","username":"bob","display":"Bob","email":"b@x.io","is_active":true,"is_staff":false,"is_superuser":false}]}`,
+	// resource_group.group returns {total, rows:[{group_id, group_name}]}.
+	"/group/group/": `{"total":1,"rows":[{"group_id":"1","group_name":"ops","ding_webhook":""}]}`,
+	// resource_group.addrelation returns {status, msg}.
+	"/group/addrelation/": `{"status":0,"msg":"ok"}`,
 }
 
 func universalMux() http.Handler {

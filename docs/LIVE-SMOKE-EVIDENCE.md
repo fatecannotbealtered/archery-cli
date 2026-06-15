@@ -68,6 +68,34 @@ contract is correct and the real submit honestly surfaces `E_AUTH` until
 `instance resource --type database` is served behind Archery's `@cache_page`
 (Redis `…insRes…` key), so a freshly dropped database lingers in the list until
 the cache expires — a server-side cache, not a CLI defect.
+## 2026-06-16 — `user` group, v1.8.5 session path
+
+Live-verified the `user` command group against `hhyo/archery:v1.8.5`
+(`tools-e2e-archery`, the company production version) on `localhost:9123`,
+authenticated as the superuser `cli_verify` via the default session transport
+(lazy Django form login; credentials supplied through `ARCHERY_CLI_*` env vars,
+`ARCHERY_CLI_NO_KEYRING=1`). Endpoints cross-checked against the container's
+`sql/urls.py`, `sql/user.py`, and `sql/resource_group.py`.
+
+| Command | Transport | Status | Notes |
+|---|---|---|---|
+| `user list` | session `GET /user/list/` | **live** | 2 users; client-side `--search`/`--offset`/`--limit` and `has_more` verified; table + JSON envelopes correct |
+| `user resource-groups` | session `POST /group/group/` | **live** | 1 group `smoke-rg`; server-side `--search` match + empty-set verified; `activeUsers`/`bindUsers` are 0 in session projection (documented) |
+| `user groups` | session gate → JWT `GET /api/v1/user/group/` | **live** | session mode returns a clean `E_NOT_FOUND` gate (no session JSON route in v1.8.5); JWT path returns 5/6 groups parsed correctly |
+| `user resourcegroup-add` | session `POST /group/addrelation/` | **live** | dry-run `confirm_token` → confirm added user 2 to group 1; upstream membership change verified in DB; validation guards (`--type`/`--ids`/bad id/`--group`) all return `E_VALIDATION`; cleaned up after |
+
+**Defects found:** none. The `user` implementation matched v1.8.5 routes and
+payload shapes exactly; all four leaf commands passed on the session path
+(plus the JWT fallback for `groups`).
+
+**Verification-only deployment toggles (restored after):**
+- `api_user_whitelist` temporarily `1,2` (added `cli_verify` id 2) to exercise
+  the JWT `user groups` path — the REST API gates non-whitelisted users with
+  403 `IsInUserWhitelist`, which is a deployment config, not a CLI defect.
+  Restored to `1`.
+- `cli_verify` (id 2) temporarily added to resource group `smoke-rg` (id 1) by
+  the `resourcegroup-add` confirm run; removed afterward (members back to
+  `[admin]`).
 
 ## 2026-06-15 — batch commands (`--ids` / `--instances` / `--file`)
 

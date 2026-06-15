@@ -97,10 +97,12 @@ var boundaryCases = []boundaryCase{
 	{name: "slowquery optimize", write: true, noToken: true, args: []string{
 		"slowquery", "optimize", "--instance", "inst1", "--db", "db1", "--sql", "select 1", "--dangerous"}},
 
-	// user
+	// user (default session transport: groups has no session route -> gated)
 	{name: "user list", args: []string{"user", "list"}},
-	{name: "user groups", args: []string{"user", "groups"}},
+	{name: "user groups", gated: true, args: []string{"user", "groups"}},
 	{name: "user resource-groups", args: []string{"user", "resource-groups"}},
+	{name: "user resourcegroup-add", write: true, args: []string{
+		"user", "resourcegroup-add", "--group", "1", "--type", "user", "--ids", "3,4"}},
 
 	// workflow (default session transport: submit/sqlcheck key on names)
 	{name: "workflow list", args: []string{"workflow", "list"}},
