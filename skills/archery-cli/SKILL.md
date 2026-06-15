@@ -1,10 +1,10 @@
 ---
 name: archery-cli
-version: "1.0.3"
+version: "1.0.4"
 description: "Archery SQL audit platform CLI for managing SQL workflows, queries, instances, diagnostics. Use when the user asks about SQL审核, database operations, Archery platform management, or needs to submit/review/execute SQL against database instances."
 license: MIT
 user-invocable: true
-metadata: {"requires":{"bins":["archery-cli"],"min_version":"1.0.3"}}
+metadata: {"requires":{"bins":["archery-cli"],"min_version":"1.0.4"}}
 ---
 
 # archery-cli
@@ -57,6 +57,7 @@ First-time setup: ask user for Archery URL + credentials, then run `archery-cli 
 | Writes | `--dry-run` first, inspect `data.preview`, then retry with `--confirm <confirm_token>` from `data.confirm_token` |
 | Dangerous writes | If `reference` shows `requiresDangerous`, include `--dangerous` in both dry-run and confirm commands |
 | Discovery | `archery-cli reference` is the machine truth for params, `write`, `requiresConfirmation`, `requiresDangerous`, `riskLevel`, output schemas, and errors |
+| Transport | Defaults to **session** mode (Archery web AJAX endpoints) — works for ordinary accounts on all versions. REST + JWT is opt-in via `--mode jwt` or a region's `mode: jwt`. Precedence: `--mode` flag → region config → `session`. |
 
 ## Trigger list
 
@@ -99,6 +100,13 @@ First-time setup: ask user for Archery URL + credentials, then run `archery-cli 
 | List processes | `archery-cli diagnostic process --instance mydb` |
 | List binlog files | `archery-cli binlog list --instance mydb` |
 | Browse tables | `archery-cli dict tables --instance mydb --db test` |
+| Test instance connectivity | `archery-cli instance test-instance --instance 1 --compact` |
+| Create a database on an instance | `archery-cli instance create-db --instance 1 --db reporting --owner alice --dangerous --dry-run`, then `--dangerous --confirm <token>` |
+| Create a database account | `archery-cli instance create-user --instance 1 --user app --host '%' --password '...' --dangerous --dry-run`, then `--dangerous --confirm <token>` |
+| Grant/revoke privileges | `archery-cli instance grant --instance 1 --user-host "app@'%'" --op grant --level db --db app --privs SELECT,INSERT --dangerous --dry-run`, then `--dangerous --confirm <token>` |
+| Add members to a resource group | `archery-cli user resourcegroup-add --group 1 --type user --ids 3,4 --dry-run`, then `--confirm <token>` |
+| List workflows awaiting audit | `archery-cli workflow audit-list --limit 20 --compact` |
+| Auto-review SQL (optionally approve) | `archery-cli workflow auto-review --instance-name prod --db app --sql "UPDATE ..." --compact` |
 | Run one SQL across many instances | `archery-cli query run --instances a,b,c --db app --sql "SELECT COUNT(*) FROM t" --dangerous --dry-run`, then `--dangerous --confirm <token>` |
 | Batch-onboard instances from a file | `archery-cli instance import --file instances.csv --dangerous --dry-run`, then `--dangerous --confirm <token>` |
 | Batch audit / execute workflows | `archery-cli workflow audit --ids 42,43 --action pass --dry-run` · `archery-cli workflow execute --ids 42,43 --dangerous --dry-run` |
@@ -122,7 +130,7 @@ archery-cli query run --instance prod --db app --sql "UPDATE ..." --dangerous --
 archery-cli query run --instance prod --db app --sql "UPDATE ..." --dangerous --confirm ct_...
 ```
 
-Write commands include `auth login`, `auth logout`, `workflow submit`, `workflow audit`, `workflow execute`, `workflow cancel`, `query run`, `query favorite`, `instance create`, `instance import`, `instance update`, `instance delete`, `diagnostic kill`, `binlog parse`, `binlog purge`, `archive apply`, `archive audit`, `archive switch`, `archive once`, and `update`. Run `archery-cli reference` for the definitive installed-version list.
+Write commands include `auth login`, `auth logout`, `workflow submit`, `workflow audit`, `workflow auto-review --execute`, `workflow execute`, `workflow cancel`, `query run`, `query favorite`, `instance create`, `instance import`, `instance update`, `instance delete`, `instance create-db`, `instance create-user`, `instance grant`, `user resourcegroup-add`, `diagnostic kill`, `binlog parse`, `binlog purge`, `archive apply`, `archive audit`, `archive switch`, `archive once`, and `update`. Run `archery-cli reference` for the definitive installed-version list.
 
 ## Batch operations
 
@@ -174,9 +182,9 @@ Check `ok` first, then act on exit code:
 
 | Tier | Commands | Notes |
 |------|----------|-------|
-| Read | `workflow list/detail/sqlcheck`, `query explain/log/generate`, `instance list/detail/resource/describe`, `slowquery review/history/optimize`, `diagnostic process/tablespace/locks/transactions`, `binlog list`, `archive list/log`, `dict *`, `user list/groups/resource-groups`, `auth status`, `context`, `doctor`, `reference`, `changelog` | Safe, no external writes |
-| Write (medium) | `auth login/logout`, `workflow submit/audit/cancel`, `query favorite`, `binlog parse`, `archive audit/switch`, `update` | Requires `--dry-run` then `--confirm` |
-| Write (high) | `query run`, `workflow execute`, `instance create/import/update/delete`, `binlog purge`, `archive apply/once` | Requires `--dangerous --dry-run` then `--dangerous --confirm`; confirm with user before executing |
+| Read | `workflow list/detail/sqlcheck/audit-list`, `workflow auto-review` (without `--execute`), `query explain/log/generate`, `instance list/detail/resource/describe/test-instance`, `slowquery review/history/optimize`, `diagnostic process/tablespace/locks/transactions`, `binlog list`, `archive list/log`, `dict *`, `user list/groups/resource-groups`, `auth status`, `context`, `doctor`, `reference`, `changelog` | Safe, no external writes |
+| Write (medium) | `auth login/logout`, `workflow submit/audit/cancel`, `workflow auto-review --execute`, `query favorite`, `user resourcegroup-add`, `binlog parse`, `archive audit/switch`, `update` | Requires `--dry-run` then `--confirm` |
+| Write (high) | `query run`, `workflow execute`, `instance create/import/update/delete/create-db/create-user/grant`, `binlog purge`, `archive apply/once` | Requires `--dangerous --dry-run` then `--dangerous --confirm`; confirm with user before executing |
 | Dangerous (critical) | `diagnostic kill` | Requires `--dangerous --dry-run` then `--dangerous --confirm`; kills database threads |
 
 - The agent cannot self-escalate permissions.

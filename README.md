@@ -39,18 +39,20 @@ PowerShell uses `$env:NAME = "value"` for the same environment variables. Keep r
 
 `archery-cli` is designed for AI Agents first. JSON is the default output, the live command surface is discoverable through `archery-cli reference`, and mutating flows use a non-interactive `--dry-run` to `--confirm <confirm_token>` sequence where the tool supports writes.
 
+**Dual-mode transport — usable by ordinary developer accounts.** By default the CLI logs in and talks to Archery over its **web session + AJAX endpoints** (`/authenticate/`, `/sqlworkflow_list/`, `/sqlquery/`, …). This path works on every Archery version and for plain accounts, where the `/api/v1` REST surface is typically closed (`403`) or simply not enabled. REST + JWT is kept as an opt-in advanced mode: pass `--mode jwt` or set `mode: jwt` on a region. Mode precedence is `--mode` flag → region config → `session` default. Verified live against `hhyo/archery:v1.8.5` with an ordinary account.
+
 Worst-case risk tier: **T2 high** - can execute and manage SQL workflows against configured database instances. See [SECURITY.md](SECURITY.md) and [.agent/SEC-SPEC.md](.agent/SEC-SPEC.md).
 
 ## Capabilities
 
 | Area | Commands | Agent use |
 |------|----------|-----------|
-| SQL workflows | `workflow list / submit / detail / audit / execute / cancel / sqlcheck` | Submit, review, execute, and cancel SQL workflow operations. |
+| SQL workflows | `workflow list / submit / detail / audit / audit-list / auto-review / execute / cancel / sqlcheck` | Submit, review, auto-review, execute, and cancel SQL workflow operations. |
 | Queries | `query run / explain / log / favorite / generate` | Run controlled SQL queries and inspect query history. |
-| Instances | `instance list / detail / resource / describe / create / update / delete` | Inspect and manage Archery database instance metadata. |
+| Instances | `instance list / detail / resource / describe / create / update / delete / create-db / create-user / grant / test-instance` | Inspect and manage instances, databases, accounts, and privileges. |
 | Diagnostics | `diagnostic process / kill / tablespace / locks / transactions` | Inspect runtime database health and controlled diagnostic actions. |
 | Binlog and archive | `binlog list / parse / purge`, `archive list / apply / audit / switch / once / log` | Operate Archery binlog and archive workflows. |
-| Dictionary and users | `dict ...`, `user ...`, `auth ...`, `context`, `doctor`, `reference`, `changelog`, `update` | Discover metadata, account state, and the live command contract. |
+| Dictionary and users | `dict ...`, `user list / groups / resource-groups / resourcegroup-add`, `auth ...`, `context`, `doctor`, `reference`, `changelog`, `update` | Discover metadata, manage resource groups, account state, and the live command contract. |
 
 The README is intentionally a map, not the full manual. Agents should call `archery-cli reference --compact` for exact flags, schemas, permissions, exit codes, and error codes before executing task commands.
 
