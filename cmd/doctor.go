@@ -38,6 +38,7 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 		AuthValid       bool           `json:"authValid"`
 		LatencyMs       int64          `json:"latencyMs"`
 		Region          string         `json:"region,omitempty"`
+		Mode            string         `json:"mode,omitempty"`
 		URL             string         `json:"url,omitempty"`
 		Username        string         `json:"username,omitempty"`
 		CredentialStore string         `json:"credentialStore,omitempty"`
@@ -97,6 +98,7 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	result.ConfigExists = true
 	result.URL = region.URL
 	result.Username = region.Username
+	result.Mode = effectiveMode(region)
 	check("config", "pass", "")
 
 	// TLS security check
@@ -115,95 +117,50 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 		check("credential-store", "warn", "OS keyring unavailable; auth login cannot persist credentials securely. Use env vars for one-shot commands or enable the OS credential store")
 	}
 
-	// Test connectivity by attempting to authenticate or verify token
+	// Test connectivity by exercising the region's transport: a JWT verify/login
+	// for jwt mode, or a session establishment for the default session mode.
 	client := api.NewClient(region.URL)
-	if region.AccessToken != "" {
-		client.SetTokens(region.AccessToken, region.RefreshToken)
+	client.SetMode(result.Mode)
+
+	hasCreds, authFix, verifyErr := doctorVerify(client, region, result.Mode, &result.LatencyMs)
+
+	if verifyErr != nil {
+		result.AuthValid = false
+		result.Error = verifyErr.Error()
+		var apiErr *api.APIError
+		if asAPI(verifyErr, &apiErr) && (apiErr.StatusCode == 401 || apiErr.StatusCode == 403) {
+			check("network", "pass", "")
+			check("auth", "fail", authFix)
+		} else {
+			check("network", "fail", "set HTTP_PROXY or check VPN/connectivity")
+			check("auth", "fail", "retry after network connectivity is restored")
+		}
+		if jsonMode {
+			output.PrintJSON(result)
+		} else {
+			fmt.Println()
+			output.Bold("  archery-cli Doctor")
+			output.Gray("  ────────────────────────────────────────")
+			fmt.Println()
+			output.Error("Connection failed: " + verifyErr.Error())
+			fmt.Println()
+		}
+		if asAPI(verifyErr, &apiErr) {
+			setExitCode(exitCodeForStatus(apiErr.StatusCode))
+		} else {
+			setExitCode(ExitNetwork)
+		}
+		return ErrSilent
 	}
 
-	// Try to verify the token if we have one
-	switch {
-	case region.AccessToken != "":
-		start := time.Now()
-		err := client.Auth.Verify(apiCtx(), region.AccessToken)
-		latency := time.Since(start).Milliseconds()
-		result.LatencyMs = latency
-
-		if err != nil {
-			result.AuthValid = false
-			result.Error = err.Error()
-			var apiErr *api.APIError
-			if asAPI(err, &apiErr) && (apiErr.StatusCode == 401 || apiErr.StatusCode == 403) {
-				check("network", "pass", "")
-				check("auth", "fail", "token expired or invalid; run 'archery-cli auth login' to re-authenticate")
-			} else {
-				check("network", "fail", "set HTTP_PROXY or check VPN/connectivity")
-				check("auth", "fail", "retry after network connectivity is restored")
-			}
-			if jsonMode {
-				output.PrintJSON(result)
-			} else {
-				fmt.Println()
-				output.Bold("  archery-cli Doctor")
-				output.Gray("  ────────────────────────────────────────")
-				fmt.Println()
-				output.Error("Connection failed: " + err.Error())
-				fmt.Println()
-			}
-			if asAPI(err, &apiErr) {
-				setExitCode(exitCodeForStatus(apiErr.StatusCode))
-			} else {
-				setExitCode(ExitNetwork)
-			}
-			return ErrSilent
-		}
-
-		result.AuthValid = true
-		check("network", "pass", "")
-		check("auth", "pass", "")
-	case region.Username != "" && region.Password != "":
-		// No cached token; try logging in to verify credentials
-		start := time.Now()
-		_, _, loginErr := client.Auth.Login(apiCtx(), region.Username, region.Password)
-		latency := time.Since(start).Milliseconds()
-		result.LatencyMs = latency
-
-		if loginErr != nil {
-			result.AuthValid = false
-			result.Error = loginErr.Error()
-			var apiErr *api.APIError
-			if asAPI(loginErr, &apiErr) && (apiErr.StatusCode == 401 || apiErr.StatusCode == 403) {
-				check("network", "pass", "")
-				check("auth", "fail", "check username and password")
-			} else {
-				check("network", "fail", "set HTTP_PROXY or check VPN/connectivity")
-				check("auth", "fail", "retry after network connectivity is restored")
-			}
-			if jsonMode {
-				output.PrintJSON(result)
-			} else {
-				fmt.Println()
-				output.Bold("  archery-cli Doctor")
-				output.Gray("  ────────────────────────────────────────")
-				fmt.Println()
-				output.Error("Connection failed: " + loginErr.Error())
-				fmt.Println()
-			}
-			if asAPI(loginErr, &apiErr) {
-				setExitCode(exitCodeForStatus(apiErr.StatusCode))
-			} else {
-				setExitCode(ExitNetwork)
-			}
-			return ErrSilent
-		}
-
-		result.AuthValid = true
-		check("network", "pass", "")
-		check("auth", "pass", "")
-	default:
+	if !hasCreds {
 		result.LatencyMs = -1
 		check("network", "pass", "")
 		check("auth", "skip", "no credentials configured; run 'archery-cli auth login'")
+	} else {
+		result.AuthValid = true
+		check("network", "pass", "")
+		check("auth", "pass", "")
 	}
 
 	if jsonMode {
@@ -220,9 +177,13 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 		output.Warn("TLS verification disabled (--insecure)")
 	}
 	if result.AuthValid {
-		output.Success("JWT token valid")
+		if result.Mode == config.ModeJWT {
+			output.Success("JWT token valid")
+		} else {
+			output.Success("Session valid")
+		}
 	}
-	output.Success(fmt.Sprintf("Connected to %s", region.URL))
+	output.Success(fmt.Sprintf("Connected to %s (mode: %s)", region.URL, result.Mode))
 	if result.Username != "" {
 		output.Success(fmt.Sprintf("Authenticated as %s", result.Username))
 	}
@@ -233,6 +194,45 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	printUpdateNoticeHint(os.Stdout, result.Notices)
 	fmt.Println()
 	return nil
+}
+
+// doctorVerify exercises the region's transport to confirm credentials work.
+// Returns the verification error (nil on success), whether any credentials were
+// present to verify, and the fix hint to show on an auth failure.
+func doctorVerify(client *api.Client, region config.RegionConfig, mode string, latencyMs *int64) (hasCreds bool, authFix string, err error) {
+	if mode == config.ModeJWT {
+		switch {
+		case region.AccessToken != "":
+			client.SetTokens(region.AccessToken, region.RefreshToken)
+			start := time.Now()
+			e := client.Auth.Verify(apiCtx(), region.AccessToken)
+			*latencyMs = time.Since(start).Milliseconds()
+			return true, "token expired or invalid; run 'archery-cli auth login' to re-authenticate", e
+		case region.Username != "" && region.Password != "":
+			start := time.Now()
+			_, _, e := client.Auth.Login(apiCtx(), region.Username, region.Password)
+			*latencyMs = time.Since(start).Milliseconds()
+			return true, "check username and password", e
+		default:
+			return false, "", nil
+		}
+	}
+
+	// Session mode: a cached cookie proves nothing until the server accepts it,
+	// but re-establishing the session needs the password. Verify by logging in
+	// when credentials are available; otherwise trust the cached cookie.
+	switch {
+	case region.Username != "" && region.Password != "":
+		start := time.Now()
+		_, _, e := client.Auth.LoginWithSession(apiCtx(), region.Username, region.Password)
+		*latencyMs = time.Since(start).Milliseconds()
+		return true, "check username and password", e
+	case region.SessionID != "":
+		*latencyMs = -1
+		return true, "session cookie may be expired; run 'archery-cli auth login'", nil
+	default:
+		return false, "", nil
+	}
 }
 
 func versionMeetsSkillMinimum(current, minimum string) bool {

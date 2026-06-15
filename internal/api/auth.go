@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/url"
 )
 
 // AuthAPI wraps authentication-related API calls.
@@ -42,30 +40,25 @@ func (a *AuthAPI) Login(ctx context.Context, username, password string) (string,
 	return resp.Access, resp.Refresh, nil
 }
 
-// LoginWithSession authenticates via Archery's internal session-based login.
+// LoginWithSession authenticates via Archery's session-based AJAX login and
+// returns the resulting Django cookies for caching.
 //
-// POST /login/
-// Request:  form-encoded username + password
-// Response: redirect sets sessionid cookie
-func (a *AuthAPI) LoginWithSession(ctx context.Context, username, password string) error {
-	form := url.Values{
-		"username": {username},
-		"password": {password},
+// Flow (verified against v1.8.5):
+//
+//	GET  /login/          -> Set-Cookie csrftoken
+//	POST /authenticate/   form username/password/csrfmiddlewaretoken
+//	                      + headers X-CSRFToken, Referer -> {"status":0,"msg":"ok"} + sessionid
+//
+// On success the cookie jar holds sessionid + (rotated) csrftoken, which are
+// returned for persistence.
+func (a *AuthAPI) LoginWithSession(ctx context.Context, username, password string) (sessionID, csrfToken string, err error) {
+	a.client.SetSessionCredentials(username, password)
+	a.client.sessionReady = false
+	if err := a.client.ensureSession(ctx); err != nil {
+		return "", "", err
 	}
-
-	resp, statusCode, header, err := a.client.internalRequest(ctx, http.MethodPost, "/login/", form)
-	if err != nil {
-		return fmt.Errorf("session login: %w", err)
-	}
-
-	// Django login typically redirects (302) on success, or returns 200 on failure.
-	_ = resp
-	_ = header
-
-	if statusCode >= 400 {
-		return fmt.Errorf("session login: unexpected status %d", statusCode)
-	}
-	return nil
+	sessionID, csrfToken = a.client.ExportSessionCookies()
+	return sessionID, csrfToken, nil
 }
 
 // Refresh obtains a new access token using the stored refresh token.

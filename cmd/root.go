@@ -47,6 +47,7 @@ var (
 	dryRun         bool
 	dangerousMode  bool
 	regionFlag     string
+	modeFlag       string
 	formatMode     = formatJSON
 	insecureTLS    bool
 	timeoutSeconds int
@@ -111,6 +112,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Show what would be done without executing")
 	rootCmd.PersistentFlags().BoolVar(&dangerousMode, "dangerous", false, "Enable high/critical risk write commands; required in both dry-run and confirm steps")
 	rootCmd.PersistentFlags().StringVar(&regionFlag, "region", "", "Override active region (default: config default_region)")
+	rootCmd.PersistentFlags().StringVar(&modeFlag, "mode", "", "Transport mode: session (default) | jwt; overrides region config")
 	rootCmd.PersistentFlags().BoolVar(&insecureTLS, "insecure", false, "Skip TLS certificate verification (corporate/self-signed CA)")
 	rootCmd.PersistentFlags().IntVar(&timeoutSeconds, "timeout", defaultTimeoutSeconds, "HTTP request timeout in seconds")
 	initConfirmFlag()
@@ -432,6 +434,16 @@ func markOutputFormats(cmd *cobra.Command, formats ...string) {
 	cmd.Annotations["formats"] = strings.Join(formats, ",")
 }
 
+// effectiveMode resolves the transport mode with this precedence:
+//
+//	--mode flag  >  region.Mode (config)  >  session (default)
+func effectiveMode(region config.RegionConfig) string {
+	if m := strings.ToLower(strings.TrimSpace(modeFlag)); m == config.ModeJWT || m == config.ModeSession {
+		return m
+	}
+	return region.EffectiveMode()
+}
+
 // newClient loads config and creates an API client for the active region.
 func newClient() (*api.Client, *config.Config, *config.RegionConfig, error) {
 	cfg, err := config.MustLoad()
@@ -467,19 +479,33 @@ func newClient() (*api.Client, *config.Config, *config.RegionConfig, error) {
 	}
 
 	client := api.NewClient(region.URL)
-	if region.AccessToken != "" {
-		client.SetTokens(region.AccessToken, region.RefreshToken)
-	} else if strings.TrimSpace(region.Username) != "" && strings.TrimSpace(region.Password) != "" {
-		accessToken, refreshToken, err := client.Auth.Login(apiCtx(), region.Username, region.Password)
-		if err != nil {
-			return nil, nil, nil, handleAPIError(err)
-		}
-		client.SetTokens(accessToken, refreshToken)
-	}
-	// Session-mode commands (legacy Django endpoints) need a form login; pass
-	// the credentials when available. JWT-only configs leave these empty and
-	// such commands return a clear "needs username/password" error.
+	mode := effectiveMode(region)
+	client.SetMode(mode)
+
+	// Session credentials are always supplied so the lazy form login can run when
+	// no cached cookie is present (or a cookie went stale). JWT-only setups leave
+	// these empty, in which case session endpoints surface a clear error.
 	client.SetSessionCredentials(region.Username, region.Password)
+
+	if mode == config.ModeJWT {
+		// JWT transport: prefer a cached token; otherwise mint one now.
+		if region.AccessToken != "" {
+			client.SetTokens(region.AccessToken, region.RefreshToken)
+		} else if strings.TrimSpace(region.Username) != "" && strings.TrimSpace(region.Password) != "" {
+			accessToken, refreshToken, err := client.Auth.Login(apiCtx(), region.Username, region.Password)
+			if err != nil {
+				return nil, nil, nil, handleAPIError(err)
+			}
+			client.SetTokens(accessToken, refreshToken)
+		}
+		return client, cfg, &region, nil
+	}
+
+	// Session transport (default): reuse cached cookies to skip the form login.
+	// ensureSession falls back to a fresh login lazily when none are cached.
+	if region.SessionID != "" {
+		client.InjectSessionCookies(region.SessionID, region.CSRFToken)
+	}
 	return client, cfg, &region, nil
 }
 

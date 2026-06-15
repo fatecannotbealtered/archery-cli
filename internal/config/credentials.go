@@ -79,12 +79,21 @@ func (k *KeyringStore) IsAvailable() bool {
 
 // credentialKey builds a stable keyring account name for region + username.
 func credentialKey(region, username string) string {
+	return credentialKeyKind(region, username, "jwt")
+}
+
+// sessionKey builds a stable keyring account name for the session cookies.
+func sessionKey(region, username string) string {
+	return credentialKeyKind(region, username, "session")
+}
+
+func credentialKeyKind(region, username, kind string) string {
 	region = strings.TrimSpace(region)
 	user := strings.TrimSpace(username)
 	if user == "" {
 		user = "default"
 	}
-	return region + "|jwt|" + user
+	return region + "|" + kind + "|" + user
 }
 
 // TokenStore manages JWT token persistence through the OS keyring.
@@ -145,6 +154,53 @@ func (ts *TokenStore) LoadTokens(region, username string) (accessToken, refreshT
 func (ts *TokenStore) DeleteTokens(region, username string) error {
 	if ts.keyring.IsAvailable() {
 		key := credentialKey(region, username)
+		if err := ts.keyring.Delete(keyringService, key); err != nil {
+			// Ignore not-found errors on delete.
+			return nil
+		}
+	}
+	return nil
+}
+
+// SaveSession persists the Django session cookies (sessionid + csrftoken) for a
+// region. Stored in the keyring; fails if no secret store is available.
+func (ts *TokenStore) SaveSession(region, username, sessionID, csrfToken string) error {
+	if ts.keyring.IsAvailable() {
+		key := sessionKey(region, username)
+		combined := sessionID + "\n" + csrfToken
+		if err := ts.keyring.Store(keyringService, key, combined); err != nil {
+			return fmt.Errorf("saving session to keyring: %w", err)
+		}
+		return nil
+	}
+	return errors.New("OS credential store unavailable")
+}
+
+// LoadSession retrieves the cached session cookies for a region.
+// Returns empty strings if none are found.
+func (ts *TokenStore) LoadSession(region, username string) (sessionID, csrfToken string, err error) {
+	if ts.keyring.IsAvailable() {
+		key := sessionKey(region, username)
+		combined, err := ts.keyring.Retrieve(keyringService, key)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				return "", "", nil
+			}
+			return "", "", fmt.Errorf("loading session from keyring: %w", err)
+		}
+		parts := strings.SplitN(combined, "\n", 2)
+		if len(parts) == 2 {
+			return parts[0], parts[1], nil
+		}
+		return parts[0], "", nil
+	}
+	return "", "", nil
+}
+
+// DeleteSession removes persisted session cookies for a region from the keyring.
+func (ts *TokenStore) DeleteSession(region, username string) error {
+	if ts.keyring.IsAvailable() {
+		key := sessionKey(region, username)
 		if err := ts.keyring.Delete(keyringService, key); err != nil {
 			// Ignore not-found errors on delete.
 			return nil
