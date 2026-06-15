@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- npm scope 迁移 `@fatecannotbealtered-` → `@ananke`（无横线 org 在 npm 被占，迁移到 `@ananke`）. Updated the root package name, all platform `optionalDependencies`, the lockfile, the `update` command's `updateNPMPackage` constant, the README install commands and npm badges, and the platform-package generation script. The GitHub org / Go module path (`github.com/fatecannotbealtered/...`) and the `npx skills add fatecannotbealtered/...` source are unchanged.
+- npm scope 迁移 `@fatecannotbealtered-` → `@fateforge`（无横线 org 在 npm 被占，迁移到 `@fateforge`）. Updated the root package name, all platform `optionalDependencies`, the lockfile, the `update` command's `updateNPMPackage` constant, the README install commands and npm badges, and the platform-package generation script. The GitHub org / Go module path (`github.com/fatecannotbealtered/...`) and the `npx skills add fatecannotbealtered/...` source are unchanged.
 
 ## [1.0.2] - 2026-06-14
 
