@@ -234,6 +234,49 @@ container afterward; no `cli_verify*` tables were created on the target DB
 (execute never reached the apply stage). The enabling config above was left in
 place so the shared e2e stack stays workflow-capable.
 
+## 2026-06-15 — `dict` group, session path (v1.8.5)
+
+Real-machine verification of the `dict` command group against
+`tools-e2e-archery` (`hhyo/archery:v1.8.5`) as `cli_verify` (superuser), session
+mode. Target instance `e2e-mysql` (mysql), db `archery` (45 tables). No secrets
+recorded.
+
+### Result by command
+
+| Command | Class | Result |
+| --- | --- | --- |
+| `dict tables` | live (read) | PASS — `--instance e2e-mysql --db archery --db-type mysql` returns 45 tables, `{ok,data:{instance,db,tables[],count}}` envelope; `tables[].comment` tagged `_untrusted`. |
+| `dict table-info` | live (read) | PASS — `--table sql_instance` returns `meta_data`/`desc`/`index`/`create_sql`; text mode renders Metadata/Columns/Indexes tables. |
+| `dict export` | live (read) | PASS — `--db archery` streams the table-structure HTML FileResponse (≈254 KB); raw/text print it verbatim, JSON wraps it in `{format:"html",content}`. |
+| `dict views` | gate (contract) | PASS — no `/data_dictionary/view_list/` route in v1.8.5; fails fast with `E_NOT_FOUND` + upgrade message (exit 3), never touches upstream. |
+| `dict triggers` | gate (contract) | PASS — same gate for `trigger_list`. |
+| `dict procedures` | gate (contract) | PASS — same gate for `procedure_list`. |
+
+Gate honesty confirmed against `sql/urls.py` in the container: v1.8.5 ships only
+`table_list`, `table_info`, `export` under `data_dictionary/`.
+
+### Defect found and fixed by this run
+
+**`--db-type` was optional but the v1.8.5 view requires it.** `table_list` and
+`table_info` resolve the instance via
+`Instance.objects.get(instance_name=…, db_type=…)` — `db_type` is part of the
+lookup key. The CLI sent `db_type` only when the flag was present, so the common
+case (omitting it) returned `{"status":1,"msg":"Instance.DoesNotExist"}` and
+surfaced as a confusing `E_VALIDATION`. Fix: `--db-type` is now **required** for
+`dict tables` and `dict table-info` (validated before the request), with a guard
+test (`TestDictDbTypeRequired`) and updated flag help. `dict export` is
+unaffected — its view keys on `user_instances(...).get(instance_name=…)` with no
+`db_type`, so the CLI correctly omits it there.
+
+### Environment note (not a CLI change)
+
+`localhost` resolves to IPv6 `::1` on the verifier host, where the GET /login/
+csrftoken and the POST /authenticate/ landed on different bindings and login
+intermittently returned `用户名或密码错误`. Using `http://127.0.0.1:9123`
+(IPv4) made session login deterministic. This is a host DNS artifact, not a CLI
+defect; the session login flow itself (GET csrf → POST authenticate → cookie)
+matches the verified curl flow byte-for-byte.
+
 ## Reproduce
 
 ```bash

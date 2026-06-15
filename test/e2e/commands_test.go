@@ -54,8 +54,8 @@ var boundaryCases = []boundaryCase{
 	{name: "diagnostic transactions", args: []string{"diagnostic", "transactions", "--instance", "inst1"}},
 
 	// dict
-	{name: "dict tables", args: []string{"dict", "tables", "--instance", "inst1", "--db", "db1"}},
-	{name: "dict table-info", args: []string{"dict", "table-info", "--instance", "inst1", "--db", "db1", "--table", "t1"}},
+	{name: "dict tables", args: []string{"dict", "tables", "--instance", "inst1", "--db", "db1", "--db-type", "mysql"}},
+	{name: "dict table-info", args: []string{"dict", "table-info", "--instance", "inst1", "--db", "db1", "--table", "t1", "--db-type", "mysql"}},
 	{name: "dict views", gated: true, args: []string{"dict", "views", "--instance", "inst1", "--db", "db1"}},
 	{name: "dict triggers", gated: true, args: []string{"dict", "triggers", "--instance", "inst1", "--db", "db1"}},
 	{name: "dict procedures", gated: true, args: []string{"dict", "procedures", "--instance", "inst1", "--db", "db1"}},
