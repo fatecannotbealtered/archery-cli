@@ -148,7 +148,7 @@ func referenceSchemas() map[string]refDataSchema {
 		// ─── query ────────────────────────────────────────────────────────────
 		"query_run":      {Shape: "object", Fields: []string{"columns", "rows", "row_count", "query_time_ms", "masked"}, UntrustedFields: []string{"rows"}},
 		"query_explain":  {Shape: "object", Fields: []string{"plan"}, UntrustedFields: []string{"plan"}},
-		"query_log_list": {Shape: "list", Fields: append(append([]string{}, offsetEnvelopeFields...), "id", "username", "db_user", "sql", "effect_row", "cost_time", "instance", "exec_time"), UntrustedFields: []string{"sql"}},
+		"query_log_list": {Shape: "list", Fields: append(append([]string{}, offsetEnvelopeFields...), "id", "username", "db", "sql", "effect_row", "cost_time", "instance", "exec_time", "favorite", "alias"), UntrustedFields: []string{"sql", "alias"}},
 		"query_favorite": {Shape: "object", Fields: []string{"id", "star"}},
 		"query_generate": {Shape: "object", Fields: []string{"sql"}, UntrustedFields: []string{"sql"}},
 
