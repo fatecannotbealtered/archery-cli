@@ -22,9 +22,7 @@ func init() {
 
 	// process
 	diagnosticProcessCmd.Flags().String("instance", "", "Instance name (required)")
-	diagnosticProcessCmd.Flags().String("command-type", "", "Filter by command type (e.g. Query, Sleep)")
-	diagnosticProcessCmd.Flags().Int("limit", 0, "Max results (0 = no limit)")
-	diagnosticProcessCmd.Flags().Int("offset", 0, "Pagination offset")
+	diagnosticProcessCmd.Flags().String("command-type", "All", "Command filter: 'All', 'Not Sleep', or an exact command (e.g. Query, Sleep)")
 	diagnosticProcessCmd.Flags().String("fields", "", "Comma-separated fields for JSON output")
 	diagnosticCmd.AddCommand(diagnosticProcessCmd)
 
@@ -37,8 +35,6 @@ func init() {
 
 	// tablespace
 	diagnosticTablespaceCmd.Flags().String("instance", "", "Instance name (required)")
-	diagnosticTablespaceCmd.Flags().Int("limit", 0, "Max results (0 = no limit)")
-	diagnosticTablespaceCmd.Flags().Int("offset", 0, "Pagination offset")
 	diagnosticTablespaceCmd.Flags().String("fields", "", "Comma-separated fields for JSON output")
 	diagnosticCmd.AddCommand(diagnosticTablespaceCmd)
 
@@ -64,30 +60,29 @@ var diagnosticProcessCmd = &cobra.Command{
 			return failArg("--instance is required")
 		}
 		commandType, _ := cmd.Flags().GetString("command-type")
-		limit, _ := cmd.Flags().GetInt("limit")
-		offset, _ := cmd.Flags().GetInt("offset")
 
 		client, _, _, err := newClient()
 		if err != nil {
 			return err
 		}
 
+		// command_type is required server-side (it is escaped then string-formatted
+		// into the WHERE clause); "All" selects every command. Default to it so an
+		// omitted flag lists all processes instead of matching the empty string.
+		if commandType == "" {
+			commandType = "All"
+		}
 		form := url.Values{
 			"instance_name": {instance},
-		}
-		if commandType != "" {
-			form.Set("command_type", commandType)
-		}
-		if limit > 0 {
-			form.Set("limit", strconv.Itoa(limit))
-		}
-		if offset > 0 {
-			form.Set("offset", strconv.Itoa(offset))
+			"command_type":  {commandType},
 		}
 
-		data, err := client.InternalPost(apiCtx(), "/db_diagnostic/process/", form)
+		data, err := client.SessionPost(apiCtx(), "/db_diagnostic/process/", form)
 		if err != nil {
 			return handleAPIError(err)
+		}
+		if err := checkDiagnosticStatus(data); err != nil {
+			return err
 		}
 
 		if jsonMode {
@@ -138,21 +133,19 @@ var diagnosticKillCmd = &cobra.Command{
 			return failArg("--threads is required")
 		}
 
-		// Validate thread IDs are comma-separated integers
-		threadIDs := splitCSV(threads)
-		for _, id := range threadIDs {
-			if _, err := strconv.Atoi(strings.TrimSpace(id)); err != nil {
+		// Validate thread IDs are comma-separated integers, then collect them as a
+		// JSON array: the kill_session/create_kill_session views read the
+		// "ThreadIDs" form field and json.loads() it, so a comma string is rejected.
+		idStrings := splitCSV(threads)
+		threadIDs := make([]int, 0, len(idStrings))
+		for _, id := range idStrings {
+			n, err := strconv.Atoi(strings.TrimSpace(id))
+			if err != nil {
 				return failArg(fmt.Sprintf("invalid thread ID %q: must be an integer", id))
 			}
+			threadIDs = append(threadIDs, n)
 		}
-
-		detail := map[string]any{
-			"instance": instance,
-			"threads":  threads,
-		}
-		if markDryRunOrConfirm("kill database threads", detail) {
-			return nil
-		}
+		threadIDsJSON, _ := json.Marshal(threadIDs)
 
 		client, _, _, err := newClient()
 		if err != nil {
@@ -161,23 +154,50 @@ var diagnosticKillCmd = &cobra.Command{
 
 		form := url.Values{
 			"instance_name": {instance},
-			"thread_ids":    {threads},
+			"ThreadIDs":     {string(threadIDsJSON)},
 		}
 
-		data, err := client.InternalPost(apiCtx(), "/db_diagnostic/kill_session/", form)
+		// Preview the exact KILL statements via create_kill_session so the dry-run /
+		// confirmation shows what will actually run. This is a read (it only builds
+		// the SQL); kill_session below performs the destructive execution.
+		var killPreview string
+		if preview, err := client.SessionPost(apiCtx(), "/db_diagnostic/create_kill_session/", form); err == nil {
+			if err := checkDiagnosticStatus(preview); err == nil {
+				var pv struct {
+					Data string `json:"data"`
+				}
+				_ = json.Unmarshal(preview, &pv)
+				killPreview = pv.Data
+			}
+		}
+
+		detail := map[string]any{
+			"instance": instance,
+			"threads":  threadIDs,
+		}
+		if killPreview != "" {
+			detail["kill_sql"] = killPreview
+		}
+		if markDryRunOrConfirm("kill database threads", detail) {
+			return nil
+		}
+
+		data, err := client.SessionPost(apiCtx(), "/db_diagnostic/kill_session/", form)
 		if err != nil {
 			return handleAPIError(err)
 		}
+		if err := checkDiagnosticStatus(data); err != nil {
+			return err
+		}
 
 		if jsonMode {
-			var raw any
-			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
-			}
 			result := map[string]any{
 				"instance": instance,
 				"threads":  threadIDs,
-				"result":   normalizeAgentValue(raw),
+				"killed":   len(threadIDs),
+			}
+			if killPreview != "" {
+				result["kill_sql"] = killPreview
 			}
 			tagCommonUntrusted(result)
 			output.PrintJSON(result)
@@ -199,9 +219,6 @@ var diagnosticTablespaceCmd = &cobra.Command{
 		if instance == "" {
 			return failArg("--instance is required")
 		}
-		limit, _ := cmd.Flags().GetInt("limit")
-		offset, _ := cmd.Flags().GetInt("offset")
-
 		client, _, _, err := newClient()
 		if err != nil {
 			return err
@@ -210,16 +227,15 @@ var diagnosticTablespaceCmd = &cobra.Command{
 		form := url.Values{
 			"instance_name": {instance},
 		}
-		if limit > 0 {
-			form.Set("limit", strconv.Itoa(limit))
-		}
-		if offset > 0 {
-			form.Set("offset", strconv.Itoa(offset))
-		}
 
-		data, err := client.InternalPost(apiCtx(), "/db_diagnostic/tablespace/", form)
+		// NOTE: the v1.8.5 route is the misspelled "tablesapce" (sql/urls.py +
+		// db_diagnostic.tablesapce). Matching the typo is required; do not "fix" it.
+		data, err := client.SessionPost(apiCtx(), "/db_diagnostic/tablesapce/", form)
 		if err != nil {
 			return handleAPIError(err)
+		}
+		if err := checkDiagnosticStatus(data); err != nil {
+			return err
 		}
 
 		if jsonMode {
@@ -272,9 +288,12 @@ var diagnosticLocksCmd = &cobra.Command{
 			"instance_name": {instance},
 		}
 
-		data, err := client.InternalPost(apiCtx(), "/db_diagnostic/trxandlocks/", form)
+		data, err := client.SessionPost(apiCtx(), "/db_diagnostic/trxandlocks/", form)
 		if err != nil {
 			return handleAPIError(err)
+		}
+		if err := checkDiagnosticStatus(data); err != nil {
+			return err
 		}
 
 		if jsonMode {
@@ -283,29 +302,23 @@ var diagnosticLocksCmd = &cobra.Command{
 			if err := json.Unmarshal(data, &raw); err != nil {
 				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 			}
-			if len(fields) > 0 {
-				if m, ok := raw.(map[string]any); ok {
-					output.PrintJSON(output.FilterMap(normalizeAgentMap(m), fields))
-					return nil
+			items := extractDiagnosticRows(raw)
+			if len(fields) > 0 && len(items) > 0 {
+				filtered := make([]map[string]any, len(items))
+				for i, m := range items {
+					filtered[i] = output.FilterMap(m, fields)
 				}
+				items = filtered
 			}
-			output.PrintJSON(normalizeAgentValue(raw))
+			output.PrintJSON(items)
 			return nil
 		}
 
-		// Text mode: try to extract tabular data
+		// Text mode
 		items := extractDiagnosticRows(nil)
 		_ = json.Unmarshal(data, &items)
 		if len(items) == 0 {
-			// Print raw as summary
-			var raw map[string]any
-			if err := json.Unmarshal(data, &raw); err == nil {
-				for k, v := range raw {
-					fmt.Printf("  %-20s %v\n", output.FormatGray(k), v)
-				}
-			} else {
-				output.Info("No lock information found.")
-			}
+			output.Info("No lock waits found.")
 			return nil
 		}
 		printDynamicTable(items)
@@ -333,9 +346,12 @@ var diagnosticTransactionsCmd = &cobra.Command{
 			"instance_name": {instance},
 		}
 
-		data, err := client.InternalPost(apiCtx(), "/db_diagnostic/innodb_trx/", form)
+		data, err := client.SessionPost(apiCtx(), "/db_diagnostic/innodb_trx/", form)
 		if err != nil {
 			return handleAPIError(err)
+		}
+		if err := checkDiagnosticStatus(data); err != nil {
+			return err
 		}
 
 		if jsonMode {
@@ -369,6 +385,34 @@ var diagnosticTransactionsCmd = &cobra.Command{
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────────
+
+// diagnosticEnvelope is the common shape returned by every db_diagnostic view:
+// {"status":0,"msg":"ok","rows":[...]} on success, {"status":1,"msg":"..."} on
+// failure (e.g. RBAC "你所在组未关联该实例" or a database error). These views
+// return HTTP 200 even for status==1, so the status field — not the HTTP code —
+// is the source of truth.
+type diagnosticEnvelope struct {
+	Status int             `json:"status"`
+	Msg    string          `json:"msg"`
+	Rows   json.RawMessage `json:"rows"`
+}
+
+// checkDiagnosticStatus decodes the envelope and returns a CLI error when the
+// view reported status!=0. The raw body is returned to callers for row parsing.
+func checkDiagnosticStatus(data []byte) error {
+	var env diagnosticEnvelope
+	if err := json.Unmarshal(data, &env); err != nil {
+		return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
+	}
+	if env.Status != 0 {
+		msg := strings.TrimSpace(env.Msg)
+		if msg == "" {
+			msg = "diagnostic request failed"
+		}
+		return failWithCode(msg, ExitBadArgs, output.E_VALIDATION)
+	}
+	return nil
+}
 
 // extractDiagnosticRows extracts a list of row maps from Archery internal
 // API responses. Handles both the {"status":0,"data":{"rows":[...]}} shape

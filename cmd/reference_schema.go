@@ -80,7 +80,7 @@ var referenceLeafSchemas = map[string]referenceLeaf{
 	"diagnostic process":      {schema: "diagnostic_row_list", examples: []string{"archery-cli diagnostic process --instance prod-mysql --compact"}},
 	"diagnostic kill":         {schema: "diagnostic_kill", examples: []string{"archery-cli diagnostic kill --instance prod-mysql --threads 101,102 --dangerous --dry-run --compact", "archery-cli diagnostic kill --instance prod-mysql --threads 101,102 --dangerous --confirm <confirm_token> --compact"}},
 	"diagnostic tablespace":   {schema: "diagnostic_row_list", examples: []string{"archery-cli diagnostic tablespace --instance prod-mysql --compact"}},
-	"diagnostic locks":        {schema: "diagnostic_raw", examples: []string{"archery-cli diagnostic locks --instance prod-mysql --compact"}},
+	"diagnostic locks":        {schema: "diagnostic_row_list", examples: []string{"archery-cli diagnostic locks --instance prod-mysql --compact"}},
 	"diagnostic transactions": {schema: "diagnostic_row_list", examples: []string{"archery-cli diagnostic transactions --instance prod-mysql --compact"}},
 
 	// ─── dict ─────────────────────────────────────────────────────────────────
@@ -172,8 +172,7 @@ func referenceSchemas() map[string]refDataSchema {
 
 		// ─── diagnostic ───────────────────────────────────────────────────────
 		"diagnostic_row_list": {Shape: "array", Fields: []string{"<dynamic upstream diagnostic row keys>"}, UntrustedFields: []string{"Info", "info"}},
-		"diagnostic_kill":     {Shape: "object", Fields: []string{"instance", "threads", "result"}, UntrustedFields: []string{"result"}},
-		"diagnostic_raw":      {Shape: "object", Fields: []string{"<upstream trx-and-locks response>"}},
+		"diagnostic_kill":     {Shape: "object", Fields: []string{"instance", "threads", "killed", "kill_sql"}, UntrustedFields: []string{"kill_sql"}},
 
 		// ─── dict ─────────────────────────────────────────────────────────────
 		// table_list returns data as a letter-keyed map of [name, comment] pairs
