@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 // BinlogAPI provides methods for the MySQL binlog endpoints.
@@ -36,15 +37,35 @@ type BinlogParseRow struct {
 }
 
 // BinlogParseResult is the decoded response of POST /binlog/my2sql/.
+//
+// data is kept raw because its shape depends on status: the success path sets
+// it to a list of parsed rows, while the arg-check failure path returns
+// {"status":1,"data":{}} (an object). Rows() decodes the list only when the
+// call succeeded, so an error envelope never causes an unmarshal failure.
 type BinlogParseResult struct {
-	Status int              `json:"status"`
-	Msg    string           `json:"msg"`
-	Data   []BinlogParseRow `json:"data"`
+	Status int             `json:"status"`
+	Msg    string          `json:"msg"`
+	Data   json.RawMessage `json:"data"`
 }
 
-// BinlogParseParams collects the my2sql request fields. Empty/zero values are
-// omitted from the form so the view applies its own defaults (num=30,
-// threads=4, sql_type=all DML).
+// Rows decodes the parsed statements from a successful response. It returns an
+// empty slice for any non-list data payload (e.g. the {} returned on error).
+func (r *BinlogParseResult) Rows() ([]BinlogParseRow, error) {
+	if len(r.Data) == 0 {
+		return nil, nil
+	}
+	var rows []BinlogParseRow
+	if err := json.Unmarshal(r.Data, &rows); err != nil {
+		// Error envelopes carry data:{}; treat as no rows rather than failing.
+		return nil, nil
+	}
+	return rows, nil
+}
+
+// BinlogParseParams collects the my2sql request fields. Zero-valued numeric
+// fields are sent as empty strings (see emptyIfZero) so the view applies its
+// own defaults (num=30, threads=4) without 500ing on int(None); an empty
+// sql_type list lets the view default to all DML.
 type BinlogParseParams struct {
 	InstanceName string
 	StartFile    string
@@ -69,6 +90,16 @@ type BinlogParseParams struct {
 type BinlogPurgeResult struct {
 	Status int    `json:"status"`
 	Msg    string `json:"msg"`
+}
+
+// emptyIfZero renders an int as a decimal string, or "" when zero. The my2sql
+// view reads num/threads/start_pos/end_pos as int(value) unless value is the
+// empty string, so "" signals "unset" and lets the view apply its own default.
+func emptyIfZero(n int) string {
+	if n == 0 {
+		return ""
+	}
+	return strconv.Itoa(n)
 }
 
 // List returns the binary logs of an instance.
@@ -96,24 +127,22 @@ func (b *BinlogAPI) List(ctx context.Context, instanceName string) (*BinlogListR
 // only_schemas, only_tables[], sql_type[]. Time fields are start_time and
 // stop_time (the view has no end_time). Booleans are the literal string "true".
 func (b *BinlogAPI) Parse(ctx context.Context, p BinlogParseParams) (*BinlogParseResult, error) {
-	form := url.Values{"instance_name": {p.InstanceName}}
-	if p.StartFile != "" {
-		form.Set("start_file", p.StartFile)
-	}
-	if p.EndFile != "" {
-		form.Set("end_file", p.EndFile)
-	}
-	if p.StartPos > 0 {
-		form.Set("start_pos", strconv.Itoa(p.StartPos))
-	}
-	if p.EndPos > 0 {
-		form.Set("end_pos", strconv.Itoa(p.EndPos))
-	}
-	if p.StartTime != "" {
-		form.Set("start_time", p.StartTime)
-	}
-	if p.StopTime != "" {
-		form.Set("stop_time", p.StopTime)
+	// The v1.8.5 my2sql view parses num/threads/start_pos/end_pos with the
+	// pattern `30 if get(...) == '' else int(get(...))`. An absent field yields
+	// None, so `int(None)` raises and the view 500s. The web UI always submits
+	// these fields (empty string when blank); mirror that by sending every
+	// optional field, using "" for unset values so the view applies its own
+	// defaults (num=30, threads=4) and skips the int() conversion.
+	form := url.Values{
+		"instance_name": {p.InstanceName},
+		"start_file":    {p.StartFile},
+		"end_file":      {p.EndFile},
+		"start_time":    {p.StartTime},
+		"stop_time":     {p.StopTime},
+		"start_pos":     {emptyIfZero(p.StartPos)},
+		"end_pos":       {emptyIfZero(p.EndPos)},
+		"num":           {emptyIfZero(p.Num)},
+		"threads":       {emptyIfZero(p.Threads)},
 	}
 	for _, s := range p.Schemas {
 		form.Add("only_schemas", s)
@@ -121,14 +150,11 @@ func (b *BinlogAPI) Parse(ctx context.Context, p BinlogParseParams) (*BinlogPars
 	for _, t := range p.Tables {
 		form.Add("only_tables[]", t)
 	}
+	// my2sql's -sql flag only accepts lowercase insert/update/delete and rejects
+	// any other casing with "invalid sqltypes"; the view forwards these values
+	// verbatim, so normalize here regardless of how the user typed them.
 	for _, t := range p.SQLTypes {
-		form.Add("sql_type[]", t)
-	}
-	if p.Num > 0 {
-		form.Set("num", strconv.Itoa(p.Num))
-	}
-	if p.Threads > 0 {
-		form.Set("threads", strconv.Itoa(p.Threads))
+		form.Add("sql_type[]", strings.ToLower(t))
 	}
 	if p.Rollback {
 		form.Set("rollback", "true")
