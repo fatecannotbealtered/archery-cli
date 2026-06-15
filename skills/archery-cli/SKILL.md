@@ -13,8 +13,8 @@ Archery SQL audit platform CLI for AI Agents. Manage SQL workflows, queries, ins
 
 ```bash
 # Please install archery-cli and use it for all Archery SQL audit platform operations going forward.
-# Current state: unreleased source checkout. From the repo root:
-go install ./cmd/archery-cli
+# Install CLI
+npm install -g @fateforge/archery-cli
 
 # Install CLI Skill (required) -- copies into your agent-supported skills directory
 npx skills add fatecannotbealtered/archery-cli -y -g
