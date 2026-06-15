@@ -195,16 +195,34 @@ func TestQueryLogResponseDecode(t *testing.T) {
 	}
 }
 
-// TestQueryExplainResponseDecode locks the to_sep_dict() shape: data is a single
-// {column_list, rows} object, not a list of row maps.
+// TestQueryExplainResponseDecode locks the to_sep_dict() shape: on success data
+// is a single {column_list, rows} object, decoded in two steps (status first,
+// then the typed payload) so that a rejection — where the view returns data=[]
+// (array) with status=1 — surfaces the server message instead of an unmarshal
+// error against the object shape.
 func TestQueryExplainResponseDecode(t *testing.T) {
 	raw := `{"status":0,"msg":"ok","data":{"column_list":["id","type"],"rows":[[1,"ALL"],[2,"ref"]]}}`
 	var resp queryExplainResponse
 	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if len(resp.Data.ColumnList) != 2 || len(resp.Data.Rows) != 2 {
-		t.Fatalf("decoded columns/rows = %d/%d, want 2/2", len(resp.Data.ColumnList), len(resp.Data.Rows))
+	var dataSet queryExplainDataSet
+	if err := json.Unmarshal(resp.Data, &dataSet); err != nil {
+		t.Fatalf("unmarshal data: %v", err)
+	}
+	if len(dataSet.ColumnList) != 2 || len(dataSet.Rows) != 2 {
+		t.Fatalf("decoded columns/rows = %d/%d, want 2/2", len(dataSet.ColumnList), len(dataSet.Rows))
+	}
+
+	// Rejection path: data is an empty array. The outer envelope must still decode
+	// cleanly so the status check can run before any attempt to bind the payload.
+	rejected := `{"status":1,"msg":"仅支持explain开头的语句，请检查","data":[]}`
+	var rresp queryExplainResponse
+	if err := json.Unmarshal([]byte(rejected), &rresp); err != nil {
+		t.Fatalf("unmarshal rejected envelope: %v", err)
+	}
+	if rresp.Status != 1 || rresp.Msg == "" {
+		t.Fatalf("rejected status/msg = %d/%q, want 1/non-empty", rresp.Status, rresp.Msg)
 	}
 }
 

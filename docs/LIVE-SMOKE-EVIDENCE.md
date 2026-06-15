@@ -148,6 +148,40 @@ resource groups. With an unassociated instance Archery returns
 `{"status":1,"msg":"你所在组未关联该实例","data":[]}`; this is an Archery
 authorization config, not a CLI defect.
 
+## 2026-06-15 — `query` group, session path (v1.8.5)
+
+Full live verification of the `query` command group against
+`hhyo/archery:v1.8.5` on `localhost:9123` (= company production version), using
+a superuser (`cli_verify`) in session mode (the default). Credentials supplied
+via `ARCHERY_CLI_URL`/`USERNAME`/`PASSWORD`; each call performs the Django form
+login (GET `/login/` → POST `/authenticate/`) then the AJAX request with
+`X-CSRFToken`. No credentials, hostnames, or real query contents reproduced
+here.
+
+### Result by command
+
+| Command | Mode | Result |
+|---|---|---|
+| `query log` | **live (read)** | PASS — offset envelope (`count`/`has_more`/`items`) and `total` agree; `sql`/`alias` tagged `_untrusted`; `--star` filter reflects favorite state. `username` is empty because v1.8.5's `_querylog` returns a blank `user_display` (server data, not a CLI defect). |
+| `query explain` | **live (read)** | PASS — `EXPLAIN SELECT 1` returns the zipped plan (`plan[]` of `{col:val}`, `_untrusted`); a non-EXPLAIN statement now surfaces the server reason. Required a CLI fix (see below). |
+| `query run` | **live (high-risk write)** | PASS — `--dangerous` gate refuses even `--dry-run` without it (`E_CONFIRMATION_REQUIRED`); dry-run emits `preview` + `confirm_token`; confirmed real `SELECT` returns `columns`/`rows`/`row_count` with `rows` tagged `_untrusted`. Batch `--instances` aggregates `items[]` + `summary`; text format renders. SELECT-only, no DB state changed. |
+| `query favorite` | **live (write)** | PASS — dry-run preview + `confirm_token`; confirmed star (with `--alias`) visible via `query log --star` (`favorite:true`); unstarred afterward to leave the env clean (`--star` count back to 0). |
+| `query generate` | **contract (gated)** | PASS — fails fast with `E_NOT_FOUND` (exit 3); confirmed server-side `POST /query/generate_sql/` returns HTTP 404 on v1.8.5, so the gate matches reality. |
+
+### Defect found and fixed by this run
+
+1. **`query explain` buried the server reason on rejection.** On a non-EXPLAIN
+   statement the view returns `{"status":1,"msg":"仅支持explain开头的语句…","data":[]}`
+   — `data` is an empty **array**, but the CLI decoded `data` straight into the
+   `{column_list, rows}` object struct, so JSON unmarshal failed first and the
+   user saw `cannot unmarshal array into … queryExplainDataSet` instead of the
+   real message. Fixed by decoding `data` as `json.RawMessage` and binding it to
+   the typed struct only **after** the `status` check passes (the
+   `json.RawMessage` deferred-decode pattern already used by `dict`/`instance`/
+   `workflow`). Success path (object) unchanged; rejection path now surfaces
+   `msg`. Covered by `TestQueryExplainResponseDecode` (now exercises both the
+   object success shape and the `data:[]` rejection envelope).
+
 ## Reproduce
 
 ```bash
