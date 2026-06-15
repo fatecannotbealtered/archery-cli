@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/fatecannotbealtered/archery-cli/internal/output"
@@ -12,7 +13,7 @@ import (
 
 var dictCmd = &cobra.Command{
 	Use:   "dict",
-	Short: "Browse data dictionary (tables, views, triggers, procedures)",
+	Short: "Browse data dictionary (tables, table metadata, export)",
 }
 
 func init() {
@@ -87,18 +88,18 @@ var dictTablesCmd = &cobra.Command{
 			params.Set("db_type", dbType)
 		}
 
-		data, err := client.InternalGet(apiCtx(), "/data_dictionary/table_list/?"+params.Encode())
+		data, err := client.SessionGet(apiCtx(), "/data_dictionary/table_list/?"+params.Encode())
 		if err != nil {
 			return handleAPIError(err)
 		}
 
+		items, err := parseDictTableList(data)
+		if err != nil {
+			return err
+		}
+
 		if jsonMode {
 			fields := getFieldsFlag(cmd)
-			var raw any
-			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
-			}
-			items := extractDictRows(raw)
 			if len(fields) > 0 {
 				filtered := make([]map[string]any, len(items))
 				for i, m := range items {
@@ -106,16 +107,17 @@ var dictTablesCmd = &cobra.Command{
 				}
 				items = filtered
 			}
-			output.PrintJSON(map[string]any{
+			out := map[string]any{
 				"instance": instance,
 				"db":       db,
 				"tables":   items,
 				"count":    len(items),
-			})
+			}
+			tagCommonUntrusted(out)
+			output.PrintJSON(out)
 			return nil
 		}
 
-		items := extractDictRowsFromBytes(data)
 		if len(items) == 0 {
 			output.Info("No tables found.")
 			return nil
@@ -150,86 +152,51 @@ var dictTableInfoCmd = &cobra.Command{
 			return err
 		}
 
+		// The v1.8.5 view reads request.GET['tb_name'] (not table_name); sending
+		// the wrong key returns "非法调用！".
 		params := url.Values{
 			"instance_name": {instance},
 			"db_name":       {db},
-			"table_name":    {table},
+			"tb_name":       {table},
 		}
 		if dbType != "" {
 			params.Set("db_type", dbType)
 		}
 
-		data, err := client.InternalGet(apiCtx(), "/data_dictionary/table_info/?"+params.Encode())
+		data, err := client.SessionGet(apiCtx(), "/data_dictionary/table_info/?"+params.Encode())
 		if err != nil {
 			return handleAPIError(err)
 		}
 
+		info, err := parseDictTableInfo(data)
+		if err != nil {
+			return err
+		}
+
 		if jsonMode {
 			fields := getFieldsFlag(cmd)
-			var raw any
-			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
-			}
-			result := extractDictData(raw)
-			if result != nil && len(fields) > 0 {
-				if m, ok := result.(map[string]any); ok {
-					result = output.FilterMap(m, fields)
-				}
+			if len(fields) > 0 {
+				info = output.FilterMap(info, fields)
 			}
 			out := map[string]any{
 				"instance": instance,
 				"db":       db,
 				"table":    table,
-				"info":     result,
+				"info":     info,
 			}
 			tagCommonUntrusted(out)
 			output.PrintJSON(out)
 			return nil
 		}
 
-		// Text mode: print structured info
-		var resp struct {
-			Status int    `json:"status"`
-			Msg    string `json:"msg"`
-			Data   struct {
-				Meta    map[string]any   `json:"meta"`
-				Desc    string           `json:"desc"`
-				Indexes []map[string]any `json:"indexes"`
-			} `json:"data"`
-		}
-		if err := json.Unmarshal(data, &resp); err != nil {
-			return failArg("failed to parse response: " + err.Error())
-		}
-		if resp.Status != 0 && resp.Msg != "" {
-			return failArg(resp.Msg)
-		}
-
+		// Text mode: print structured info as labeled column/row tables.
 		fmt.Println()
 		output.Bold(fmt.Sprintf("  %s.%s.%s", instance, db, table))
 		output.Gray("  ────────────────────────────────────────")
 
-		if resp.Data.Desc != "" {
-			printDictField("Description", resp.Data.Desc)
-		}
-		if len(resp.Data.Meta) > 0 {
-			for k, v := range resp.Data.Meta {
-				printDictField(k, fmt.Sprintf("%v", v))
-			}
-		}
-		if len(resp.Data.Indexes) > 0 {
-			fmt.Println()
-			output.Gray("  Indexes")
-			output.Gray("  ────────────────────────────────────────")
-			for _, idx := range resp.Data.Indexes {
-				name := fmt.Sprintf("%v", idx["name"])
-				cols := fmt.Sprintf("%v", idx["columns"])
-				unique := ""
-				if u, ok := idx["unique"]; ok && u == true {
-					unique = " (unique)"
-				}
-				fmt.Printf("  %s  %s%s\n", output.FormatCyan(name), cols, unique)
-			}
-		}
+		printDictColumnTable("Metadata", info["meta_data"])
+		printDictColumnTable("Columns", info["desc"])
+		printDictColumnTable("Indexes", info["index"])
 		fmt.Println()
 		return nil
 	},
@@ -239,62 +206,9 @@ var dictTableInfoCmd = &cobra.Command{
 
 var dictViewsCmd = &cobra.Command{
 	Use:   "views",
-	Short: "List views in a database",
+	Short: "List views in a database (requires a newer Archery)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		instance, err := requireFlagString(cmd, "instance", "--instance")
-		if err != nil {
-			return err
-		}
-		db, err := requireFlagString(cmd, "db", "--db")
-		if err != nil {
-			return err
-		}
-
-		client, _, _, err := newClient()
-		if err != nil {
-			return err
-		}
-
-		params := url.Values{
-			"instance_name": {instance},
-			"db_name":       {db},
-		}
-
-		data, err := client.InternalGet(apiCtx(), "/data_dictionary/view_list/?"+params.Encode())
-		if err != nil {
-			return handleAPIError(err)
-		}
-
-		if jsonMode {
-			fields := getFieldsFlag(cmd)
-			var raw any
-			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
-			}
-			items := extractDictRows(raw)
-			if len(fields) > 0 {
-				filtered := make([]map[string]any, len(items))
-				for i, m := range items {
-					filtered[i] = output.FilterMap(m, fields)
-				}
-				items = filtered
-			}
-			output.PrintJSON(map[string]any{
-				"instance": instance,
-				"db":       db,
-				"views":    items,
-				"count":    len(items),
-			})
-			return nil
-		}
-
-		items := extractDictRowsFromBytes(data)
-		if len(items) == 0 {
-			output.Info("No views found.")
-			return nil
-		}
-		printDictTable(items, "VIEW")
-		return nil
+		return dictUnavailable(cmd, "views", "view_list")
 	},
 }
 
@@ -302,62 +216,9 @@ var dictViewsCmd = &cobra.Command{
 
 var dictTriggersCmd = &cobra.Command{
 	Use:   "triggers",
-	Short: "List triggers in a database",
+	Short: "List triggers in a database (requires a newer Archery)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		instance, err := requireFlagString(cmd, "instance", "--instance")
-		if err != nil {
-			return err
-		}
-		db, err := requireFlagString(cmd, "db", "--db")
-		if err != nil {
-			return err
-		}
-
-		client, _, _, err := newClient()
-		if err != nil {
-			return err
-		}
-
-		params := url.Values{
-			"instance_name": {instance},
-			"db_name":       {db},
-		}
-
-		data, err := client.InternalGet(apiCtx(), "/data_dictionary/trigger_list/?"+params.Encode())
-		if err != nil {
-			return handleAPIError(err)
-		}
-
-		if jsonMode {
-			fields := getFieldsFlag(cmd)
-			var raw any
-			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
-			}
-			items := extractDictRows(raw)
-			if len(fields) > 0 {
-				filtered := make([]map[string]any, len(items))
-				for i, m := range items {
-					filtered[i] = output.FilterMap(m, fields)
-				}
-				items = filtered
-			}
-			output.PrintJSON(map[string]any{
-				"instance": instance,
-				"db":       db,
-				"triggers": items,
-				"count":    len(items),
-			})
-			return nil
-		}
-
-		items := extractDictRowsFromBytes(data)
-		if len(items) == 0 {
-			output.Info("No triggers found.")
-			return nil
-		}
-		printDictTable(items, "TRIGGER")
-		return nil
+		return dictUnavailable(cmd, "triggers", "trigger_list")
 	},
 }
 
@@ -365,62 +226,9 @@ var dictTriggersCmd = &cobra.Command{
 
 var dictProceduresCmd = &cobra.Command{
 	Use:   "procedures",
-	Short: "List stored procedures in a database",
+	Short: "List stored procedures in a database (requires a newer Archery)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		instance, err := requireFlagString(cmd, "instance", "--instance")
-		if err != nil {
-			return err
-		}
-		db, err := requireFlagString(cmd, "db", "--db")
-		if err != nil {
-			return err
-		}
-
-		client, _, _, err := newClient()
-		if err != nil {
-			return err
-		}
-
-		params := url.Values{
-			"instance_name": {instance},
-			"db_name":       {db},
-		}
-
-		data, err := client.InternalGet(apiCtx(), "/data_dictionary/procedure_list/?"+params.Encode())
-		if err != nil {
-			return handleAPIError(err)
-		}
-
-		if jsonMode {
-			fields := getFieldsFlag(cmd)
-			var raw any
-			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
-			}
-			items := extractDictRows(raw)
-			if len(fields) > 0 {
-				filtered := make([]map[string]any, len(items))
-				for i, m := range items {
-					filtered[i] = output.FilterMap(m, fields)
-				}
-				items = filtered
-			}
-			output.PrintJSON(map[string]any{
-				"instance":   instance,
-				"db":         db,
-				"procedures": items,
-				"count":      len(items),
-			})
-			return nil
-		}
-
-		items := extractDictRowsFromBytes(data)
-		if len(items) == 0 {
-			output.Info("No stored procedures found.")
-			return nil
-		}
-		printDictTable(items, "PROCEDURE")
-		return nil
+		return dictUnavailable(cmd, "procedures", "procedure_list")
 	},
 }
 
@@ -449,7 +257,10 @@ var dictExportCmd = &cobra.Command{
 			"db_name":       {db},
 		}
 
-		data, err := client.InternalGet(apiCtx(), "/data_dictionary/export/?"+params.Encode())
+		// With db_name set the view streams an HTML FileResponse attachment; the
+		// CLI requires --db, so this always returns the table-structure HTML
+		// (never the superuser "exported to downloads/" JSON status branch).
+		data, err := client.SessionGet(apiCtx(), "/data_dictionary/export/?"+params.Encode())
 		if err != nil {
 			return handleAPIError(err)
 		}
@@ -475,77 +286,157 @@ var dictExportCmd = &cobra.Command{
 
 // ─── helpers ───────────────────────────────────────────────────────────────
 
-// extractDictRows extracts row items from internal API response formats.
-func extractDictRows(raw any) []map[string]any {
-	if raw == nil {
-		return nil
-	}
-	if m, ok := raw.(map[string]any); ok {
-		// Try internal: {data: {rows: [...]}}
-		if data, ok := m["data"]; ok {
-			if dm, ok := data.(map[string]any); ok {
-				if rows, ok := dm["rows"]; ok {
-					return extractRows(rows)
-				}
-			}
-		}
-		// Try flat: {rows: [...]}
-		if rows, ok := m["rows"]; ok {
-			return extractRows(rows)
-		}
-		// Try: {data: [...]}
-		if data, ok := m["data"]; ok {
-			if arr, ok := data.([]any); ok {
-				items := make([]map[string]any, 0, len(arr))
-				for _, v := range arr {
-					if item, ok := v.(map[string]any); ok {
-						items = append(items, normalizeAgentMap(item))
-					}
-				}
-				return items
-			}
-		}
-	}
-	// Try direct array
-	if arr, ok := raw.([]any); ok {
-		items := make([]map[string]any, 0, len(arr))
-		for _, v := range arr {
-			if item, ok := v.(map[string]any); ok {
-				items = append(items, normalizeAgentMap(item))
-			}
-		}
-		return items
-	}
-	return nil
+// dictEnvelope is the {status,msg,data} shape returned by every
+// data_dictionary view. data is decoded lazily because its shape differs per
+// endpoint (letter-keyed map for table_list, nested column/row tables for
+// table_info).
+type dictEnvelope struct {
+	Status int             `json:"status"`
+	Msg    string          `json:"msg"`
+	Data   json.RawMessage `json:"data"`
 }
 
-// extractDictRowsFromBytes parses raw JSON bytes into row items.
-func extractDictRowsFromBytes(data []byte) []map[string]any {
-	var raw any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil
+// decodeDictEnvelope parses the common envelope and maps a non-zero status to
+// the server's message (e.g. "Instance.DoesNotExist", "非法调用！").
+func decodeDictEnvelope(data []byte) (dictEnvelope, error) {
+	var env dictEnvelope
+	if err := json.Unmarshal(data, &env); err != nil {
+		return env, failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 	}
-	return extractDictRows(raw)
+	if env.Status != 0 {
+		msg := env.Msg
+		if msg == "" {
+			msg = "data dictionary request failed"
+		}
+		return env, failArg(msg)
+	}
+	return env, nil
 }
 
-// extractDictData extracts the data payload from internal API response.
-func extractDictData(raw any) any {
-	if raw == nil {
-		return nil
+// parseDictTableList flattens the table_list response. v1.8.5 returns
+// data as a map keyed by the table name's first letter, each value a list of
+// [table_name, table_comment] pairs (from get_group_tables_by_db). The result
+// is a flat, name-sorted list of {name, comment} rows.
+func parseDictTableList(data []byte) ([]map[string]any, error) {
+	env, err := decodeDictEnvelope(data)
+	if err != nil {
+		return nil, err
 	}
-	if m, ok := raw.(map[string]any); ok {
-		if data, ok := m["data"]; ok {
-			return normalizeAgentValue(data)
+	if len(env.Data) == 0 {
+		return nil, nil
+	}
+
+	var grouped map[string][][]any
+	if err := json.Unmarshal(env.Data, &grouped); err != nil {
+		return nil, failWithCode("parsing table list: "+err.Error(), ExitNetwork, output.E_SERVER)
+	}
+
+	items := make([]map[string]any, 0)
+	for _, pairs := range grouped {
+		for _, pair := range pairs {
+			row := map[string]any{"name": "", "comment": ""}
+			if len(pair) > 0 {
+				row["name"] = pair[0]
+			}
+			if len(pair) > 1 {
+				row["comment"] = pair[1]
+			}
+			items = append(items, row)
 		}
 	}
-	return normalizeAgentValue(raw)
+	sort.Slice(items, func(i, j int) bool {
+		return fmt.Sprintf("%v", items[i]["name"]) < fmt.Sprintf("%v", items[j]["name"])
+	})
+	return items, nil
 }
 
-// printDictField prints a labeled field for text mode detail output.
-func printDictField(label, value string) {
-	if value != "" {
-		fmt.Printf("  %-14s %s\n", output.FormatGray(label), value)
+// parseDictTableInfo decodes the table_info data payload. Each of meta_data,
+// desc, and index is a {column_list, rows} table; create_sql (mysql only) is a
+// list of [table_name, ddl] rows. The payload is returned as-is (keys
+// preserved) for the JSON envelope, and consumed by printDictColumnTable for
+// text mode.
+func parseDictTableInfo(data []byte) (map[string]any, error) {
+	env, err := decodeDictEnvelope(data)
+	if err != nil {
+		return nil, err
 	}
+	info := map[string]any{}
+	if len(env.Data) == 0 {
+		return info, nil
+	}
+	if err := json.Unmarshal(env.Data, &info); err != nil {
+		return nil, failWithCode("parsing table info: "+err.Error(), ExitNetwork, output.E_SERVER)
+	}
+	return info, nil
+}
+
+// dictUnavailable fails fast for endpoints absent from Archery v1.8.5
+// (view_list, trigger_list, procedure_list). Issuing the request would 404 and
+// read as a transport bug, so the gate reports missing-route semantics instead.
+func dictUnavailable(cmd *cobra.Command, entity, route string) error {
+	// Validate the shared arg contract first so the gate is the only failure
+	// reason once a newer server ships the route.
+	if _, err := requireFlagString(cmd, "instance", "--instance"); err != nil {
+		return err
+	}
+	if _, err := requireFlagString(cmd, "db", "--db"); err != nil {
+		return err
+	}
+	return failWithCode(
+		fmt.Sprintf("dict %s is not available on this Archery server (no /data_dictionary/%s/ route in v1.8.5); upgrade Archery to a version that ships it", entity, route),
+		ExitNotFound, output.E_NOT_FOUND)
+}
+
+// printDictColumnTable renders a {column_list, rows} table from table_info under
+// a heading. rows may be a flat list (single row) or a list of lists.
+func printDictColumnTable(heading string, v any) {
+	tbl, ok := v.(map[string]any)
+	if !ok {
+		return
+	}
+	cols := toStringSlice(tbl["column_list"])
+	rawRows, _ := tbl["rows"].([]any)
+	if len(cols) == 0 || len(rawRows) == 0 {
+		return
+	}
+
+	// A single-row payload (e.g. meta_data) comes back as a flat []any rather
+	// than [][]any; wrap it so both shapes render uniformly.
+	var rows [][]string
+	if _, nested := rawRows[0].([]any); nested {
+		for _, r := range rawRows {
+			rows = append(rows, toStringSlice(r))
+		}
+	} else {
+		rows = append(rows, toStringSlice(rawRows))
+	}
+
+	fmt.Println()
+	output.Gray("  " + heading)
+	output.Gray("  ────────────────────────────────────────")
+	headers := make([]string, len(cols))
+	for i, c := range cols {
+		headers[i] = strings.ToUpper(c)
+	}
+	output.Table(headers, rows)
+}
+
+// toStringSlice coerces a JSON array (or scalar) into a slice of display
+// strings, rendering nil as the empty string.
+func toStringSlice(v any) []string {
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, len(arr))
+	for i, e := range arr {
+		if e == nil {
+			out[i] = ""
+		} else {
+			out[i] = fmt.Sprintf("%v", e)
+		}
+	}
+	return out
 }
 
 // printDictTable prints a generic list of dictionary items as a table.

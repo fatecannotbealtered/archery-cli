@@ -13,6 +13,7 @@ type boundaryCase struct {
 	args    []string
 	write   bool // append --dry-run and expect data.confirm_token
 	noToken bool // write command whose dry-run executes a read-only analysis
+	gated   bool // route absent in v1.8.5: command fails fast with E_NOT_FOUND (exit 3)
 }
 
 var boundaryCases = []boundaryCase{
@@ -55,9 +56,9 @@ var boundaryCases = []boundaryCase{
 	// dict
 	{name: "dict tables", args: []string{"dict", "tables", "--instance", "inst1", "--db", "db1"}},
 	{name: "dict table-info", args: []string{"dict", "table-info", "--instance", "inst1", "--db", "db1", "--table", "t1"}},
-	{name: "dict views", args: []string{"dict", "views", "--instance", "inst1", "--db", "db1"}},
-	{name: "dict triggers", args: []string{"dict", "triggers", "--instance", "inst1", "--db", "db1"}},
-	{name: "dict procedures", args: []string{"dict", "procedures", "--instance", "inst1", "--db", "db1"}},
+	{name: "dict views", gated: true, args: []string{"dict", "views", "--instance", "inst1", "--db", "db1"}},
+	{name: "dict triggers", gated: true, args: []string{"dict", "triggers", "--instance", "inst1", "--db", "db1"}},
+	{name: "dict procedures", gated: true, args: []string{"dict", "procedures", "--instance", "inst1", "--db", "db1"}},
 	{name: "dict export", args: []string{"dict", "export", "--instance", "inst1", "--db", "db1"}},
 
 	// instance
@@ -78,8 +79,8 @@ var boundaryCases = []boundaryCase{
 	{name: "query explain", write: true, noToken: true, args: []string{"query", "explain", "--instance", "inst1", "--db", "db1", "--sql", "select 1", "--dangerous"}},
 	{name: "query log", args: []string{"query", "log"}},
 	{name: "query favorite", write: true, args: []string{"query", "favorite", "1"}},
-	{name: "query generate", write: true, noToken: true, args: []string{
-		"query", "generate", "--instance", "inst1", "--db", "db1", "--table", "t1", "--desc", "count rows", "--dangerous"}},
+	{name: "query generate", gated: true, args: []string{
+		"query", "generate", "--instance", "inst1", "--db", "db1", "--table", "t1", "--desc", "count rows"}},
 
 	// slowquery
 	{name: "slowquery review", args: []string{
@@ -120,6 +121,20 @@ func TestBoundary_AllLeafCommands(t *testing.T) {
 				args = append(args, "--dry-run")
 			}
 			r := runCLI(home, nil, args...)
+
+			// Gated commands have no route in v1.8.5 and must fail fast with an
+			// E_NOT_FOUND envelope (exit 3) instead of touching the upstream.
+			if tc.gated {
+				if r.ExitCode != 3 {
+					t.Fatalf("gated command exit = %d, want 3\nstdout: %s", r.ExitCode, r.Stdout)
+				}
+				env := decodeEnvelope(t, r.Stdout)
+				if env.OK || env.Error == nil || env.Error.Code != "E_NOT_FOUND" {
+					t.Fatalf("gated command wants E_NOT_FOUND envelope, got: %s", r.Stdout)
+				}
+				return
+			}
+
 			data := decodeOK(t, r)
 			if tc.write && !tc.noToken {
 				token, _ := data["confirm_token"].(string)

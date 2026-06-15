@@ -38,8 +38,8 @@ const universalBody = `{
 // pathOverrides maps a request-path prefix to a canned response for parsers
 // the universal body cannot satisfy. Longest prefix wins.
 var pathOverrides = map[string]string{
-	// explain renders data as a row list
-	"/query/explain/": `{"status":0,"msg":"ok","data":[]}`,
+	// explain renders data as a {column_list, rows} table (v1.8.5 shape)
+	"/query/explain/": `{"status":0,"msg":"ok","data":{"column_list":["id","select_type"],"rows":[]}}`,
 	// generate_sql and the optimizers return data as a string payload
 	"/query/generate_sql/": `{"status":0,"msg":"ok","data":"SELECT COUNT(*) FROM t1"}`,
 	"/slowquery/optimize_": `{"status":0,"msg":"ok","data":"-- advice: add an index"}`,
@@ -47,6 +47,14 @@ var pathOverrides = map[string]string{
 	"/binlog/list/": `{"status":0,"msg":"ok","data":[]}`,
 	// my2sql returns data as a list of {sql, binlog_info} rows
 	"/binlog/my2sql/": `{"status":0,"msg":"ok","data":[]}`,
+	// data dictionary: table_list returns a letter-keyed map of [name, comment]
+	// pairs; table_info returns {column_list, rows} tables (v1.8.5 shapes).
+	"/data_dictionary/table_list/": `{"status":0,"data":{"u":[["users","app users"]],"o":[["orders",""]]}}`,
+	"/data_dictionary/table_info/": `{"status":0,"data":{` +
+		`"meta_data":{"column_list":["table_name","engine"],"rows":["users","InnoDB"]},` +
+		`"desc":{"column_list":["col_name","col_type"],"rows":[["id","bigint"],["name","varchar(64)"]]},` +
+		`"index":{"column_list":["col_name","index_name"],"rows":[["id","PRIMARY"]]},` +
+		`"create_sql":[["users","CREATE TABLE users (...)"]]}}`,
 }
 
 func universalMux() http.Handler {
