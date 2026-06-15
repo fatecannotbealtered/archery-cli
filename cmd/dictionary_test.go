@@ -2,6 +2,9 @@ package cmd
 
 import (
 	"testing"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // Payloads below are trimmed captures from Archery v1.8.5
@@ -97,6 +100,27 @@ func TestDictTableInfoUsesTbNameFlag(t *testing.T) {
 	// maps to tb_name in the request.
 	if dictTableInfoCmd.Flags().Lookup("table") == nil {
 		t.Fatal("table-info missing --table flag")
+	}
+}
+
+func TestDictDbTypeRequired(t *testing.T) {
+	// v1.8.5 keys Instance.objects.get on db_type, so tables/table-info must
+	// reject a missing --db-type rather than silently send db_type="" and get
+	// "Instance.DoesNotExist".
+	for _, c := range []struct {
+		cmd  *cobra.Command
+		args []string
+	}{
+		{dictTablesCmd, []string{"--instance", "i", "--db", "d"}},
+		{dictTableInfoCmd, []string{"--instance", "i", "--db", "d", "--table", "t"}},
+	} {
+		c.cmd.Flags().VisitAll(func(f *pflag.Flag) { _ = f.Value.Set(f.DefValue) })
+		if err := c.cmd.Flags().Parse(c.args); err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if err := c.cmd.RunE(c.cmd, nil); err == nil {
+			t.Errorf("%s: expected error for missing --db-type", c.cmd.Use)
+		}
 	}
 }
 
