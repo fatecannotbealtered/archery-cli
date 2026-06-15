@@ -84,12 +84,12 @@ var referenceLeafSchemas = map[string]referenceLeaf{
 	"diagnostic transactions": {schema: "diagnostic_row_list", examples: []string{"archery-cli diagnostic transactions --instance prod-mysql --compact"}},
 
 	// ─── dict ─────────────────────────────────────────────────────────────────
-	"dict tables":     {schema: "dict_tables", examples: []string{"archery-cli dict tables --instance prod-mysql --db app --compact"}},
-	"dict table-info": {schema: "dict_table_info", examples: []string{"archery-cli dict table-info --instance prod-mysql --db app --table users --compact"}},
-	"dict views":      {schema: "dict_views", examples: []string{"archery-cli dict views --instance prod-mysql --db app --compact"}},
-	"dict triggers":   {schema: "dict_triggers", examples: []string{"archery-cli dict triggers --instance prod-mysql --db app --compact"}},
-	"dict procedures": {schema: "dict_procedures", examples: []string{"archery-cli dict procedures --instance prod-mysql --db app --compact"}},
-	"dict export":     {schema: "dict_export", examples: []string{"archery-cli dict export --instance prod-mysql --db app --compact"}},
+	"dict tables":     {schema: "dict_tables", examples: []string{"archery-cli dict tables --instance prod-mysql --db app --db-type mysql --compact"}},
+	"dict table-info": {schema: "dict_table_info", examples: []string{"archery-cli dict table-info --instance prod-mysql --db app --table users --db-type mysql --compact"}},
+	"dict views":      {schema: "dict_unavailable", examples: []string{"archery-cli dict views --instance prod-mysql --db app --compact"}},
+	"dict triggers":   {schema: "dict_unavailable", examples: []string{"archery-cli dict triggers --instance prod-mysql --db app --compact"}},
+	"dict procedures": {schema: "dict_unavailable", examples: []string{"archery-cli dict procedures --instance prod-mysql --db app --compact"}},
+	"dict export":     {schema: "dict_export", examples: []string{"archery-cli dict export --instance prod-mysql --db app --raw"}},
 
 	// ─── user ─────────────────────────────────────────────────────────────────
 	"user list":            {schema: "user_list", examples: []string{"archery-cli user list --limit 20 --compact"}},
@@ -176,12 +176,16 @@ func referenceSchemas() map[string]refDataSchema {
 		"diagnostic_raw":      {Shape: "object", Fields: []string{"<upstream trx-and-locks response>"}},
 
 		// ─── dict ─────────────────────────────────────────────────────────────
-		"dict_tables":     {Shape: "object", Fields: []string{"instance", "db", "tables", "count"}},
-		"dict_views":      {Shape: "object", Fields: []string{"instance", "db", "views", "count"}},
-		"dict_triggers":   {Shape: "object", Fields: []string{"instance", "db", "triggers", "count"}},
-		"dict_procedures": {Shape: "object", Fields: []string{"instance", "db", "procedures", "count"}},
-		"dict_table_info": {Shape: "object", Fields: []string{"instance", "db", "table", "info"}, UntrustedFields: []string{"info"}},
+		// table_list returns data as a letter-keyed map of [name, comment] pairs
+		// (get_group_tables_by_db); the CLI flattens it to {name, comment} rows.
+		"dict_tables": {Shape: "object", Fields: []string{"instance", "db", "tables", "tables[].name", "tables[].comment", "count"}, UntrustedFields: []string{"tables[].comment"}},
+		// table_info.data carries {column_list, rows} tables: meta_data, desc,
+		// index, plus create_sql ([[name, ddl]], mysql only).
+		"dict_table_info": {Shape: "object", Fields: []string{"instance", "db", "table", "info", "info.meta_data", "info.desc", "info.index", "info.create_sql"}, UntrustedFields: []string{"info"}},
 		"dict_export":     {Shape: "object", Fields: []string{"instance", "db", "format", "content"}, UntrustedFields: []string{"content"}},
+		// views/triggers/procedures have no route in v1.8.5; the command gates
+		// with E_NOT_FOUND instead of issuing a request.
+		"dict_unavailable": {Shape: "object", Fields: []string{"<gated: E_NOT_FOUND, no v1.8.5 route>"}},
 
 		// ─── user ─────────────────────────────────────────────────────────────
 		"user_list":           {Shape: "list", Fields: append(append([]string{}, listEnvelopeFields...), "id", "username", "isActive", "display", "email", "isStaff")},
