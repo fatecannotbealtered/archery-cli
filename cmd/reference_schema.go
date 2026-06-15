@@ -72,7 +72,7 @@ var referenceLeafSchemas = map[string]referenceLeaf{
 	"slowquery optimize": {schema: "slowquery_optimize", examples: []string{"archery-cli slowquery optimize --instance prod-mysql --db app --sql 'SELECT * FROM users' --tool soar --compact"}},
 
 	// ─── binlog ───────────────────────────────────────────────────────────────
-	"binlog list":  {schema: "binlog_raw", examples: []string{"archery-cli binlog list --instance prod-mysql --compact"}},
+	"binlog list":  {schema: "binlog_list", examples: []string{"archery-cli binlog list --instance prod-mysql --compact"}},
 	"binlog parse": {schema: "binlog_parse", examples: []string{"archery-cli binlog parse --instance prod-mysql --start-file mysql-bin.000123 --dry-run --compact", "archery-cli binlog parse --instance prod-mysql --start-file mysql-bin.000123 --confirm <confirm_token> --compact"}},
 	"binlog purge": {schema: "binlog_purge", examples: []string{"archery-cli binlog purge --instance 1 --binlog mysql-bin.000100 --dangerous --dry-run --compact", "archery-cli binlog purge --instance 1 --binlog mysql-bin.000100 --dangerous --confirm <confirm_token> --compact"}},
 
@@ -166,8 +166,8 @@ func referenceSchemas() map[string]refDataSchema {
 		"slowquery_optimize": {Shape: "object", Fields: []string{"tool", "result"}, UntrustedFields: []string{"result"}},
 
 		// ─── binlog ───────────────────────────────────────────────────────────
-		"binlog_raw":   {Shape: "object", Fields: []string{"<upstream binlog list response>"}},
-		"binlog_parse": {Shape: "object", Fields: []string{"data"}, UntrustedFields: []string{"data.sqls", "data.full_sqls"}},
+		"binlog_list":  {Shape: "object", Fields: []string{"instance", "data"}, UntrustedFields: []string{"data"}},
+		"binlog_parse": {Shape: "object", Fields: []string{"instance", "rollback", "count", "sqls"}, UntrustedFields: []string{"sqls"}},
 		"binlog_purge": {Shape: "object", Fields: []string{"purged", "instance", "binlog"}},
 
 		// ─── diagnostic ───────────────────────────────────────────────────────

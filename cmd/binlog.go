@@ -1,9 +1,7 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/url"
 	"strings"
 
 	"github.com/fatecannotbealtered/archery-cli/internal/api"
@@ -34,6 +32,7 @@ func init() {
 	binlogParseCmd.Flags().String("schemas", "", "Filter by schema names (comma-separated)")
 	binlogParseCmd.Flags().StringSlice("tables", nil, "Filter by table names")
 	binlogParseCmd.Flags().StringSlice("sql-types", nil, "Filter by SQL types (e.g. INSERT,UPDATE,DELETE)")
+	binlogParseCmd.Flags().Int("num", 0, "Max number of statements to return (server default 30)")
 	binlogParseCmd.Flags().Bool("rollback", false, "Generate rollback SQL")
 	binlogParseCmd.Flags().Bool("save-sql", false, "Save SQL to file on server")
 	binlogParseCmd.Flags().Int("threads", 0, "Number of parsing threads")
@@ -65,68 +64,51 @@ var binlogListCmd = &cobra.Command{
 			return err
 		}
 
-		form := url.Values{
-			"instance_name": {instance},
-		}
-
-		data, err := client.InternalPost(apiCtx(), "/binlog/list/", form)
+		res, err := client.Binlog.List(apiCtx(), instance)
 		if err != nil {
 			return handleAPIError(err)
 		}
+		if res.Status != 0 {
+			return failArg(binlogMsg(res.Msg, "listing binlogs failed"))
+		}
 
 		if jsonMode {
-			var raw any
-			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
-			}
-			output.PrintJSON(normalizeAgentValue(raw))
+			output.PrintJSON(map[string]any{
+				"instance": instance,
+				"data":     normalizeAgentValue(res.Data),
+			})
 			return nil
 		}
 
-		// Text mode
-		var resp struct {
-			Status int              `json:"status"`
-			Msg    string           `json:"msg"`
-			Data   []map[string]any `json:"data"`
-		}
-		if err := json.Unmarshal(data, &resp); err != nil {
-			return failArg("failed to parse binlog list response: " + err.Error())
-		}
-		if resp.Status != 0 && resp.Msg != "" {
-			return failArg(resp.Msg)
-		}
-		if len(resp.Data) == 0 {
+		if len(res.Data) == 0 {
 			output.Info("No binlog files found.")
 			return nil
 		}
+		// Column set varies by MySQL version; derive headers from the first row.
 		var headers []string
-		for k := range resp.Data[0] {
-			headers = append(headers, strings.ToUpper(k))
+		for k := range res.Data[0] {
+			headers = append(headers, k)
 		}
-		rows := make([][]string, len(resp.Data))
-		for i, row := range resp.Data {
+		rows := make([][]string, len(res.Data))
+		for i, row := range res.Data {
 			cells := make([]string, len(headers))
 			for j, h := range headers {
-				key := strings.ToLower(h)
-				if v, ok := row[key]; ok {
+				if v, ok := row[h]; ok {
 					cells[j] = fmt.Sprintf("%v", v)
 				}
 			}
 			rows[i] = cells
 		}
-		output.Table(headers, rows)
+		upper := make([]string, len(headers))
+		for i, h := range headers {
+			upper[i] = strings.ToUpper(h)
+		}
+		output.Table(upper, rows)
 		return nil
 	},
 }
 
 // ─── binlog parse ──────────────────────────────────────────────────────────
-
-// BinlogParseOutput is the structured output for binlog parse results.
-type BinlogParseOutput struct {
-	SQLs     []string `json:"sqls,omitempty"`
-	Rollback bool     `json:"rollback"`
-	FullSQLs []string `json:"full_sqls,omitempty"`
-}
 
 var binlogParseCmd = &cobra.Command{
 	Use:   "parse",
@@ -142,13 +124,16 @@ var binlogParseCmd = &cobra.Command{
 		startPos, _ := cmd.Flags().GetInt("start-pos")
 		endPos, _ := cmd.Flags().GetInt("end-pos")
 		startTime, _ := cmd.Flags().GetString("start-time")
-		endTime, _ := cmd.Flags().GetString("end-time")
+		stopTime, _ := cmd.Flags().GetString("end-time")
 		schemas, _ := cmd.Flags().GetString("schemas")
 		tables, _ := cmd.Flags().GetStringSlice("tables")
 		sqlTypes, _ := cmd.Flags().GetStringSlice("sql-types")
+		num, _ := cmd.Flags().GetInt("num")
 		rollback, _ := cmd.Flags().GetBool("rollback")
 		saveSQL, _ := cmd.Flags().GetBool("save-sql")
 		threads, _ := cmd.Flags().GetInt("threads")
+
+		schemaList := nonEmptyCSV(schemas)
 
 		detail := map[string]any{
 			"instance": instance,
@@ -169,17 +154,20 @@ var binlogParseCmd = &cobra.Command{
 		if startTime != "" {
 			detail["startTime"] = startTime
 		}
-		if endTime != "" {
-			detail["endTime"] = endTime
+		if stopTime != "" {
+			detail["stopTime"] = stopTime
 		}
-		if schemas != "" {
-			detail["schemas"] = schemas
+		if len(schemaList) > 0 {
+			detail["schemas"] = schemaList
 		}
 		if len(tables) > 0 {
 			detail["tables"] = tables
 		}
 		if len(sqlTypes) > 0 {
 			detail["sqlTypes"] = sqlTypes
+		}
+		if num > 0 {
+			detail["num"] = num
 		}
 		if saveSQL {
 			detail["saveSql"] = true
@@ -196,85 +184,45 @@ var binlogParseCmd = &cobra.Command{
 			return err
 		}
 
-		form := url.Values{
-			"instance_name": {instance},
-		}
-		if startFile != "" {
-			form.Set("start_file", startFile)
-		}
-		if endFile != "" {
-			form.Set("end_file", endFile)
-		}
-		if startPos > 0 {
-			form.Set("start_pos", fmt.Sprintf("%d", startPos))
-		}
-		if endPos > 0 {
-			form.Set("end_pos", fmt.Sprintf("%d", endPos))
-		}
-		if startTime != "" {
-			form.Set("start_time", startTime)
-		}
-		if endTime != "" {
-			form.Set("end_time", endTime)
-		}
-		if schemas != "" {
-			form.Set("schemas", schemas)
-		}
-		if len(tables) > 0 {
-			form.Set("tables", strings.Join(tables, ","))
-		}
-		if len(sqlTypes) > 0 {
-			form.Set("sql_type", strings.Join(sqlTypes, ","))
-		}
-		if rollback {
-			form.Set("rollback", "true")
-		}
-		if saveSQL {
-			form.Set("save_sql", "true")
-		}
-		if threads > 0 {
-			form.Set("threads", fmt.Sprintf("%d", threads))
-		}
-
-		data, err := client.InternalPost(apiCtx(), "/binlog/my2sql/", form)
+		res, err := client.Binlog.Parse(apiCtx(), api.BinlogParseParams{
+			InstanceName: instance,
+			StartFile:    startFile,
+			EndFile:      endFile,
+			StartPos:     startPos,
+			EndPos:       endPos,
+			StartTime:    startTime,
+			StopTime:     stopTime,
+			Schemas:      schemaList,
+			Tables:       tables,
+			SQLTypes:     sqlTypes,
+			Num:          num,
+			Threads:      threads,
+			Rollback:     rollback,
+			SaveSQL:      saveSQL,
+		})
 		if err != nil {
 			return handleAPIError(err)
 		}
+		if res.Status != 0 {
+			return failArg(binlogMsg(res.Msg, "parsing binlog failed"))
+		}
+
+		sqls := make([]string, len(res.Data))
+		for i, row := range res.Data {
+			sqls[i] = row.SQL
+		}
 
 		if jsonMode {
-			var raw any
-			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
-			}
-			if m, ok := raw.(map[string]any); ok {
-				if dataMap, ok := m["data"].(map[string]any); ok {
-					api.TagUntrusted(dataMap, "sqls", "full_sqls")
-				}
-			}
-			output.PrintJSON(normalizeAgentValue(raw))
+			output.PrintJSON(map[string]any{
+				"instance":   instance,
+				"rollback":   rollback,
+				"count":      len(sqls),
+				"sqls":       sqls,
+				"_untrusted": []string{"sqls"},
+			})
 			return nil
 		}
 
-		// Text mode
-		var resp struct {
-			Status int    `json:"status"`
-			Msg    string `json:"msg"`
-			Data   struct {
-				SQLs     []string `json:"sqls"`
-				FullSQLs []string `json:"full_sqls"`
-			} `json:"data"`
-		}
-		if err := json.Unmarshal(data, &resp); err != nil {
-			return failArg("failed to parse binlog response: " + err.Error())
-		}
-		if resp.Status != 0 && resp.Msg != "" {
-			return failArg(resp.Msg)
-		}
-
-		sqls := resp.Data.SQLs
-		if len(sqls) == 0 {
-			sqls = resp.Data.FullSQLs
-		}
 		if len(sqls) == 0 {
 			output.Info("No SQL statements found in binlog.")
 			return nil
@@ -315,21 +263,17 @@ var binlogPurgeCmd = &cobra.Command{
 			return err
 		}
 
-		form := url.Values{
-			"instance_id": {instance},
-			"binlog":      {binlogFile},
-		}
-
-		data, err := client.InternalPost(apiCtx(), "/binlog/del_log/", form)
+		res, err := client.Binlog.Purge(apiCtx(), instance, binlogFile)
 		if err != nil {
 			return handleAPIError(err)
 		}
+		// The view returns status 1 (no binlog given) or 2 (purge SQL failed)
+		// on failure; only 0 is success.
+		if res.Status != 0 {
+			return failArg(binlogMsg(res.Msg, "purging binlog failed"))
+		}
 
 		if jsonMode {
-			var raw any
-			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
-			}
 			output.PrintJSON(map[string]any{
 				"purged":   true,
 				"instance": instance,
@@ -341,4 +285,25 @@ var binlogPurgeCmd = &cobra.Command{
 		output.Success(fmt.Sprintf("Binlog %s purged from instance %s", binlogFile, instance))
 		return nil
 	},
+}
+
+// binlogMsg returns the server-provided message, or a fallback when the server
+// left it empty.
+func binlogMsg(msg, fallback string) string {
+	if strings.TrimSpace(msg) == "" {
+		return fallback
+	}
+	return msg
+}
+
+// nonEmptyCSV splits a comma-separated list and drops empty segments so the
+// my2sql view's getlist('only_schemas') never receives a stray "".
+func nonEmptyCSV(s string) []string {
+	var out []string
+	for _, part := range splitCSV(s) {
+		if strings.TrimSpace(part) != "" {
+			out = append(out, strings.TrimSpace(part))
+		}
+	}
+	return out
 }

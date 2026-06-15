@@ -441,18 +441,8 @@ type TransactionInfo struct {
 }
 
 // ===== Binlog =====
-
-// BinlogFile represents a MySQL binlog file entry.
-type BinlogFile struct {
-	LogName  string `json:"log_name"`
-	FileSize int64  `json:"file_size"`
-}
-
-// BinlogParseResult holds the parsed binlog events.
-type BinlogParseResult struct {
-	BinlogInfo string `json:"binlog_info"`
-	SqlLog     string `json:"sql_log"`
-}
+//
+// Binlog request/response types live in binlog.go alongside the BinlogAPI.
 
 // ===== Archive =====
 
