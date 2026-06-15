@@ -198,33 +198,62 @@ func waitForRetry(ctx context.Context, attempt int, statusCode int, header http.
 	}
 }
 
+// Transport modes mirror config.ModeSession / config.ModeJWT. Session is the
+// default: works for ordinary accounts via Archery's AJAX endpoints + Django
+// session cookie. JWT is the opt-in REST transport.
+const (
+	ModeSession = "session"
+	ModeJWT     = "jwt"
+)
+
 // Client wraps the Archery API HTTP client.
 type Client struct {
 	host         string
+	mode         string
 	accessToken  string
 	refreshToken string
 	httpClient   *http.Client
 	Auth         *AuthAPI
 	Workflows    *WorkflowAPI
 
-	// Session-mode credentials for Archery's legacy Django web endpoints
-	// (e.g. /data_dictionary/, /db_diagnostic/): JWT alone cannot authenticate
-	// them — they need a session cookie from a form login. ensureSession
-	// performs that login lazily on the first internal-mode request.
+	// Session-mode credentials for Archery's Django web endpoints (the default
+	// transport): JWT alone cannot authenticate them — they need a session
+	// cookie from a form login. ensureSession performs that login lazily on the
+	// first session request, unless cached cookies were injected first.
 	sessionUser  string
 	sessionPass  string
 	sessionReady bool
 }
 
-// NewClient creates a new API client using global HTTP options.
+// NewClient creates a new API client using global HTTP options. The transport
+// defaults to session mode; callers switch to JWT via SetMode(ModeJWT).
 func NewClient(host string) *Client {
 	c := &Client{
 		host:       strings.TrimRight(host, "/"),
+		mode:       ModeSession,
 		httpClient: newHTTPClient(globalHTTP),
 	}
 	c.Auth = &AuthAPI{client: c}
 	c.Workflows = &WorkflowAPI{client: c}
 	return c
+}
+
+// SetMode selects the transport: ModeSession (default) or ModeJWT. Any other
+// value falls back to session.
+func (c *Client) SetMode(mode string) {
+	if strings.EqualFold(strings.TrimSpace(mode), ModeJWT) {
+		c.mode = ModeJWT
+		return
+	}
+	c.mode = ModeSession
+}
+
+// Mode returns the current transport mode.
+func (c *Client) Mode() string {
+	if c.mode == "" {
+		return ModeSession
+	}
+	return c.mode
 }
 
 // SetTokens sets the access and refresh tokens for REST-mode requests.
@@ -240,6 +269,49 @@ func (c *Client) SetTokens(accessToken, refreshToken string) {
 func (c *Client) SetSessionCredentials(username, password string) {
 	c.sessionUser = username
 	c.sessionPass = password
+}
+
+// InjectSessionCookies seeds the cookie jar with cached Django cookies so that
+// session requests can skip the interactive form login. Empty values are
+// ignored. When a sessionid is present the client is marked ready, avoiding a
+// redundant /authenticate/ round-trip on the first call.
+func (c *Client) InjectSessionCookies(sessionID, csrfToken string) {
+	u, err := url.Parse(c.host)
+	if err != nil {
+		return
+	}
+	var cookies []*http.Cookie
+	if sessionID != "" {
+		cookies = append(cookies, &http.Cookie{Name: "sessionid", Value: sessionID, Path: "/"})
+	}
+	if csrfToken != "" {
+		cookies = append(cookies, &http.Cookie{Name: "csrftoken", Value: csrfToken, Path: "/"})
+	}
+	if len(cookies) == 0 {
+		return
+	}
+	c.httpClient.Jar.SetCookies(u, cookies)
+	if sessionID != "" {
+		c.sessionReady = true
+	}
+}
+
+// ExportSessionCookies returns the current sessionid and csrftoken from the jar,
+// for persistence after a successful login. Either value may be empty.
+func (c *Client) ExportSessionCookies() (sessionID, csrfToken string) {
+	u, err := url.Parse(c.host)
+	if err != nil {
+		return "", ""
+	}
+	for _, ck := range c.httpClient.Jar.Cookies(u) {
+		switch ck.Name {
+		case "sessionid":
+			sessionID = ck.Value
+		case "csrftoken":
+			csrfToken = ck.Value
+		}
+	}
+	return sessionID, csrfToken
 }
 
 // csrfTokenFromJar returns the Django csrftoken cookie value, if present.
@@ -713,6 +785,18 @@ func (c *Client) Delete(ctx context.Context, path string) error {
 }
 
 // ─── Convenience verbs (Internal mode) ──────────────────────────────────────
+
+// SessionGet sends a GET request with Django session cookie auth.
+// Canonical name for the default (session) transport; InternalGet is kept as an
+// alias used throughout the command layer.
+func (c *Client) SessionGet(ctx context.Context, path string) ([]byte, error) {
+	return c.InternalGet(ctx, path)
+}
+
+// SessionPost sends a form-encoded POST with Django session cookie auth.
+func (c *Client) SessionPost(ctx context.Context, path string, form url.Values) ([]byte, error) {
+	return c.InternalPost(ctx, path, form)
+}
 
 // InternalGet sends a GET request with session cookie auth.
 func (c *Client) InternalGet(ctx context.Context, path string) ([]byte, error) {

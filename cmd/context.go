@@ -31,18 +31,22 @@ func init() {
 
 // contextRegion is the JSON shape for a region in the context output.
 type contextRegion struct {
-	Name      string `json:"name"`
-	URL       string `json:"url"`
-	Username  string `json:"username,omitempty"`
-	HasTokens bool   `json:"hasTokens"`
-	IsActive  bool   `json:"isActive"`
+	Name       string `json:"name"`
+	URL        string `json:"url"`
+	Mode       string `json:"mode"`
+	Username   string `json:"username,omitempty"`
+	HasTokens  bool   `json:"hasTokens"`
+	HasSession bool   `json:"hasSession"`
+	IsActive   bool   `json:"isActive"`
 }
 
 // contextCredentials reports credential status without leaking secrets.
 type contextCredentials struct {
-	Configured bool `json:"configured"`
-	HasTokens  bool `json:"hasTokens,omitempty"`
-	HasBasic   bool `json:"hasBasic,omitempty"`
+	Configured bool   `json:"configured"`
+	Mode       string `json:"mode,omitempty"`
+	HasTokens  bool   `json:"hasTokens,omitempty"`
+	HasSession bool   `json:"hasSession,omitempty"`
+	HasBasic   bool   `json:"hasBasic,omitempty"`
 }
 
 // contextResult is the top-level JSON envelope.
@@ -87,24 +91,30 @@ func runContext(cmd *cobra.Command, _ []string) error {
 
 	for name, r := range cfg.Regions {
 		result.Regions = append(result.Regions, contextRegion{
-			Name:      name,
-			URL:       r.URL,
-			Username:  r.Username,
-			HasTokens: r.AccessToken != "",
-			IsActive:  name == activeRegion,
+			Name:       name,
+			URL:        r.URL,
+			Mode:       r.EffectiveMode(),
+			Username:   r.Username,
+			HasTokens:  r.AccessToken != "",
+			HasSession: r.SessionID != "",
+			IsActive:   name == activeRegion,
 		})
 	}
 
 	// Check if the active region is properly configured
 	if region, ok := cfg.Regions[activeRegion]; ok {
+		mode := effectiveMode(region)
 		hasTokens := region.AccessToken != ""
+		hasSession := region.SessionID != ""
 		hasBasic := region.Username != "" && region.Password != ""
 		result.Credentials = contextCredentials{
-			Configured: region.URL != "" && (hasTokens || hasBasic),
+			Configured: region.URL != "" && (hasTokens || hasSession || hasBasic),
+			Mode:       mode,
 			HasTokens:  hasTokens,
+			HasSession: hasSession,
 			HasBasic:   hasBasic,
 		}
-		if region.URL == "" || (region.AccessToken == "" && (region.Username == "" || region.Password == "")) {
+		if region.URL == "" || (!hasTokens && !hasSession && (region.Username == "" || region.Password == "")) {
 			return renderContext(result, true)
 		}
 	} else {
@@ -145,15 +155,19 @@ func renderContext(r *contextResult, unauthenticated bool) error {
 			if reg.IsActive {
 				mark = " (active)"
 			}
-			tokensStatus := "no tokens"
-			if reg.HasTokens {
-				tokensStatus = "tokens cached"
+			credStatus := "no credentials"
+			if reg.Mode == config.ModeJWT {
+				if reg.HasTokens {
+					credStatus = "tokens cached"
+				}
+			} else if reg.HasSession {
+				credStatus = "session cached"
 			}
 			userInfo := ""
 			if reg.Username != "" {
 				userInfo = ", user=" + reg.Username
 			}
-			output.Gray(fmt.Sprintf("    %s%s: %s [%s%s]", reg.Name, mark, reg.URL, tokensStatus, userInfo))
+			output.Gray(fmt.Sprintf("    %s%s: %s [mode=%s, %s%s]", reg.Name, mark, reg.URL, reg.Mode, credStatus, userInfo))
 		}
 	}
 	fmt.Println()

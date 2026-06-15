@@ -181,18 +181,28 @@ func doAuthLogin(cfg *config.Config, regionName, regionURL, username, password s
 		cfg.Regions = make(map[string]config.RegionConfig)
 	}
 
+	// Resolve transport mode: --mode flag wins, else the region's saved mode,
+	// else the default (session).
+	mode := effectiveMode(cfg.Regions[regionName])
+
 	detail := map[string]any{
 		"region":   regionName,
 		"url":      regionURL,
 		"username": username,
+		"mode":     mode,
 	}
 	confirmPayload := map[string]any{
 		"region":   regionName,
 		"url":      regionURL,
 		"username": username,
 		"password": password,
+		"mode":     mode,
 	}
-	if markDryRunOrConfirmWithPayload("login and cache JWT tokens", detail, confirmPayload) {
+	action := "log in via session cookie and cache it"
+	if mode == config.ModeJWT {
+		action = "log in and cache JWT tokens"
+	}
+	if markDryRunOrConfirmWithPayload(action, detail, confirmPayload) {
 		return nil
 	}
 	if !config.KeyringAvailable() {
@@ -202,25 +212,47 @@ func doAuthLogin(cfg *config.Config, regionName, regionURL, username, password s
 	if !jsonMode {
 		output.Gray("  Authenticating...")
 	}
-	client := api.NewClient(regionURL)
-	accessToken, refreshToken, err := client.Auth.Login(apiCtx(), username, password)
-	if err != nil {
-		return handleAPIError(err)
-	}
 
-	// Update config with tokens
+	client := api.NewClient(regionURL)
+	client.SetMode(mode)
+
 	region := cfg.Regions[regionName]
 	region.URL = regionURL
-	region.AccessToken = accessToken
-	region.RefreshToken = refreshToken
 	region.Username = username
 	region.Password = ""
+	region.Mode = mode
+
+	if mode == config.ModeJWT {
+		accessToken, refreshToken, err := client.Auth.Login(apiCtx(), username, password)
+		if err != nil {
+			return handleAPIError(err)
+		}
+		region.AccessToken = accessToken
+		region.RefreshToken = refreshToken
+		region.SessionID = ""
+		region.CSRFToken = ""
+	} else {
+		sessionID, csrfToken, err := client.Auth.LoginWithSession(apiCtx(), username, password)
+		if err != nil {
+			return handleAPIError(err)
+		}
+		region.SessionID = sessionID
+		region.CSRFToken = csrfToken
+		region.AccessToken = ""
+		region.RefreshToken = ""
+	}
+
 	cfg.Regions[regionName] = region
 	if cfg.DefaultRegion == "" {
 		cfg.DefaultRegion = regionName
 	}
 	if err := config.Save(cfg); err != nil {
-		return failWithCode("failed to save tokens: "+err.Error(), ExitNetwork, output.E_NETWORK)
+		return failWithCode("failed to save credentials: "+err.Error(), ExitNetwork, output.E_NETWORK)
+	}
+
+	cachedLabel := "session cookie cached"
+	if mode == config.ModeJWT {
+		cachedLabel = "JWT tokens cached"
 	}
 
 	if jsonMode {
@@ -228,18 +260,19 @@ func doAuthLogin(cfg *config.Config, regionName, regionURL, username, password s
 			"status":  "ok",
 			"region":  regionName,
 			"url":     regionURL,
-			"message": "JWT tokens cached successfully",
+			"mode":    mode,
+			"message": cachedLabel + " successfully",
 		})
 		return nil
 	}
 
 	fmt.Println()
-	output.Success(fmt.Sprintf("Logged in to %s (region: %s)", regionURL, regionName))
+	output.Success(fmt.Sprintf("Logged in to %s (region: %s, mode: %s)", regionURL, regionName, mode))
 	storeLabel := config.CredentialStoreLabel(cfg)
 	if storeLabel == "" {
 		storeLabel = config.CredentialStoreNone
 	}
-	output.Info(fmt.Sprintf("JWT tokens cached (%s)", storeLabel))
+	output.Info(fmt.Sprintf("%s (%s)", cachedLabel, storeLabel))
 	fmt.Println()
 	output.Gray("  Try: archery-cli doctor")
 	fmt.Println()
@@ -263,12 +296,15 @@ func runAuthLogout(_ *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	// Clear tokens from keyring and any in-memory legacy fields.
+	// Clear both JWT tokens and session cookies from keyring + in-memory fields.
 	ts := config.NewTokenStore()
 	_ = ts.DeleteTokens(regionName, region.Username)
+	_ = ts.DeleteSession(regionName, region.Username)
 
 	region.AccessToken = ""
 	region.RefreshToken = ""
+	region.SessionID = ""
+	region.CSRFToken = ""
 	cfg.Regions[regionName] = region
 
 	if err := config.Save(cfg); err != nil {
@@ -298,8 +334,10 @@ func runAuthStatus(_ *cobra.Command, _ []string) error {
 	type statusResult struct {
 		Configured bool   `json:"configured"`
 		Region     string `json:"region"`
+		Mode       string `json:"mode,omitempty"`
 		URL        string `json:"url,omitempty"`
 		HasTokens  bool   `json:"hasTokens"`
+		HasSession bool   `json:"hasSession"`
 		Username   string `json:"username,omitempty"`
 	}
 
@@ -309,8 +347,10 @@ func runAuthStatus(_ *cobra.Command, _ []string) error {
 
 	if region, ok := cfg.Regions[regionName]; ok {
 		result.Configured = region.URL != ""
+		result.Mode = effectiveMode(region)
 		result.URL = region.URL
 		result.HasTokens = region.AccessToken != ""
+		result.HasSession = region.SessionID != ""
 		result.Username = region.Username
 	}
 
@@ -328,11 +368,15 @@ func runAuthStatus(_ *cobra.Command, _ []string) error {
 	output.Gray("  ────────────────────────────────────────")
 	fmt.Println()
 	if result.Configured {
-		tokensStatus := "not cached"
-		if result.HasTokens {
-			tokensStatus = "cached"
+		credStatus := "not cached"
+		if result.Mode == config.ModeJWT {
+			if result.HasTokens {
+				credStatus = "tokens cached"
+			}
+		} else if result.HasSession {
+			credStatus = "session cached"
 		}
-		output.Success(fmt.Sprintf("Configured (region=%s, url=%s, tokens=%s)", result.Region, result.URL, tokensStatus))
+		output.Success(fmt.Sprintf("Configured (region=%s, mode=%s, url=%s, %s)", result.Region, result.Mode, result.URL, credStatus))
 		if result.Username != "" {
 			output.Gray(fmt.Sprintf("  Username: %s", result.Username))
 		}

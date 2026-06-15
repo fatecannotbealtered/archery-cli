@@ -12,15 +12,38 @@ import (
 // jsonMarshalIndent marshals config JSON; overridden in tests. // test hook
 var jsonMarshalIndent = json.MarshalIndent
 
+// Transport modes. Session is the default:普通账号即可用，走 Archery 的 AJAX
+// 端点 + Django 会话 cookie。JWT 保留为可选高级模式，走 /api REST。
+const (
+	// ModeSession authenticates with a Django session cookie (default).
+	ModeSession = "session"
+	// ModeJWT authenticates with a REST Bearer token.
+	ModeJWT = "jwt"
+)
+
 // RegionConfig stores Archery authentication information for a single region.
-// Password is never persisted; tokens are stored only in the OS keyring.
+// Password is never persisted; tokens and session cookies live only in the OS keyring.
 type RegionConfig struct {
-	URL          string `json:"url"`
-	Username     string `json:"username"`
+	URL      string `json:"url"`
+	Username string `json:"username"`
+	// Mode selects the transport: "session" (default) or "jwt".
+	Mode         string `json:"mode,omitempty"`
 	Password     string `json:"password,omitempty"`
 	AccessToken  string `json:"access_token,omitempty"`
 	RefreshToken string `json:"refresh_token,omitempty"`
 	TokenExpiry  string `json:"token_expiry,omitempty"`
+	// SessionID / CSRFToken are the cached Django session cookies (session mode).
+	// Persisted only in the OS keyring, never on disk.
+	SessionID string `json:"session_id,omitempty"`
+	CSRFToken string `json:"csrf_token,omitempty"`
+}
+
+// EffectiveMode returns the region's transport mode, defaulting to session.
+func (r RegionConfig) EffectiveMode() string {
+	if strings.EqualFold(strings.TrimSpace(r.Mode), ModeJWT) {
+		return ModeJWT
+	}
+	return ModeSession
 }
 
 // Config stores Archery configuration with support for multiple regions.
@@ -104,8 +127,9 @@ func Load() (*Config, error) {
 	envURL := firstNonEmpty(os.Getenv("ARCHERY_CLI_URL"))
 	envUser := firstNonEmpty(os.Getenv("ARCHERY_CLI_USERNAME"))
 	envPass := firstNonEmpty(os.Getenv("ARCHERY_CLI_PASSWORD"))
+	envMode := normalizeMode(os.Getenv("ARCHERY_CLI_MODE"))
 
-	if envURL != "" || envUser != "" || envPass != "" {
+	if envURL != "" || envUser != "" || envPass != "" || envMode != "" {
 		if regionName == "" {
 			regionName = "default"
 		}
@@ -119,22 +143,38 @@ func Load() (*Config, error) {
 		if envPass != "" {
 			region.Password = envPass
 		}
+		if envMode != "" {
+			region.Mode = envMode
+		}
 		cfg.Regions[regionName] = region
 		if cfg.DefaultRegion == "" {
 			cfg.DefaultRegion = regionName
 		}
 	}
 
-	// 3. Try keyring for tokens if the config says keyring is in use
+	// 3. Try keyring for cached secrets if the config says keyring is in use.
+	// JWT tokens and session cookies are both restored here based on region mode.
 	if cfg.usesKeyringStore() {
 		ts := NewTokenStore()
 		for name, region := range cfg.Regions {
-			if region.AccessToken == "" && region.Username != "" {
-				at, rt, err := ts.LoadTokens(name, region.Username)
-				if err == nil && at != "" {
-					region.AccessToken = at
-					region.RefreshToken = rt
-					cfg.Regions[name] = region
+			switch region.EffectiveMode() {
+			case ModeJWT:
+				if region.AccessToken == "" && region.Username != "" {
+					at, rt, err := ts.LoadTokens(name, region.Username)
+					if err == nil && at != "" {
+						region.AccessToken = at
+						region.RefreshToken = rt
+						cfg.Regions[name] = region
+					}
+				}
+			default:
+				if region.SessionID == "" && region.Username != "" {
+					sid, csrf, err := ts.LoadSession(name, region.Username)
+					if err == nil && sid != "" {
+						region.SessionID = sid
+						region.CSRFToken = csrf
+						cfg.Regions[name] = region
+					}
 				}
 			}
 		}
@@ -143,13 +183,28 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
+// normalizeMode maps a free-form mode string to a canonical mode or "".
+func normalizeMode(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case ModeJWT:
+		return ModeJWT
+	case ModeSession:
+		return ModeSession
+	default:
+		return ""
+	}
+}
+
 func stripDiskSecrets(cfg *Config) {
 	for name, region := range cfg.Regions {
-		if region.Password != "" || region.AccessToken != "" || region.RefreshToken != "" || region.TokenExpiry != "" {
+		if region.Password != "" || region.AccessToken != "" || region.RefreshToken != "" ||
+			region.TokenExpiry != "" || region.SessionID != "" || region.CSRFToken != "" {
 			region.Password = ""
 			region.AccessToken = ""
 			region.RefreshToken = ""
 			region.TokenExpiry = ""
+			region.SessionID = ""
+			region.CSRFToken = ""
 			cfg.Regions[name] = region
 		}
 	}
@@ -165,7 +220,7 @@ func Save(cfg *Config) error {
 	store := ts.ActiveStore()
 	cfg.CredentialStore = store
 
-	if configHasTokens(cfg) && store != CredentialStoreKeyring {
+	if configHasSecrets(cfg) && store != CredentialStoreKeyring {
 		return errors.New("OS credential store unavailable; refusing to write credentials to config file")
 	}
 
@@ -173,6 +228,11 @@ func Save(cfg *Config) error {
 		if region.AccessToken != "" {
 			if err := ts.SaveTokens(name, region.Username, region.AccessToken, region.RefreshToken); err != nil {
 				return fmt.Errorf("saving tokens to keyring: %w", err)
+			}
+		}
+		if region.SessionID != "" {
+			if err := ts.SaveSession(name, region.Username, region.SessionID, region.CSRFToken); err != nil {
+				return fmt.Errorf("saving session to keyring: %w", err)
 			}
 		}
 	}
@@ -195,12 +255,13 @@ func Save(cfg *Config) error {
 	return nil
 }
 
-func configHasTokens(cfg *Config) bool {
+func configHasSecrets(cfg *Config) bool {
 	if cfg == nil {
 		return false
 	}
 	for _, region := range cfg.Regions {
-		if strings.TrimSpace(region.AccessToken) != "" || strings.TrimSpace(region.RefreshToken) != "" {
+		if strings.TrimSpace(region.AccessToken) != "" || strings.TrimSpace(region.RefreshToken) != "" ||
+			strings.TrimSpace(region.SessionID) != "" || strings.TrimSpace(region.CSRFToken) != "" {
 			return true
 		}
 	}
@@ -220,6 +281,7 @@ func (c *Config) onDiskCopy(store string) *Config {
 		rc := RegionConfig{
 			URL:      region.URL,
 			Username: region.Username,
+			Mode:     region.Mode,
 		}
 		disk.Regions[name] = rc
 	}
@@ -253,8 +315,8 @@ func MustLoad() (*Config, error) {
 	}
 
 	if strings.TrimSpace(region.Username) == "" || strings.TrimSpace(region.Password) == "" {
-		// Allow if we have a cached token (already authenticated)
-		if strings.TrimSpace(region.AccessToken) == "" {
+		// Allow if we already hold a cached credential (JWT token or session cookie).
+		if strings.TrimSpace(region.AccessToken) == "" && strings.TrimSpace(region.SessionID) == "" {
 			return nil, fmt.Errorf("region %q has no credentials; run 'archery-cli auth login' or set ARCHERY_CLI_USERNAME and ARCHERY_CLI_PASSWORD", regionName)
 		}
 	}
@@ -329,6 +391,7 @@ func IsConfigured() bool {
 		return false
 	}
 	return region.URL != "" && (strings.TrimSpace(region.AccessToken) != "" ||
+		strings.TrimSpace(region.SessionID) != "" ||
 		(strings.TrimSpace(region.Username) != "" && strings.TrimSpace(region.Password) != ""))
 }
 
