@@ -234,6 +234,60 @@ container afterward; no `cli_verify*` tables were created on the target DB
 (execute never reached the apply stage). The enabling config above was left in
 place so the shared e2e stack stays workflow-capable.
 
+## 2026-06-15 — `binlog` group (session AJAX, v1.8.5)
+
+Live verification of the `binlog list` / `parse` / `purge` commands against the
+production-parity `hhyo/archery:v1.8.5` stack on `localhost:9123`, authenticated
+with the `cli_verify` superuser in **session mode** (Django form login; the
+binlog views have no REST/JWT equivalent). Each command was run with
+`--compact`; envelope `ok`/`error` and the documented field shapes were
+asserted. No hostnames, credentials, or instance internals are reproduced here.
+
+The stack's `mysql:5.7` had binary logging disabled, so it was enabled for this
+run (`server-id`, `log_bin`, `binlog_format=ROW` via `/etc/mysql/conf.d/`) and a
+throwaway `binlog_verify` schema with a few DML rows was created to give the
+parser real events. The Archery `my2sql` plugin path (a runtime SysConfig key)
+was pointed at the bundled `/opt/archery/src/plugins/my2sql` binary. All of this
+is local container/stack config — no CLI code is involved.
+
+### Result by command
+
+| Command | Mode | Result |
+|---|---|---|
+| `binlog list` | **live (read)** | PASS — `show binary logs` returned the live binlog file(s) with `Log_name`/`File_size`; JSON envelope and the table renderer (headers derived from the first row) both verified |
+| `binlog parse` | **live (write/medium)** | PASS — dry-run preview + `confirm_token`, then confirm returned **8 real parsed statements** (INSERT/UPDATE/DELETE) for the bounded range; `--rollback` returned the correct inverse SQL. No `--dangerous` needed (medium tier). Required three CLI fixes first (below) |
+| `binlog purge` | **live (write/high)** | PASS — `--dangerous` gate enforced in dry-run (omit → `E_CONFIRMATION_REQUIRED`); real purge to a flushed binlog deleted the older files (`purged:true`, confirmed via `show binary logs`); purge to a non-existent file surfaced the server's `status:2` message as `E_VALIDATION`; replaying a spent `confirm_token` → `E_CONFLICT` (single-use) |
+
+### Defects found and fixed by this run
+
+1. **`parse` 500'd when optional numeric fields were omitted.** The v1.8.5
+   `my2sql` view parses `num`/`threads`/`start_pos`/`end_pos` as
+   `int(value) unless value == ''`; an absent field is `None`, so `int(None)`
+   raised and the view returned HTTP 500. The web UI always submits these fields
+   (empty when blank). Fixed: `Parse` now always sends
+   `start_file/end_file/start_time/stop_time` and (via `emptyIfZero`)
+   `start_pos/end_pos/num/threads`, empty when unset, so the view applies its own
+   defaults (num=30, threads=4) instead of crashing.
+2. **`parse` returned zero rows because sql-types were uppercase.** The bundled
+   `my2sql` binary rejects anything but lowercase `insert,update,delete`
+   (`invalid sqltypes`), and the view forwards the values verbatim. Fixed:
+   `Parse` lowercases each `sql_type[]` before sending. With this fix the same
+   request that returned 0 rows now returns the 8 expected statements.
+3. **`parse` crashed decoding the view's error envelope.** On arg-check failure
+   the view returns `{"status":1,"data":{}}` — `data` is an object, not the
+   success path's list — which failed to unmarshal into `[]BinlogParseRow` and
+   surfaced as a bogus `E_NETWORK`. Fixed: `data` is now `json.RawMessage` and a
+   `Rows()` helper decodes the list only on success, so error envelopes surface
+   the server `msg` instead of a parse error.
+
+Unit tests added for all three: empty-when-unset field encoding, lowercase
+`sql_type[]`, and the `data:{}` error envelope. `go test ./...`,
+`golangci-lint run`, the FCC guard, and the reference guard all stay green.
+
+The throwaway `binlog_verify` schema and the test binlog files were left to the
+stack's `expire_logs_days=1`; no `cli_verify*` artifacts were created on the
+target DB.
+
 ## Reproduce
 
 ```bash

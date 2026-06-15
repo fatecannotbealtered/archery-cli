@@ -207,8 +207,12 @@ var binlogParseCmd = &cobra.Command{
 			return failArg(binlogMsg(res.Msg, "parsing binlog failed"))
 		}
 
-		sqls := make([]string, len(res.Data))
-		for i, row := range res.Data {
+		rows, err := res.Rows()
+		if err != nil {
+			return handleAPIError(err)
+		}
+		sqls := make([]string, len(rows))
+		for i, row := range rows {
 			sqls[i] = row.SQL
 		}
 

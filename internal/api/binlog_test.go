@@ -39,8 +39,12 @@ func TestBinlogParse_FormFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	if len(res.Data) != 1 || res.Data[0].SQL != "INSERT INTO t VALUES (1);" {
-		t.Fatalf("unexpected parse result: %+v", res.Data)
+	rows, err := res.Rows()
+	if err != nil {
+		t.Fatalf("Rows: %v", err)
+	}
+	if len(rows) != 1 || rows[0].SQL != "INSERT INTO t VALUES (1);" {
+		t.Fatalf("unexpected parse result: %+v", rows)
 	}
 
 	checks := map[string][]string{
@@ -52,11 +56,12 @@ func TestBinlogParse_FormFields(t *testing.T) {
 		"stop_time":     {"2026-06-15 01:00:00"},
 		"only_schemas":  {"db1", "db2"},
 		"only_tables[]": {"t1", "t2"},
-		"sql_type[]":    {"INSERT", "UPDATE"},
-		"num":           {"10"},
-		"threads":       {"2"},
-		"rollback":      {"true"},
-		"save_sql":      {"true"},
+		// my2sql requires lowercase sql types; Parse normalizes them.
+		"sql_type[]": {"insert", "update"},
+		"num":        {"10"},
+		"threads":    {"2"},
+		"rollback":   {"true"},
+		"save_sql":   {"true"},
 	}
 	for key, want := range checks {
 		if !reflect.DeepEqual(got[key], want) {
@@ -66,6 +71,58 @@ func TestBinlogParse_FormFields(t *testing.T) {
 	// The view has no end_time field; ensure we never send one.
 	if v, ok := got["end_time"]; ok {
 		t.Errorf("form should not carry end_time, got %v", v)
+	}
+}
+
+// TestBinlogParse_UnsetFieldsSentEmpty locks the workaround for the v1.8.5
+// my2sql view, which does int(value) on num/threads/start_pos/end_pos unless
+// the field equals "". Omitting a field makes the view 500 on int(None), so the
+// CLI must always send these fields, empty when unset.
+func TestBinlogParse_UnsetFieldsSentEmpty(t *testing.T) {
+	var got map[string][]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		got = r.PostForm
+		_, _ = w.Write([]byte(`{"status":0,"msg":"ok","data":[]}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.Binlog.Parse(testCtx, BinlogParseParams{InstanceName: "prod"})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	for _, key := range []string{"start_pos", "end_pos", "num", "threads", "start_file", "end_file", "start_time", "stop_time"} {
+		v, ok := got[key]
+		if !ok || len(v) != 1 || v[0] != "" {
+			t.Errorf("form[%q] = %v, want present and empty", key, got[key])
+		}
+	}
+}
+
+// TestBinlogParse_ErrorEnvelope ensures the {status:1,data:{}} envelope the view
+// returns on arg-check failure decodes without an unmarshal error; Rows() then
+// yields no rows so the caller can surface msg instead of crashing.
+func TestBinlogParse_ErrorEnvelope(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"status":1,"msg":"可执行文件路径不能为空！","data":{}}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	res, err := c.Binlog.Parse(testCtx, BinlogParseParams{InstanceName: "prod"})
+	if err != nil {
+		t.Fatalf("Parse should not fail on data:{} envelope: %v", err)
+	}
+	if res.Status != 1 || res.Msg == "" {
+		t.Errorf("status/msg = %d/%q, want 1/non-empty", res.Status, res.Msg)
+	}
+	rows, err := res.Rows()
+	if err != nil {
+		t.Fatalf("Rows: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("rows = %v, want empty", rows)
 	}
 }
 
