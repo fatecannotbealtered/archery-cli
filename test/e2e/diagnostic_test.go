@@ -180,7 +180,12 @@ func TestDiagnostic_Kill_TwoStepThreadIDsJSONArray(t *testing.T) {
 	token := decodeBatchData(t, dry)["confirm_token"].(string)
 
 	// confirm: executes kill_session with the same JSON-array ThreadIDs.
+	// Hold the mux mutex: a keep-alive handler goroutine from the dry-run may
+	// still touch rec, so resetting it unguarded races with the append at the
+	// top of diagnosticMux.
+	mu.Lock()
 	rec = nil
+	mu.Unlock()
 	run := runCLIAgainst(t, srv.URL, home, "--format", "json", "diagnostic", "kill",
 		"--instance", "inst1", "--threads", "101,102", "--dangerous", "--confirm", token)
 	if run.ExitCode != 0 {
