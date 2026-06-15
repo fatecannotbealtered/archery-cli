@@ -22,7 +22,7 @@ func init() {
 	// dict tables
 	dictTablesCmd.Flags().String("instance", "", "Instance name (required)")
 	dictTablesCmd.Flags().String("db", "", "Database name (required)")
-	dictTablesCmd.Flags().String("db-type", "", "Database type (e.g. mysql, postgresql)")
+	dictTablesCmd.Flags().String("db-type", "", "Database type, e.g. mysql, mssql, oracle (required: part of the v1.8.5 instance lookup key)")
 	dictTablesCmd.Flags().String("fields", "", "Comma-separated fields for JSON output")
 	dictCmd.AddCommand(dictTablesCmd)
 
@@ -30,7 +30,7 @@ func init() {
 	dictTableInfoCmd.Flags().String("instance", "", "Instance name (required)")
 	dictTableInfoCmd.Flags().String("db", "", "Database name (required)")
 	dictTableInfoCmd.Flags().String("table", "", "Table name (required)")
-	dictTableInfoCmd.Flags().String("db-type", "", "Database type (e.g. mysql, postgresql)")
+	dictTableInfoCmd.Flags().String("db-type", "", "Database type, e.g. mysql, mssql, oracle (required: part of the v1.8.5 instance lookup key)")
 	dictTableInfoCmd.Flags().String("fields", "", "Comma-separated fields for JSON output")
 	dictCmd.AddCommand(dictTableInfoCmd)
 
@@ -73,7 +73,13 @@ var dictTablesCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		dbType, _ := cmd.Flags().GetString("db-type")
+		// v1.8.5 looks up the instance via Instance.objects.get(instance_name,
+		// db_type): db_type is part of the lookup key, so omitting it returns
+		// "Instance.DoesNotExist". The flag is therefore required here.
+		dbType, err := requireFlagString(cmd, "db-type", "--db-type")
+		if err != nil {
+			return err
+		}
 
 		client, _, _, err := newClient()
 		if err != nil {
@@ -83,9 +89,7 @@ var dictTablesCmd = &cobra.Command{
 		params := url.Values{
 			"instance_name": {instance},
 			"db_name":       {db},
-		}
-		if dbType != "" {
-			params.Set("db_type", dbType)
+			"db_type":       {dbType},
 		}
 
 		data, err := client.SessionGet(apiCtx(), "/data_dictionary/table_list/?"+params.Encode())
@@ -145,7 +149,12 @@ var dictTableInfoCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		dbType, _ := cmd.Flags().GetString("db-type")
+		// Like table_list, the view keys the instance lookup on db_type, so it is
+		// required; omitting it yields "Instance.DoesNotExist".
+		dbType, err := requireFlagString(cmd, "db-type", "--db-type")
+		if err != nil {
+			return err
+		}
 
 		client, _, _, err := newClient()
 		if err != nil {
@@ -158,9 +167,7 @@ var dictTableInfoCmd = &cobra.Command{
 			"instance_name": {instance},
 			"db_name":       {db},
 			"tb_name":       {table},
-		}
-		if dbType != "" {
-			params.Set("db_type", dbType)
+			"db_type":       {dbType},
 		}
 
 		data, err := client.SessionGet(apiCtx(), "/data_dictionary/table_info/?"+params.Encode())
