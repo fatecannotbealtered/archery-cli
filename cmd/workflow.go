@@ -19,23 +19,38 @@ func init() {
 	rootCmd.AddCommand(workflowCmd)
 
 	// workflow list
-	workflowListCmd.Flags().String("status", "", "Filter by status (e.g. workflow_finish, audit_abort)")
-	workflowListCmd.Flags().String("engineer", "", "Filter by engineer/creator username")
+	workflowListCmd.Flags().String("status", "", "Filter by status code (e.g. workflow_finish, workflow_manreviewing)")
+	workflowListCmd.Flags().String("engineer", "", "Filter by engineer/creator username (jwt mode only)")
 	workflowListCmd.Flags().Int("instance", 0, "Filter by instance ID")
-	workflowListCmd.Flags().String("db", "", "Filter by database name")
+	workflowListCmd.Flags().Int("group", 0, "Filter by resource group ID (session mode)")
+	workflowListCmd.Flags().String("db", "", "Filter by database name (jwt mode only)")
+	workflowListCmd.Flags().String("search", "", "Search engineer name or workflow title (session mode)")
 	workflowListCmd.Flags().Int("limit", 20, "Max results per page (1-500)")
 	workflowListCmd.Flags().Int("offset", 0, "Pagination offset")
 	workflowListCmd.Flags().String("fields", "", "Output only these fields (comma-separated)")
 	workflowCmd.AddCommand(workflowListCmd)
 
+	// workflow audit-list
+	workflowAuditListCmd.Flags().String("status", "", "Filter by status code")
+	workflowAuditListCmd.Flags().Int("instance", 0, "Filter by instance ID")
+	workflowAuditListCmd.Flags().Int("group", 0, "Filter by resource group ID")
+	workflowAuditListCmd.Flags().String("search", "", "Search engineer name or workflow title")
+	workflowAuditListCmd.Flags().Int("limit", 20, "Max results per page (1-500)")
+	workflowAuditListCmd.Flags().Int("offset", 0, "Pagination offset")
+	workflowAuditListCmd.Flags().String("fields", "", "Output only these fields (comma-separated)")
+	workflowCmd.AddCommand(workflowAuditListCmd)
+
 	// workflow submit
 	workflowSubmitCmd.Flags().String("name", "", "Workflow title (required)")
-	workflowSubmitCmd.Flags().Int("instance", 0, "Target instance ID (required)")
+	workflowSubmitCmd.Flags().Int("instance", 0, "Target instance ID (jwt mode)")
+	workflowSubmitCmd.Flags().String("instance-name", "", "Target instance name (session mode)")
 	workflowSubmitCmd.Flags().String("db", "", "Target database name (required)")
 	workflowSubmitCmd.Flags().String("sql", "", "SQL content (required)")
-	workflowSubmitCmd.Flags().Int("group", 0, "Resource group ID")
+	workflowSubmitCmd.Flags().Int("group", 0, "Resource group ID (jwt mode)")
+	workflowSubmitCmd.Flags().String("group-name", "", "Resource group name (session mode, required)")
 	workflowSubmitCmd.Flags().Bool("backup", true, "Require backup before execution")
 	workflowSubmitCmd.Flags().String("demand-url", "", "Related demand/requirement URL")
+	workflowSubmitCmd.Flags().StringSlice("cc", nil, "CC notify usernames (session mode)")
 	workflowCmd.AddCommand(workflowSubmitCmd)
 	markWrite(workflowSubmitCmd)
 	markRiskLevel(workflowSubmitCmd, "medium")
@@ -69,10 +84,23 @@ func init() {
 	markRiskLevel(workflowCancelCmd, "medium")
 
 	// workflow sqlcheck
-	workflowSQLCheckCmd.Flags().Int("instance", 0, "Target instance ID (required)")
+	workflowSQLCheckCmd.Flags().Int("instance", 0, "Target instance ID (jwt mode)")
+	workflowSQLCheckCmd.Flags().String("instance-name", "", "Target instance name (session mode)")
 	workflowSQLCheckCmd.Flags().String("db", "", "Target database name (required)")
 	workflowSQLCheckCmd.Flags().String("sql", "", "SQL to check (required)")
 	workflowCmd.AddCommand(workflowSQLCheckCmd)
+
+	// workflow auto-review
+	workflowAutoReviewCmd.Flags().Int("instance", 0, "Target instance ID (jwt mode)")
+	workflowAutoReviewCmd.Flags().String("instance-name", "", "Target instance name (session mode)")
+	workflowAutoReviewCmd.Flags().String("db", "", "Target database name (required)")
+	workflowAutoReviewCmd.Flags().String("sql", "", "SQL to classify (required)")
+	workflowAutoReviewCmd.Flags().StringSlice("ids", nil, "Approve these workflow IDs after they pass the rules (with --execute)")
+	workflowAutoReviewCmd.Flags().Bool("execute", false, "Approve (audit pass) compliant workflows; without it, dry-run classify only")
+	workflowAutoReviewCmd.Flags().String("remark", "auto-review pass", "Audit remark used when approving with --execute")
+	workflowCmd.AddCommand(workflowAutoReviewCmd)
+	markWrite(workflowAutoReviewCmd)
+	markRiskLevel(workflowAutoReviewCmd, "medium")
 }
 
 // ─── workflow list ──────────────────────────────────────────────────────────
@@ -95,16 +123,7 @@ var workflowListCmd = &cobra.Command{
 			return failArg("--offset must be >= 0")
 		}
 
-		params := api.WorkflowListParams{
-			Status:   mustGetString(cmd, "status"),
-			Engineer: mustGetString(cmd, "engineer"),
-			DBName:   mustGetString(cmd, "db"),
-			Limit:    limit,
-			Offset:   offset,
-		}
-		if v, _ := cmd.Flags().GetInt("instance"); v > 0 {
-			params.InstanceID = v
-		}
+		params := workflowListParamsFromFlags(cmd, limit, offset)
 
 		result, err := client.Workflows.List(apiCtx(), params)
 		if err != nil {
@@ -127,6 +146,75 @@ var workflowListCmd = &cobra.Command{
 	},
 }
 
+// ─── workflow audit-list ────────────────────────────────────────────────────
+
+var workflowAuditListCmd = &cobra.Command{
+	Use:   "audit-list",
+	Short: "List workflows pending the current user's audit",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client, _, region, err := newClient()
+		if err != nil {
+			return err
+		}
+
+		limit, _ := cmd.Flags().GetInt("limit")
+		if limit < 1 || limit > 500 {
+			return failArg("--limit must be between 1 and 500")
+		}
+		offset, _ := cmd.Flags().GetInt("offset")
+		if offset < 0 {
+			return failArg("--offset must be >= 0")
+		}
+
+		params := workflowListParamsFromFlags(cmd, limit, offset)
+		params.Audit = true
+
+		result, err := client.Workflows.List(apiCtx(), params)
+		if err != nil {
+			return handleAPIError(err)
+		}
+
+		if jsonMode {
+			fields := getFieldsFlag(cmd)
+			printWorkflowListJSON(result, fields, region.URL)
+			return nil
+		}
+
+		if len(result.Page.Results) == 0 {
+			output.Info("No workflows pending your audit.")
+			return nil
+		}
+		printWorkflowTable(result.Page.Results, region.URL)
+		printListPaginationHint(result.Pagination, limit)
+		return nil
+	},
+}
+
+// workflowListParamsFromFlags builds the list params shared by `list` and
+// `audit-list`. The engineer/db filters apply only to the JWT REST endpoint;
+// the session endpoint uses navStatus/instance_id/group_id/search.
+func workflowListParamsFromFlags(cmd *cobra.Command, limit, offset int) api.WorkflowListParams {
+	params := api.WorkflowListParams{
+		Status: mustGetString(cmd, "status"),
+		Search: mustGetString(cmd, "search"),
+		Limit:  limit,
+		Offset: offset,
+	}
+	if cmd.Flags().Lookup("engineer") != nil {
+		params.Engineer = mustGetString(cmd, "engineer")
+	}
+	if cmd.Flags().Lookup("db") != nil {
+		params.DBName = mustGetString(cmd, "db")
+	}
+	if v, _ := cmd.Flags().GetInt("instance"); v > 0 {
+		params.InstanceID = v
+	}
+	if v, _ := cmd.Flags().GetInt("group"); v > 0 {
+		params.GroupID = v
+	}
+	return params
+}
+
 // ─── workflow submit ────────────────────────────────────────────────────────
 
 var workflowSubmitCmd = &cobra.Command{
@@ -137,10 +225,6 @@ var workflowSubmitCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		instanceID, _ := cmd.Flags().GetInt("instance")
-		if instanceID == 0 {
-			return failArg("--instance is required")
-		}
 		db, err := requireFlagString(cmd, "db", "--db")
 		if err != nil {
 			return err
@@ -149,28 +233,56 @@ var workflowSubmitCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		instanceID, _ := cmd.Flags().GetInt("instance")
+		instanceName, _ := cmd.Flags().GetString("instance-name")
 		groupID, _ := cmd.Flags().GetInt("group")
+		groupName, _ := cmd.Flags().GetString("group-name")
 		backup, _ := cmd.Flags().GetBool("backup")
 		demandURL, _ := cmd.Flags().GetString("demand-url")
+		ccUsers, _ := cmd.Flags().GetStringSlice("cc")
+
+		mode := activeTransportMode()
+		// Session submit keys on names; REST keys on numeric IDs. Validate the
+		// identifier the active transport actually sends.
+		if mode == api.ModeSession {
+			if instanceName == "" {
+				return failArg("--instance-name is required in session mode")
+			}
+			if groupName == "" {
+				return failArg("--group-name is required in session mode")
+			}
+		} else if instanceID == 0 {
+			return failArg("--instance is required in jwt mode")
+		}
 
 		req := api.WorkflowSubmitRequest{
-			Name:       name,
-			InstanceID: instanceID,
-			DBName:     db,
-			SQLContent: sql,
-			IsBackup:   backup,
-			DemandURL:  demandURL,
-		}
-		if groupID > 0 {
-			req.GroupID = groupID
+			Name:         name,
+			InstanceID:   instanceID,
+			InstanceName: instanceName,
+			DBName:       db,
+			SQLContent:   sql,
+			GroupID:      groupID,
+			GroupName:    groupName,
+			IsBackup:     backup,
+			DemandURL:    demandURL,
+			CCUsers:      ccUsers,
 		}
 
 		detail := map[string]any{
-			"name":       name,
-			"instanceId": strconv.Itoa(instanceID),
-			"db":         db,
-			"sql":        sql,
-			"backup":     backup,
+			"name":   name,
+			"db":     db,
+			"sql":    sql,
+			"backup": backup,
+			"mode":   mode,
+		}
+		if instanceName != "" {
+			detail["instanceName"] = instanceName
+		}
+		if instanceID > 0 {
+			detail["instanceId"] = strconv.Itoa(instanceID)
+		}
+		if groupName != "" {
+			detail["groupName"] = groupName
 		}
 		if groupID > 0 {
 			detail["groupId"] = strconv.Itoa(groupID)
@@ -494,15 +606,6 @@ var workflowSQLCheckCmd = &cobra.Command{
 	Use:   "sqlcheck",
 	Short: "Run SQL syntax and risk checks without submitting a workflow",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, _, _, err := newClient()
-		if err != nil {
-			return err
-		}
-
-		instanceID, _ := cmd.Flags().GetInt("instance")
-		if instanceID == 0 {
-			return failArg("--instance is required")
-		}
 		db, err := requireFlagString(cmd, "db", "--db")
 		if err != nil {
 			return err
@@ -511,11 +614,21 @@ var workflowSQLCheckCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		instanceID, instanceName, err := workflowInstanceIdentifier(cmd)
+		if err != nil {
+			return err
+		}
+
+		client, _, _, err := newClient()
+		if err != nil {
+			return err
+		}
 
 		req := api.WorkflowSQLCheckRequest{
-			InstanceID: instanceID,
-			DBName:     db,
-			SQLContent: sql,
+			InstanceID:   instanceID,
+			InstanceName: instanceName,
+			DBName:       db,
+			SQLContent:   sql,
 		}
 
 		results, err := client.Workflows.SQLCheck(apiCtx(), req)
@@ -536,7 +649,163 @@ var workflowSQLCheckCmd = &cobra.Command{
 	},
 }
 
+// ─── workflow auto-review ───────────────────────────────────────────────────
+
+var workflowAutoReviewCmd = &cobra.Command{
+	Use:   "auto-review",
+	Short: "Classify SQL by the auto-review rules; optionally approve compliant workflows",
+	Long: "Runs the SQL pre-check (/simplecheck/) and classifies each statement as " +
+		"pass or block by the auto-review rules: a statement blocks if its errlevel " +
+		"is non-zero (a syntax/risk error). Without --execute this is a read-only " +
+		"dry-run that reports the classification. With --execute it approves (audit " +
+		"pass) the workflow IDs given in --ids — which needs auditor permission.",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		db, err := requireFlagString(cmd, "db", "--db")
+		if err != nil {
+			return err
+		}
+		sql, err := requireFlagString(cmd, "sql", "--sql")
+		if err != nil {
+			return err
+		}
+		instanceID, instanceName, err := workflowInstanceIdentifier(cmd)
+		if err != nil {
+			return err
+		}
+		execute, _ := cmd.Flags().GetBool("execute")
+		remark, _ := cmd.Flags().GetString("remark")
+		ids, _ := cmd.Flags().GetStringSlice("ids")
+		approveIDs := parsePluralTargets(ids)
+		if execute && len(approveIDs) == 0 {
+			return failArg("--execute needs --ids listing the workflow IDs to approve")
+		}
+
+		client, _, _, err := newClient()
+		if err != nil {
+			return err
+		}
+
+		// Classify: run the pre-check and bucket statements by the rules.
+		results, err := client.Workflows.SQLCheck(apiCtx(), api.WorkflowSQLCheckRequest{
+			InstanceID:   instanceID,
+			InstanceName: instanceName,
+			DBName:       db,
+			SQLContent:   sql,
+		})
+		if err != nil {
+			return handleAPIError(err)
+		}
+
+		blocked := 0
+		classified := make([]map[string]any, len(results))
+		for i, r := range results {
+			verdict := "pass"
+			// errlevel: 0 ok, 1 warning, 2 error. Any non-zero level blocks.
+			if r.ErrLevel != 0 {
+				verdict = "block"
+				blocked++
+			}
+			classified[i] = normalizeAgentMap(map[string]any{
+				"sql":          r.SQL,
+				"errlevel":     r.ErrLevel,
+				"level":        r.Level,
+				"stagestatus":  r.StageStatus,
+				"message":      r.Message,
+				"affectedRows": r.AffectedRows,
+				"verdict":      verdict,
+			})
+		}
+		compliant := blocked == 0
+
+		// Without --execute (or when blocked), report the classification only.
+		if !execute {
+			return printAutoReviewResult(classified, compliant, blocked, nil)
+		}
+		if !compliant {
+			output.Warn("auto-review found blocking statements; not approving any workflow.")
+			return printAutoReviewResult(classified, compliant, blocked, nil)
+		}
+
+		// --execute: approve the listed workflows. Approval is reversible (cancel),
+		// so the batch shares one confirm token (CLI-SPEC §15).
+		targets := make([]string, len(approveIDs))
+		changes := make([]map[string]any, len(approveIDs))
+		for i, t := range approveIDs {
+			targets[i] = t
+			changes[i] = map[string]any{"action": "audit:pass", "workflowId": t}
+		}
+		if batchDryRunOrConfirm("auto-review approve workflows", targets, changes) {
+			return nil
+		}
+
+		items, summary := runBatch(targets, true, func(target string) (map[string]any, output.ErrorCode, bool, error) {
+			id, perr := strconv.Atoi(target)
+			if perr != nil || id <= 0 {
+				return nil, output.E_VALIDATION, false, fmt.Errorf("invalid workflow id %q", target)
+			}
+			req := api.WorkflowAuditRequest{WorkflowID: id, Action: "pass", Remark: remark}
+			if aerr := client.Workflows.Audit(apiCtx(), req); aerr != nil {
+				code := errorCodeForAPIErr(aerr)
+				return nil, code, output.RetryableErrorCode(code), aerr
+			}
+			return map[string]any{"status": "pass"}, "", false, nil
+		})
+		printBatchResult(items, summary)
+		return nil
+	},
+}
+
+// printAutoReviewResult renders the auto-review classification. In JSON mode it
+// emits {compliant,blocked,results[]}; otherwise a per-statement table.
+func printAutoReviewResult(classified []map[string]any, compliant bool, blocked int, _ any) error {
+	if jsonMode {
+		output.PrintJSON(map[string]any{
+			"compliant": compliant,
+			"blocked":   blocked,
+			"results":   classified,
+		})
+		return nil
+	}
+	headers := []string{"VERDICT", "LEVEL", "MESSAGE", "SQL"}
+	rows := make([][]string, len(classified))
+	for i, c := range classified {
+		sqlText, _ := c["sql"].(string)
+		if len(sqlText) > 60 {
+			sqlText = sqlText[:57] + "..."
+		}
+		msg, _ := c["message"].(string)
+		level, _ := c["level"].(string)
+		verdict, _ := c["verdict"].(string)
+		rows[i] = []string{verdict, level, msg, sqlText}
+	}
+	output.Table(headers, rows)
+	if compliant {
+		output.Success("auto-review: all statements pass the rules.")
+	} else {
+		output.Warn(fmt.Sprintf("auto-review: %d statement(s) blocked.", blocked))
+	}
+	return nil
+}
+
 // ─── helper ─────────────────────────────────────────────────────────────────
+
+// workflowInstanceIdentifier resolves the instance identifier the active
+// transport needs: session mode requires --instance-name, JWT mode requires
+// the numeric --instance. Returns (id, name) with the unused side zero/empty.
+func workflowInstanceIdentifier(cmd *cobra.Command) (int, string, error) {
+	instanceID, _ := cmd.Flags().GetInt("instance")
+	instanceName, _ := cmd.Flags().GetString("instance-name")
+	if activeTransportMode() == api.ModeSession {
+		if instanceName == "" {
+			return 0, "", failArg("--instance-name is required in session mode")
+		}
+		return 0, instanceName, nil
+	}
+	if instanceID == 0 {
+		return 0, "", failArg("--instance is required in jwt mode")
+	}
+	return instanceID, "", nil
+}
 
 // parseWorkflowID parses and validates a workflow ID string.
 func parseWorkflowID(s string) (int, error) {
@@ -591,10 +860,15 @@ func mustGetString(cmd *cobra.Command, name string) string {
 }
 
 func sqlCheckResultToMap(r api.SQLCheckResult) map[string]any {
-	return normalizeAgentMap(map[string]any{
+	m := map[string]any{
 		"level":         r.Level,
 		"message":       r.Message,
 		"affected_rows": r.AffectedRows,
 		"sql":           r.SQL,
-	})
+		"errlevel":      r.ErrLevel,
+	}
+	if r.StageStatus != "" {
+		m["stagestatus"] = r.StageStatus
+	}
+	return normalizeAgentMap(m)
 }

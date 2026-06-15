@@ -95,16 +95,20 @@ var boundaryCases = []boundaryCase{
 	{name: "user groups", args: []string{"user", "groups"}},
 	{name: "user resource-groups", args: []string{"user", "resource-groups"}},
 
-	// workflow
+	// workflow (default session transport: submit/sqlcheck key on names)
 	{name: "workflow list", args: []string{"workflow", "list"}},
+	{name: "workflow audit-list", args: []string{"workflow", "audit-list"}},
 	{name: "workflow detail", args: []string{"workflow", "detail", "1"}},
 	{name: "workflow submit", write: true, args: []string{
-		"workflow", "submit", "--name", "n", "--instance", "1", "--db", "db1", "--sql", "alter table t add c int"}},
+		"workflow", "submit", "--name", "n", "--instance-name", "inst1", "--group-name", "g1",
+		"--db", "db1", "--sql", "alter table t add c int"}},
 	{name: "workflow audit", write: true, args: []string{"workflow", "audit", "1", "--action", "pass"}},
 	{name: "workflow execute", write: true, args: []string{"workflow", "execute", "1", "--dangerous"}},
 	{name: "workflow cancel", write: true, args: []string{"workflow", "cancel", "1"}},
 	{name: "workflow sqlcheck", args: []string{
-		"workflow", "sqlcheck", "--instance", "1", "--db", "db1", "--sql", "select 1"}},
+		"workflow", "sqlcheck", "--instance-name", "inst1", "--db", "db1", "--sql", "select 1"}},
+	{name: "workflow auto-review", write: true, noToken: true, args: []string{
+		"workflow", "auto-review", "--instance-name", "inst1", "--db", "db1", "--sql", "select 1"}},
 }
 
 func TestBoundary_AllLeafCommands(t *testing.T) {

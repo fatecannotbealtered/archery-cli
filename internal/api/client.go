@@ -810,6 +810,80 @@ func (c *Client) InternalPost(ctx context.Context, path string, form url.Values)
 	return data, err
 }
 
+// SessionPostExpectRedirect posts a form to a Django view that signals success
+// with a 302 redirect to the new object's detail page, and returns the object
+// id parsed from the Location header (e.g. /detail/42/ -> 42). Archery's submit
+// views render error.html with HTTP 200 on a validation failure instead of
+// redirecting, so a 200 (non-redirect) is reported as an error carrying the
+// page's message hint. This does not follow the redirect: the id is in the
+// Location header, and following it would lose it.
+func (c *Client) SessionPostExpectRedirect(ctx context.Context, path string, form url.Values) (int, error) {
+	if err := c.ensureSession(ctx); err != nil {
+		return 0, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.host+path, strings.NewReader(form.Encode()))
+	if err != nil {
+		return 0, fmt.Errorf("creating request: %w", err)
+	}
+	c.applyInternalHeaders(req)
+	// RoundTrip bypasses the http.Client's cookie jar, so attach the session
+	// cookies (sessionid + csrftoken) by hand.
+	if u, perr := url.Parse(c.host); perr == nil {
+		for _, ck := range c.httpClient.Jar.Cookies(u) {
+			req.AddCookie(ck)
+		}
+	}
+
+	// Issue a single request without following the redirect so the Location
+	// header survives.
+	resp, err := c.httpClient.Transport.RoundTrip(req)
+	if err != nil {
+		return 0, fmt.Errorf("executing request: %w", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		loc := resp.Header.Get("Location")
+		if id := lastPathID(loc); id > 0 {
+			return id, nil
+		}
+		return 0, &APIError{
+			StatusCode:    resp.StatusCode,
+			ErrorMessages: []string{"workflow submitted but the server did not return a workflow id in the redirect"},
+		}
+	}
+
+	if resp.StatusCode >= 400 {
+		return 0, c.parseError(resp.StatusCode, body)
+	}
+
+	// HTTP 200 without a redirect means the view rendered error.html: the submit
+	// was rejected. Surface a generic reason; the exact message is HTML.
+	return 0, &APIError{
+		StatusCode:    http.StatusBadRequest,
+		ErrorMessages: []string{"workflow submission was rejected by Archery (check instance/group permissions, db name, and SQL)"},
+	}
+}
+
+// lastPathID extracts the trailing integer path segment from a URL or path,
+// e.g. "/detail/42/" or "https://h/sqlworkflow/42/" -> 42. Returns 0 if none.
+func lastPathID(loc string) int {
+	if loc == "" {
+		return 0
+	}
+	if u, err := url.Parse(loc); err == nil {
+		loc = u.Path
+	}
+	for _, seg := range strings.Split(strings.Trim(loc, "/"), "/") {
+		if n, err := strconv.Atoi(seg); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 0
+}
+
 // InternalPut sends a PUT request with session cookie auth.
 func (c *Client) InternalPut(ctx context.Context, path string, form url.Values) ([]byte, error) {
 	data, _, _, err := c.internalRequest(ctx, http.MethodPut, path, form)

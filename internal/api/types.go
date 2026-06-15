@@ -58,16 +58,86 @@ type WorkflowAudit struct {
 
 // ===== SQL Workflow (submit / audit / execute) =====
 
-// SQLWorkflow is a single row from the workflow list endpoint.
+// SQLWorkflow is a single row from the workflow list endpoint. It is the common
+// shape both transports map into: the REST serializer fills the numeric fields
+// (Status, InstanceID, GroupID), while the session projection fills StatusCode
+// (the string status), InstanceName and GroupName. The unset side stays zero.
 type SQLWorkflow struct {
-	ID         int    `json:"id"`
-	Title      string `json:"workflow_name"`
-	Status     int    `json:"status"`
-	Engineer   string `json:"engineer"`
-	InstanceID int    `json:"instance_id"`
-	DBName     string `json:"db_name"`
-	GroupID    int    `json:"group_id"`
-	CreateDate string `json:"create_date"`
+	ID           int    `json:"id"`
+	Title        string `json:"workflow_name"`
+	Status       int    `json:"status"`
+	StatusCode   string `json:"-"`
+	Engineer     string `json:"engineer"`
+	InstanceID   int    `json:"instance_id"`
+	InstanceName string `json:"-"`
+	DBName       string `json:"db_name"`
+	GroupID      int    `json:"group_id"`
+	GroupName    string `json:"-"`
+	CreateDate   string `json:"create_date"`
+}
+
+// sessionWorkflowRow is a single row from the session AJAX list endpoint
+// (/sqlworkflow_list/). Archery's _sql_workflow_list serializes a QuerySet
+// .values(...) projection, so the JSON keys differ from the REST serializer:
+// status is a string code (e.g. "workflow_finish"), the engineer column is
+// engineer_display, instance is the joined instance__instance_name, and the
+// timestamp is create_time. bigint_as_string=True renders id as a string.
+type sessionWorkflowRow struct {
+	ID           json.Number `json:"id"`
+	Title        string      `json:"workflow_name"`
+	StatusCode   string      `json:"status"`
+	Engineer     string      `json:"engineer_display"`
+	InstanceName string      `json:"instance__instance_name"`
+	DBName       string      `json:"db_name"`
+	GroupName    string      `json:"group_name"`
+	IsBackup     bool        `json:"is_backup"`
+	SyntaxType   int         `json:"syntax_type"`
+	CreateTime   string      `json:"create_time"`
+}
+
+// toSQLWorkflow adapts a session list row to the common SQLWorkflow shape so the
+// command/printing layer stays mode-agnostic. The session projection has no
+// numeric instance_id (it joins the instance name instead), so InstanceID is
+// left zero and InstanceName carries the human-readable value.
+func (r sessionWorkflowRow) toSQLWorkflow() SQLWorkflow {
+	id, _ := r.ID.Int64()
+	return SQLWorkflow{
+		ID:           int(id),
+		Title:        r.Title,
+		StatusCode:   r.StatusCode,
+		Status:       WorkflowStatusCodeToInt(r.StatusCode),
+		Engineer:     r.Engineer,
+		InstanceName: r.InstanceName,
+		DBName:       r.DBName,
+		GroupName:    r.GroupName,
+		CreateDate:   r.CreateTime,
+	}
+}
+
+// WorkflowStatusCodeToInt maps Archery's session status string codes to the
+// integer status used by the REST serializer and the CLI's status badges, so
+// both transports render the same label. Unknown codes map to -1.
+func WorkflowStatusCodeToInt(code string) int {
+	switch code {
+	case "workflow_manreviewing":
+		return 1
+	case "workflow_review_pass":
+		return 2
+	case "workflow_timingtask":
+		return 4
+	case "workflow_queuing", "workflow_executing":
+		return 4
+	case "workflow_finish":
+		return 5
+	case "workflow_exception":
+		return 6
+	case "workflow_abort":
+		return 7
+	case "workflow_autoreviewwrong":
+		return 3
+	default:
+		return -1
+	}
 }
 
 // SQLWorkflowDetail is the full detail of an SQL workflow.
@@ -95,24 +165,48 @@ type SQLWorkflowAuditEntry struct {
 }
 
 // WorkflowListParams holds query parameters for the workflow list endpoint.
+//
+// Session and REST transports accept overlapping but not identical filters. The
+// session endpoint (/sqlworkflow_list/) filters on navStatus (the string status
+// code), group_id, instance_id, search (matches engineer/title) and a
+// start/end date range; it has no engineer or db_name filter. REST keeps the
+// engineer/db_name filters it already supported. Audit narrows the list to the
+// current user's pending-audit scope (/sqlworkflow_list_audit/).
 type WorkflowListParams struct {
 	Status     string
 	Engineer   string
 	InstanceID int
+	GroupID    int
 	DBName     string
+	Search     string
+	StartDate  string
+	EndDate    string
 	Limit      int
 	Offset     int
+	Audit      bool
 }
 
-// WorkflowSubmitRequest is the payload for POST /api/v1/workflow/.
+// WorkflowSubmitRequest is the payload for submitting a workflow.
+//
+// The two transports key on different identifiers. The session endpoint
+// (/autoreview/) takes names — InstanceName and GroupName — plus is_backup as
+// the string "True"/"False"; the REST endpoint takes the numeric InstanceID and
+// GroupID. The command fills whichever the active mode needs; the API layer
+// reads the matching set. CCUsers and the RunDate* window are session-only
+// optional fields (carbon-copy notify recipients, timed execution).
 type WorkflowSubmitRequest struct {
-	Name       string `json:"workflow_name"`
-	InstanceID int    `json:"instance_id"`
-	DBName     string `json:"db_name"`
-	SQLContent string `json:"sql_content"`
-	GroupID    int    `json:"group_id,omitempty"`
-	IsBackup   bool   `json:"is_backup"`
-	DemandURL  string `json:"demand_url,omitempty"`
+	Name         string   `json:"workflow_name"`
+	InstanceID   int      `json:"instance_id"`
+	InstanceName string   `json:"-"`
+	DBName       string   `json:"db_name"`
+	SQLContent   string   `json:"sql_content"`
+	GroupID      int      `json:"group_id,omitempty"`
+	GroupName    string   `json:"-"`
+	IsBackup     bool     `json:"is_backup"`
+	DemandURL    string   `json:"demand_url,omitempty"`
+	CCUsers      []string `json:"-"`
+	RunDateStart string   `json:"-"`
+	RunDateEnd   string   `json:"-"`
 }
 
 // WorkflowSubmitResponse is returned after a successful workflow submission.
@@ -151,19 +245,77 @@ type WorkflowCancelRequest struct {
 	Remark     string `json:"remark,omitempty"`
 }
 
-// WorkflowSQLCheckRequest is the payload for POST /api/v1/workflow/sqlcheck/.
+// WorkflowSQLCheckRequest is the payload for the SQL pre-check. Session
+// (/simplecheck/) uses instance_name; REST uses instance_id. The command fills
+// the identifier the active transport needs.
 type WorkflowSQLCheckRequest struct {
-	InstanceID int    `json:"instance_id"`
-	DBName     string `json:"db_name"`
-	SQLContent string `json:"sql_content"`
+	InstanceID   int    `json:"instance_id"`
+	InstanceName string `json:"-"`
+	DBName       string `json:"db_name"`
+	SQLContent   string `json:"sql_content"`
 }
 
-// SQLCheckResult is a single item from the SQL check response.
+// SQLCheckResult is a single item from the SQL check response. Level/Message
+// are the REST serializer's fields; ErrLevel/StageStatus come from the session
+// ReviewResult and drive auto-review classification (errlevel: 0 ok, 1 warning,
+// 2 error). When the session transport fills the result, Level is derived from
+// ErrLevel so existing badge rendering keeps working.
 type SQLCheckResult struct {
 	Level        string `json:"level"`
 	Message      string `json:"message"`
 	AffectedRows int    `json:"affected_rows"`
 	SQL          string `json:"sql"`
+	ErrLevel     int    `json:"errlevel"`
+	StageStatus  string `json:"stagestatus,omitempty"`
+}
+
+// reviewResultRow is the session ReviewResult shape returned by /simplecheck/
+// (data.rows) and /sqlworkflow/detail_content/ (rows). It mirrors Archery's
+// ReviewResult.__dict__ projection.
+type reviewResultRow struct {
+	ID           int    `json:"id"`
+	Stage        string `json:"stage"`
+	ErrLevel     int    `json:"errlevel"`
+	StageStatus  string `json:"stagestatus"`
+	ErrorMessage string `json:"errormessage"`
+	SQL          string `json:"sql"`
+	AffectedRows int    `json:"affected_rows"`
+	Sequence     string `json:"sequence"`
+	BackupDBName string `json:"backup_dbname"`
+	ExecuteTime  string `json:"execute_time"`
+	SQLSha1      string `json:"sqlsha1"`
+}
+
+// toSQLCheckResult adapts a session ReviewResult into the common SQLCheckResult,
+// deriving the textual level from errlevel so both transports render alike.
+func (r reviewResultRow) toSQLCheckResult() SQLCheckResult {
+	return SQLCheckResult{
+		Level:        errLevelToString(r.ErrLevel),
+		Message:      r.ErrorMessage,
+		AffectedRows: r.AffectedRows,
+		SQL:          r.SQL,
+		ErrLevel:     r.ErrLevel,
+		StageStatus:  r.StageStatus,
+	}
+}
+
+// errLevelToString maps Archery's numeric errlevel to the CLI's level label.
+func errLevelToString(errlevel int) string {
+	switch errlevel {
+	case 0:
+		return "info"
+	case 1:
+		return "warning"
+	default:
+		return "error"
+	}
+}
+
+// sessionCheckData is the data payload of /simplecheck/.
+type sessionCheckData struct {
+	Rows              []reviewResultRow `json:"rows"`
+	CheckWarningCount int               `json:"CheckWarningCount"`
+	CheckErrorCount   int               `json:"CheckErrorCount"`
 }
 
 // ===== Instance =====

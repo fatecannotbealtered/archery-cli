@@ -70,12 +70,17 @@ func printWorkflowTable(workflows []api.SQLWorkflow, host string) {
 		if len(title) > 40 {
 			title = title[:37] + "..."
 		}
+		// Session rows have an instance name; REST rows have a numeric id.
+		instance := w.InstanceName
+		if instance == "" {
+			instance = fmt.Sprintf("%d", w.InstanceID)
+		}
 		rows[i] = []string{
 			fmt.Sprintf("%d", w.ID),
 			title,
 			workflowStatusBadge(w.Status),
 			w.Engineer,
-			fmt.Sprintf("%d", w.InstanceID),
+			instance,
 			w.DBName,
 			formatTime(w.CreateDate),
 		}
@@ -204,6 +209,17 @@ func workflowToMap(w api.SQLWorkflow, host string) map[string]any {
 		"instanceId": strconv.Itoa(w.InstanceID),
 		"db":         w.DBName,
 		"created":    w.CreateDate,
+	}
+	// Session list rows carry the raw status code and human-readable
+	// instance/group names; surface them when present.
+	if w.StatusCode != "" {
+		m["statusCode"] = w.StatusCode
+	}
+	if w.InstanceName != "" {
+		m["instance"] = w.InstanceName
+	}
+	if w.GroupName != "" {
+		m["group"] = w.GroupName
 	}
 	if host != "" {
 		m["webUrl"] = host + fmt.Sprintf("/sqlworkflow/%d/", w.ID)
