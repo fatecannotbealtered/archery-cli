@@ -129,10 +129,20 @@ type WorkflowAuditRequest struct {
 	Remark string `json:"audit_remark"`
 }
 
+// WorkflowTypeSQLReview is Archery's workflow_type for SQL上线申请 (SQL-review
+// workflows), the only type the execute command targets.
+const WorkflowTypeSQLReview = 2
+
 // WorkflowExecuteRequest is the payload for POST /api/v1/workflow/execute/.
+//
+// Archery's ExecuteWorkflowSerializer requires workflow_type and, for SQL-review
+// workflows (type 2), engineer + mode — not just workflow_id. WorkflowType
+// defaults to 2 (SQL上线申请); Engineer is the authenticated operator.
 type WorkflowExecuteRequest struct {
-	WorkflowID int    `json:"workflow_id"`
-	Mode       string `json:"mode"`
+	WorkflowID   int    `json:"workflow_id"`
+	WorkflowType int    `json:"workflow_type"`
+	Engineer     string `json:"engineer,omitempty"`
+	Mode         string `json:"mode"`
 }
 
 // WorkflowCancelRequest is the payload for POST /sqlworkflow/cancel/.

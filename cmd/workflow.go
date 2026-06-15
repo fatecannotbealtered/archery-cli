@@ -358,11 +358,6 @@ var workflowExecuteCmd = &cobra.Command{
 		}
 		id := ids[0]
 
-		req := api.WorkflowExecuteRequest{
-			WorkflowID: id,
-			Mode:       mode,
-		}
-
 		detail := map[string]any{
 			"workflowId": strconv.Itoa(id),
 			"mode":       mode,
@@ -371,9 +366,16 @@ var workflowExecuteCmd = &cobra.Command{
 			return nil
 		}
 
-		client, _, _, err := newClient()
+		client, _, region, err := newClient()
 		if err != nil {
 			return err
+		}
+
+		req := api.WorkflowExecuteRequest{
+			WorkflowID:   id,
+			WorkflowType: api.WorkflowTypeSQLReview,
+			Engineer:     region.Username,
+			Mode:         mode,
 		}
 
 		if err := client.Workflows.Execute(apiCtx(), req); err != nil {
@@ -411,7 +413,7 @@ func runWorkflowExecuteBatch(cmd *cobra.Command, ids []int, mode string) error {
 		return nil
 	}
 
-	client, _, _, err := newClient()
+	client, _, region, err := newClient()
 	if err != nil {
 		return err
 	}
@@ -419,7 +421,12 @@ func runWorkflowExecuteBatch(cmd *cobra.Command, ids []int, mode string) error {
 	continueOnError := continueOnErrorFlag(cmd, false)
 	items, summary := runBatch(targets, continueOnError, func(target string) (map[string]any, output.ErrorCode, bool, error) {
 		id, _ := strconv.Atoi(target)
-		req := api.WorkflowExecuteRequest{WorkflowID: id, Mode: mode}
+		req := api.WorkflowExecuteRequest{
+			WorkflowID:   id,
+			WorkflowType: api.WorkflowTypeSQLReview,
+			Engineer:     region.Username,
+			Mode:         mode,
+		}
 		if err := client.Workflows.Execute(apiCtx(), req); err != nil {
 			code := errorCodeForAPIErr(err)
 			return nil, code, output.RetryableErrorCode(code), err

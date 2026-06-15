@@ -29,10 +29,10 @@ Smoke for the new client-side batch contract (CLI-SPEC §15) against the same
 |---|---|---|
 | `query run --instances` | **live (read)** | PASS — real SELECT executed; partial-batch (1 good + 1 bad instance) aggregated `succeeded:1 / failed:1`; `--continue-on-error=false` marked the unattempted remainder `skipped`; per-item `error.code` populated |
 | `workflow audit --ids` | live (reversible) | PARTIAL — batch path reaches the real audit API per item and aggregates failures; full pass blocked because Archery's audit serializer also requires `engineer`+`workflow_type` and no auditable workflow could be created (`workflow submit` against this stack's REST endpoint returns `workflow 该字段是必填项`). Dry-run shape + medium-tier (no `--dangerous`) verified |
-| `workflow execute --ids` | **dry-run only** | PASS (dry-run) — irreversible; per safety policy not run for real. Preview/`confirm_token`/`dangerous:true` verified. NOT executed against real workflows |
-| `instance import --file` | **dry-run only** | PASS (dry-run) — write/irreversible; dry-run only. CSV/JSON manifest parsed, per-row `create` preview emitted, **password field not echoed in the preview envelope**. NOT imported for real |
+| `workflow execute --ids` | **live (irreversible)** | PASS — upgraded from dry-run-only on 2026-06-15. Two audited-passed workflows seeded directly via Archery's ORM (status `workflow_review_pass` + matching `workflow_audit` `current_status=1`); batch executed with `--mode manual` (no SQL run on the DB, status → `workflow_finish`). Verified live: `--dangerous` gate, `confirm_token` single-use (replay → `E_CONFLICT`), `continue-on-error=false` stop-on-first-error (remainder `skipped`, untouched), `continue-on-error=true` continues past a failure, per-item `items[]/summary` aggregation. Required fixing a CLI defect first (see below). Cleaned up afterward |
+| `instance import --file` | **live (irreversible)** | PASS — upgraded from dry-run-only on 2026-06-15. CSV (2 rows) + JSON (1 row) manifests imported live against `e2e-mysql`; per-row `create` aggregated `succeeded:2` then `succeeded:1`, per-item `data` returned. Verified live: `--dangerous` gate (dry-run without it → `E_CONFIRMATION_REQUIRED`), **password field absent from both preview and result envelopes**, `confirm_token` single-use (replay → `E_CONFLICT`). The 3 test instances deleted afterward; env left clean |
 
-### Cross-cutting contract points (live-verified on `query run --instances`)
+### Cross-cutting contract points (live-verified across `query run --instances`, `instance import --file`, `workflow execute --ids`)
 
 - **Partial-failure aggregation** — `succeeded`/`failed`/`skipped` tally matches
   per-item `items[]`; no rollback of already-applied items (non-atomic, as
@@ -67,6 +67,29 @@ Smoke for the new client-side batch contract (CLI-SPEC §15) against the same
 All four fixes verified live for `query run`; the `audit_remark` fix verified to
 clear that specific validation error (audit still blocked by other required
 fields, see table). `go test ./...` stays green after the changes.
+
+### Defect found and fixed by the 2026-06-15 `workflow execute --ids` live run
+
+5. **`workflow execute` sent an incomplete payload.** The CLI POSTed only
+   `{workflow_id, mode}` to `/api/v1/workflow/execute/`, but Archery v1.8.5's
+   `ExecuteWorkflowSerializer` requires `workflow_type` and — for SQL-review
+   workflows (type 2) — `engineer`. The API rejected every execute with
+   `workflow_type 该字段是必填项`, which is why the 2026-06-15-早 run could only
+   reach dry-run. Fixed: `WorkflowExecuteRequest` now carries
+   `workflow_type` (defaulted to `WorkflowTypeSQLReview = 2`) and `engineer`
+   (the authenticated region username, sourced after `newClient`). Both the
+   single-target and `--ids` batch paths updated. Verified live end-to-end
+   (workflows reached `workflow_finish`); `go test ./...` stays green.
+
+   *Data note:* the 2026-06-15-早 blocker ("no auditable workflow could be
+   created via REST submit") was worked around by seeding two audited-passed
+   workflows directly through Archery's own ORM in the isolated e2e container —
+   `SqlWorkflow(status='workflow_review_pass')` + `SqlWorkflowContent` +
+   `WorkflowAudit(current_status=1)` + an audit log, exactly the shape Archery's
+   auto-review path produces. `--mode manual` was used so execute only flips
+   status to `workflow_finish` and writes a log; **no SQL was run against the
+   database.** All seeded workflows and the 3 test instances were deleted after
+   the run.
 
 ## Result by command class
 
