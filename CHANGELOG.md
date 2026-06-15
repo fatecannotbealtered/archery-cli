@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - All four are **class B** client-side loops — Archery's upstream has no native bulk write endpoint, so results are **not** atomic and partial failures do not roll back already-applied items. The external contract (plural inputs, dry-run summary, single single-use confirm token, dangerous gate, per-item aggregation) is identical to a native batch.
   - `reference` gains a `batch_result` output schema plus runnable plural-input examples for each batch command.
 
+### Fixed
+
+- **`workflow execute` sent an incomplete payload.** It POSTed only `{workflow_id, mode}`, but Archery's `ExecuteWorkflowSerializer` requires `workflow_type` and — for SQL-review workflows — `engineer`, so every execute was rejected with `workflow_type 该字段是必填项`. The request now carries `workflow_type` (default `2`, SQL上线申请) and `engineer` (the authenticated user); both the single-target and `--ids` batch paths are fixed. Verified live on a real Archery stack (workflows reached `workflow_finish`).
+
 ## [1.0.2] - 2026-06-14
 
 ### Added
