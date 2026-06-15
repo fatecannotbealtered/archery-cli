@@ -333,14 +333,16 @@ type QueryExplainOutput struct {
 	Plan []map[string]any `json:"plan"`
 }
 
-// queryExplainResponse is the raw API response from POST /query/explain/. The
-// view returns data as a separated dict ({column_list, rows}) via
-// ResultSet.to_sep_dict(), not a list of row maps — so the plan is reassembled
-// client-side by zipping column_list onto each row.
+// queryExplainResponse is the raw API response from POST /query/explain/. On
+// success the view returns data as a separated dict ({column_list, rows}) via
+// ResultSet.to_sep_dict(); on rejection (e.g. a non-EXPLAIN statement) it sets
+// status=1 and data=[] — an array, not the object. Decoding data lazily as
+// RawMessage lets the status check run first so the server's reason surfaces
+// instead of a misleading "cannot unmarshal array into object" parse error.
 type queryExplainResponse struct {
-	Status int                 `json:"status"`
-	Msg    string              `json:"msg"`
-	Data   queryExplainDataSet `json:"data"`
+	Status int             `json:"status"`
+	Msg    string          `json:"msg"`
+	Data   json.RawMessage `json:"data"`
 }
 
 type queryExplainDataSet struct {
@@ -388,13 +390,23 @@ var queryExplainCmd = &cobra.Command{
 			return failArg("failed to parse explain response: " + err.Error())
 		}
 
+		// Check status before binding data to the typed struct: on rejection the
+		// view returns data=[] (array), which would fail to unmarshal into the
+		// object shape and bury the real reason (e.g. "仅支持explain开头的语句").
 		if resp.Status != 0 && resp.Msg != "" {
 			return failArg(resp.Msg)
 		}
 
+		var dataSet queryExplainDataSet
+		if len(resp.Data) > 0 {
+			if err := json.Unmarshal(resp.Data, &dataSet); err != nil {
+				return failArg("failed to parse explain response: " + err.Error())
+			}
+		}
+
 		// Reassemble the column-separated dict into one map per plan row, keeping
 		// the {plan:[{col:val}]} output schema stable across Archery versions.
-		out := QueryExplainOutput{Plan: zipExplainRows(resp.Data.ColumnList, resp.Data.Rows)}
+		out := QueryExplainOutput{Plan: zipExplainRows(dataSet.ColumnList, dataSet.Rows)}
 
 		if jsonMode {
 			m := map[string]any{"plan": out.Plan}
@@ -413,7 +425,7 @@ var queryExplainCmd = &cobra.Command{
 		}
 
 		// Text format: print as table, columns in the engine's declared order.
-		headers := resp.Data.ColumnList
+		headers := dataSet.ColumnList
 		rows := make([][]string, len(out.Plan))
 		for i, row := range out.Plan {
 			cells := make([]string, len(headers))
