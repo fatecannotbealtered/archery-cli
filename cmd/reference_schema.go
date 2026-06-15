@@ -60,7 +60,7 @@ var referenceLeafSchemas = map[string]referenceLeaf{
 
 	// ─── archive ──────────────────────────────────────────────────────────────
 	"archive list":   {schema: "archive_list", examples: []string{"archery-cli archive list --state enable --limit 20 --compact"}},
-	"archive apply":  {schema: "archive_raw", examples: []string{"archery-cli archive apply --title 'archive logs' --group ops --src-instance prod --src-db app --src-table logs --mode purge --dangerous --dry-run --compact", "archery-cli archive apply --title 'archive logs' --group ops --src-instance prod --src-db app --src-table logs --mode purge --dangerous --confirm <confirm_token> --compact"}},
+	"archive apply":  {schema: "archive_raw", examples: []string{"archery-cli archive apply --title 'archive logs' --group ops --src-instance prod --src-db app --src-table logs --mode purge --condition 'create_time < \"2024-01-01\"' --dangerous --dry-run --compact", "archery-cli archive apply --title 'archive logs' --group ops --src-instance prod --src-db app --src-table logs --mode purge --condition 'create_time < \"2024-01-01\"' --dangerous --confirm <confirm_token> --compact"}},
 	"archive audit":  {schema: "archive_raw", examples: []string{"archery-cli archive audit 7 --action pass --dry-run --compact", "archery-cli archive audit 7 --action pass --confirm <confirm_token> --compact"}},
 	"archive switch": {schema: "archive_raw", examples: []string{"archery-cli archive switch 7 --state enable --dry-run --compact", "archery-cli archive switch 7 --state enable --confirm <confirm_token> --compact"}},
 	"archive once":   {schema: "archive_raw", examples: []string{"archery-cli archive once 7 --dangerous --dry-run --compact", "archery-cli archive once 7 --dangerous --confirm <confirm_token> --compact"}},
@@ -156,8 +156,8 @@ func referenceSchemas() map[string]refDataSchema {
 		"query_generate": {Shape: "object", Fields: []string{"sql"}, UntrustedFields: []string{"sql"}},
 
 		// ─── archive ──────────────────────────────────────────────────────────
-		"archive_list":     {Shape: "list", Fields: append(append([]string{}, offsetEnvelopeFields...), "id", "title", "state", "src_instance", "src_db", "src_table", "mode"), UntrustedFields: []string{"title"}},
-		"archive_log_list": {Shape: "list", Fields: append(append([]string{}, offsetEnvelopeFields...), "id", "state", "start_time", "end_time", "success_rows")},
+		"archive_list":     {Shape: "list", Fields: append(append([]string{}, offsetEnvelopeFields...), "id", "title", "state", "src_instance__instance_name", "src_db_name", "src_table_name", "mode"), UntrustedFields: []string{"title"}},
+		"archive_log_list": {Shape: "list", Fields: append(append([]string{}, offsetEnvelopeFields...), "start_time", "end_time", "mode", "success", "select_cnt", "insert_cnt", "delete_cnt")},
 		"archive_raw":      {Shape: "object", Fields: []string{"<upstream archive apply/audit/switch response>"}},
 
 		// ─── slowquery ────────────────────────────────────────────────────────
