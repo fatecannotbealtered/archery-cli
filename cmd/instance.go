@@ -1180,6 +1180,13 @@ var instanceGrantCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		// The grant view interpolates user_host straight into GRANT ... TO <x>, so
+		// it must be the backtick-quoted `user`@`host` form. Accept the friendly
+		// user@host and quote it; pass an already-quoted value through unchanged.
+		sqlUserHost, err := quoteUserHost(userHost)
+		if err != nil {
+			return err
+		}
 		op, _ := cmd.Flags().GetString("op")
 		opType, err := grantOpType(op)
 		if err != nil {
@@ -1256,7 +1263,7 @@ var instanceGrantCmd = &cobra.Command{
 
 		form := url.Values{
 			"instance_id": {strconv.Itoa(instanceID)},
-			"user_host":   {userHost},
+			"user_host":   {sqlUserHost},
 			"op_type":     {strconv.Itoa(opType)},
 			"priv_type":   {strconv.Itoa(privType)},
 			"privs":       {string(privsJSON)},
@@ -1314,6 +1321,36 @@ var instanceGrantCmd = &cobra.Command{
 		output.Success(fmt.Sprintf("Privileges changed for %s on instance %d", userHost, instanceID))
 		return nil
 	},
+}
+
+// quoteUserHost turns a friendly user@host into the backtick-quoted `user`@`host`
+// the grant view splices into SQL. A value that already contains a backtick is
+// assumed pre-quoted (e.g. copied from `instance users`) and passed through.
+// The host defaults to % when omitted, matching MySQL's own default.
+func quoteUserHost(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", failArg("--user-host is required as user@host")
+	}
+	if strings.Contains(s, "`") {
+		return s, nil
+	}
+	at := strings.LastIndex(s, "@")
+	var user, host string
+	if at < 0 {
+		user, host = s, "%"
+	} else {
+		user, host = s[:at], s[at+1:]
+	}
+	user = strings.TrimSpace(user)
+	host = strings.TrimSpace(host)
+	if user == "" {
+		return "", failArg("--user-host must include a username, as user@host")
+	}
+	if host == "" {
+		host = "%"
+	}
+	return fmt.Sprintf("`%s`@`%s`", user, host), nil
 }
 
 // grantOpType maps the --op flag to Archery's op_type int (0 grant, 1 revoke).

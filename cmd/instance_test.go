@@ -160,3 +160,35 @@ func TestGrantTypeMappings(t *testing.T) {
 		t.Error("bogus level should error")
 	}
 }
+
+// TestQuoteUserHost pins the user@host → `user`@`host` normalization. The grant
+// view splices user_host straight into GRANT ... TO <x>, so an unquoted value
+// like user@% is a MySQL syntax error (verified live against v1.8.5).
+func TestQuoteUserHost(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"e2e_probe@%", "`e2e_probe`@`%`"},
+		{"app@10.0.0.1", "`app`@`10.0.0.1`"},
+		{"app", "`app`@`%`"},                         // host defaults to %
+		{"app@", "`app`@`%`"},                        // empty host defaults to %
+		{"  app @ localhost ", "`app`@`localhost`"},  // trimmed
+		{"`root`@`localhost`", "`root`@`localhost`"}, // pre-quoted passes through
+	}
+	for _, c := range cases {
+		got, err := quoteUserHost(c.in)
+		if err != nil {
+			t.Errorf("quoteUserHost(%q) unexpected error %v", c.in, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("quoteUserHost(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+	for _, bad := range []string{"", "   ", "@host", "@"} {
+		if _, err := quoteUserHost(bad); err == nil {
+			t.Errorf("quoteUserHost(%q) should error", bad)
+		}
+	}
+}
