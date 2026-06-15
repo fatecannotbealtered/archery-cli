@@ -92,14 +92,49 @@ func init() {
 	markConfirm(instanceImportCmd)
 	markRiskLevel(instanceImportCmd, "high")
 
-	// instance table-instances
-	instanceTableInstancesCmd.Flags().String("table", "", "Table name to search for (required)")
-	instanceCmd.AddCommand(instanceTableInstancesCmd)
+	// instance test-instance (connectivity probe)
+	instanceTestCmd.Flags().Int("instance", 0, "Instance ID (required)")
+	instanceCmd.AddCommand(instanceTestCmd)
 
 	// instance users
 	instanceUsersCmd.Flags().Int("instance", 0, "Instance ID (required)")
 	instanceUsersCmd.Flags().Bool("saved", false, "Filter by saved users only")
 	instanceCmd.AddCommand(instanceUsersCmd)
+
+	// instance create-db
+	instanceCreateDBCmd.Flags().Int("instance", 0, "Instance ID (required)")
+	instanceCreateDBCmd.Flags().String("db", "", "Database name to create (required)")
+	instanceCreateDBCmd.Flags().String("owner", "", "Owner username")
+	instanceCreateDBCmd.Flags().String("remark", "", "Remark")
+	instanceCmd.AddCommand(instanceCreateDBCmd)
+	markWrite(instanceCreateDBCmd)
+	markConfirm(instanceCreateDBCmd)
+	markRiskLevel(instanceCreateDBCmd, "high")
+
+	// instance create-user
+	instanceCreateUserCmd.Flags().Int("instance", 0, "Instance ID (required)")
+	instanceCreateUserCmd.Flags().String("user", "", "Database username (required)")
+	instanceCreateUserCmd.Flags().String("host", "", "Host pattern, e.g. % or 10.0.0.1 (required)")
+	instanceCreateUserCmd.Flags().String("password", "", "Account password (required)")
+	instanceCreateUserCmd.Flags().String("remark", "", "Remark")
+	instanceCmd.AddCommand(instanceCreateUserCmd)
+	markWrite(instanceCreateUserCmd)
+	markConfirm(instanceCreateUserCmd)
+	markRiskLevel(instanceCreateUserCmd, "high")
+
+	// instance grant
+	instanceGrantCmd.Flags().Int("instance", 0, "Instance ID (required)")
+	instanceGrantCmd.Flags().String("user-host", "", "Target account as `user`@`host` (required)")
+	instanceGrantCmd.Flags().String("op", "grant", "Operation: grant|revoke")
+	instanceGrantCmd.Flags().String("level", "", "Privilege level: global|db|table|column (required)")
+	instanceGrantCmd.Flags().String("privs", "", "Comma-separated privileges, e.g. SELECT,INSERT (required)")
+	instanceGrantCmd.Flags().StringSlice("db", nil, "Database name(s); repeatable for db level")
+	instanceGrantCmd.Flags().StringSlice("table", nil, "Table name(s); repeatable for table level")
+	instanceGrantCmd.Flags().StringSlice("column", nil, "Column name(s); repeatable for column level")
+	instanceCmd.AddCommand(instanceGrantCmd)
+	markWrite(instanceGrantCmd)
+	markConfirm(instanceGrantCmd)
+	markRiskLevel(instanceGrantCmd, "high")
 }
 
 // ─── instance list ──────────────────────────────────────────────────────────
@@ -126,43 +161,26 @@ var instanceListCmd = &cobra.Command{
 			return failArg("--offset must be >= 0")
 		}
 
-		params := url.Values{}
-		if instanceType != "" {
-			params.Set("instance_type", instanceType)
-		}
-		if dbType != "" {
-			params.Set("db_type", dbType)
-		}
-		if search != "" {
-			params.Set("search", search)
-		}
-		params.Set("limit", strconv.Itoa(limit))
-		params.Set("offset", strconv.Itoa(offset))
+		var instances []instanceResult
+		var total int
+		var hasMore bool
 
-		path := client.APIPath("/v1/instance/")
-		if encoded := params.Encode(); encoded != "" {
-			path += "?" + encoded
+		if client.Mode() == api.ModeSession {
+			instances, total, err = listInstancesSession(client, instanceType, dbType, search, limit, offset)
+		} else {
+			instances, total, hasMore, err = listInstancesREST(client, instanceType, dbType, search, limit, offset)
 		}
-
-		data, err := client.Get(apiCtx(), path)
 		if err != nil {
 			return handleAPIError(err)
 		}
-
-		var page struct {
-			Count    int              `json:"count"`
-			Next     any              `json:"next"`
-			Previous any              `json:"previous"`
-			Results  []instanceResult `json:"results"`
-		}
-		if err := json.Unmarshal(data, &page); err != nil {
-			return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
+		if total > offset+len(instances) {
+			hasMore = true
 		}
 
 		if jsonMode {
 			fields := getFieldsFlag(cmd)
-			items := make([]map[string]any, len(page.Results))
-			for i, inst := range page.Results {
+			items := make([]map[string]any, len(instances))
+			for i, inst := range instances {
 				items[i] = instanceResultToMap(inst)
 			}
 			if len(fields) > 0 {
@@ -173,21 +191,21 @@ var instanceListCmd = &cobra.Command{
 				items = filtered
 			}
 			output.PrintJSON(output.NewListEnvelope(items, output.ListMeta{
-				Count:   len(page.Results),
+				Count:   len(instances),
 				Limit:   limit,
-				Total:   page.Count,
-				HasMore: page.Next != nil,
+				Total:   total,
+				HasMore: hasMore,
 			}))
 			return nil
 		}
 
-		if len(page.Results) == 0 {
+		if len(instances) == 0 {
 			output.Info("No instances found.")
 			return nil
 		}
 		headers := []string{"ID", "NAME", "DB TYPE", "HOST", "PORT", "USER"}
-		rows := make([][]string, len(page.Results))
-		for i, inst := range page.Results {
+		rows := make([][]string, len(instances))
+		for i, inst := range instances {
 			rows[i] = []string{
 				inst.ID,
 				inst.InstanceName,
@@ -200,6 +218,81 @@ var instanceListCmd = &cobra.Command{
 		output.Table(headers, rows)
 		return nil
 	},
+}
+
+// listInstancesSession lists instances via the Django AJAX endpoint
+// (POST /instance/list/), the default transport. The view casts limit/offset
+// with int() and type/sortName/sortOrder with str(), so all four must be sent
+// or it raises. type is only forwarded when the caller filters by master/slave;
+// sending "all" would filter for a literal type='all' and return nothing.
+func listInstancesSession(client *api.Client, instanceType, dbType, search string, limit, offset int) ([]instanceResult, int, error) {
+	form := url.Values{
+		"limit":     {strconv.Itoa(limit)},
+		"offset":    {strconv.Itoa(offset)},
+		"sortName":  {"instance_name"},
+		"sortOrder": {"asc"},
+	}
+	if instanceType != "" {
+		form.Set("type", instanceType)
+	}
+	if dbType != "" {
+		form.Set("db_type", dbType)
+	}
+	if search != "" {
+		form.Set("search", search)
+	}
+
+	data, err := client.SessionPost(apiCtx(), "/instance/list/", form)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	var resp struct {
+		Total int              `json:"total"`
+		Rows  []instanceResult `json:"rows"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, 0, &api.APIError{ErrorMessages: []string{"parsing instance list: " + err.Error()}}
+	}
+	return resp.Rows, resp.Total, nil
+}
+
+// listInstancesREST lists instances via the DRF endpoint (GET /api/v1/instance/),
+// used when --mode jwt is selected.
+func listInstancesREST(client *api.Client, instanceType, dbType, search string, limit, offset int) ([]instanceResult, int, bool, error) {
+	params := url.Values{}
+	if instanceType != "" {
+		params.Set("instance_type", instanceType)
+	}
+	if dbType != "" {
+		params.Set("db_type", dbType)
+	}
+	if search != "" {
+		params.Set("search", search)
+	}
+	params.Set("limit", strconv.Itoa(limit))
+	params.Set("offset", strconv.Itoa(offset))
+
+	path := client.APIPath("/v1/instance/")
+	if encoded := params.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+
+	data, err := client.Get(apiCtx(), path)
+	if err != nil {
+		return nil, 0, false, err
+	}
+
+	var page struct {
+		Count    int              `json:"count"`
+		Next     any              `json:"next"`
+		Previous any              `json:"previous"`
+		Results  []instanceResult `json:"results"`
+	}
+	if err := json.Unmarshal(data, &page); err != nil {
+		return nil, 0, false, &api.APIError{ErrorMessages: []string{"parsing instance list: " + err.Error()}}
+	}
+	return page.Results, page.Count, page.Next != nil, nil
 }
 
 // ─── instance detail ────────────────────────────────────────────────────────
@@ -219,15 +312,14 @@ var instanceDetailCmd = &cobra.Command{
 			return err
 		}
 
-		path := client.APIPath(fmt.Sprintf("/v1/instance/%s/", id))
-		data, err := client.Get(apiCtx(), path)
+		var inst instanceResult
+		if client.Mode() == api.ModeSession {
+			inst, err = detailInstanceSession(client, id)
+		} else {
+			inst, err = detailInstanceREST(client, id)
+		}
 		if err != nil {
 			return handleAPIError(err)
-		}
-
-		var inst instanceResult
-		if err := json.Unmarshal(data, &inst); err != nil {
-			return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 		}
 
 		if jsonMode {
@@ -253,6 +345,35 @@ var instanceDetailCmd = &cobra.Command{
 		fmt.Println()
 		return nil
 	},
+}
+
+// detailInstanceREST fetches one instance via GET /api/v1/instance/<id>/.
+func detailInstanceREST(client *api.Client, id string) (instanceResult, error) {
+	data, err := client.Get(apiCtx(), client.APIPath(fmt.Sprintf("/v1/instance/%s/", id)))
+	if err != nil {
+		return instanceResult{}, err
+	}
+	var inst instanceResult
+	if err := json.Unmarshal(data, &inst); err != nil {
+		return instanceResult{}, &api.APIError{ErrorMessages: []string{"parsing instance detail: " + err.Error()}}
+	}
+	return inst, nil
+}
+
+// detailInstanceSession resolves one instance by id from the AJAX list endpoint:
+// v1.8.5 exposes no per-id detail JSON to session callers, so we page through the
+// list and match locally. A page of 500 covers any realistic single-region fleet.
+func detailInstanceSession(client *api.Client, id string) (instanceResult, error) {
+	instances, _, err := listInstancesSession(client, "", "", "", 500, 0)
+	if err != nil {
+		return instanceResult{}, err
+	}
+	for _, inst := range instances {
+		if inst.ID == id {
+			return inst, nil
+		}
+	}
+	return instanceResult{}, &api.APIError{StatusCode: 404, ErrorMessages: []string{"instance " + id + " not found"}}
 }
 
 // ─── instance resource ──────────────────────────────────────────────────────
@@ -285,33 +406,18 @@ var instanceResourceCmd = &cobra.Command{
 			return err
 		}
 
-		payload := map[string]any{
-			"instance_id":   instanceID,
-			"resource_type": resourceType,
+		var items []map[string]any
+		if client.Mode() == api.ModeSession {
+			items, err = resourceSession(client, instanceID, resourceType, dbName, schemaName, tableName)
+		} else {
+			items, err = resourceREST(client, instanceID, resourceType, dbName, schemaName, tableName)
 		}
-		if dbName != "" {
-			payload["db_name"] = dbName
-		}
-		if schemaName != "" {
-			payload["schema_name"] = schemaName
-		}
-		if tableName != "" {
-			payload["table_name"] = tableName
-		}
-
-		data, err := client.Post(apiCtx(), client.APIPath("/v1/instance/resource/"), payload)
 		if err != nil {
 			return handleAPIError(err)
 		}
 
 		if jsonMode {
 			fields := getFieldsFlag(cmd)
-			var raw any
-			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
-			}
-			// Try to extract the list from the response
-			items := extractResourceItems(raw)
 			if len(fields) > 0 && len(items) > 0 {
 				filtered := make([]map[string]any, len(items))
 				for i, m := range items {
@@ -324,8 +430,6 @@ var instanceResourceCmd = &cobra.Command{
 		}
 
 		// Text mode: print as table
-		items := extractResourceItems(nil)
-		_ = json.Unmarshal(data, &items)
 		if len(items) == 0 {
 			output.Info("No resources found.")
 			return nil
@@ -333,6 +437,99 @@ var instanceResourceCmd = &cobra.Command{
 		printResourceTable(items)
 		return nil
 	},
+}
+
+// resourceSession lists databases/schemas/tables/columns via the Django AJAX
+// endpoint (GET /instance/instance_resource/). The view reads query params and
+// uses tb_name (not table_name); data is resource.rows — a flat list of names
+// for database/schema/table, or richer rows for column. normalizeResourceRows
+// folds both shapes into []map for the uniform resource_item_list schema.
+func resourceSession(client *api.Client, instanceID int, resourceType, dbName, schemaName, tableName string) ([]map[string]any, error) {
+	q := url.Values{
+		"instance_id":   {strconv.Itoa(instanceID)},
+		"resource_type": {resourceType},
+	}
+	if dbName != "" {
+		q.Set("db_name", dbName)
+	}
+	if schemaName != "" {
+		q.Set("schema_name", schemaName)
+	}
+	if tableName != "" {
+		q.Set("tb_name", tableName)
+	}
+	data, err := client.SessionGet(apiCtx(), "/instance/instance_resource/?"+q.Encode())
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		Status int             `json:"status"`
+		Msg    string          `json:"msg"`
+		Data   json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &api.APIError{ErrorMessages: []string{"parsing resource list: " + err.Error()}}
+	}
+	if resp.Status != 0 {
+		return nil, &api.APIError{ErrorMessages: []string{resp.Msg}}
+	}
+	return normalizeResourceRows(resp.Data), nil
+}
+
+// resourceREST lists resources via POST /api/v1/instance/resource/ (JWT mode).
+func resourceREST(client *api.Client, instanceID int, resourceType, dbName, schemaName, tableName string) ([]map[string]any, error) {
+	payload := map[string]any{
+		"instance_id":   instanceID,
+		"resource_type": resourceType,
+	}
+	if dbName != "" {
+		payload["db_name"] = dbName
+	}
+	if schemaName != "" {
+		payload["schema_name"] = schemaName
+	}
+	// The engine signature uses tb_name; mirror it for the REST serializer.
+	if tableName != "" {
+		payload["tb_name"] = tableName
+	}
+	data, err := client.Post(apiCtx(), client.APIPath("/v1/instance/resource/"), payload)
+	if err != nil {
+		return nil, err
+	}
+	var raw any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, &api.APIError{ErrorMessages: []string{"parsing resource list: " + err.Error()}}
+	}
+	return extractResourceItems(raw), nil
+}
+
+// normalizeResourceRows turns the engine's resource.rows into []map. Scalars
+// (database/schema/table names) become {"name": value}; positional arrays are
+// indexed (col0/col1/...); maps pass through normalized.
+func normalizeResourceRows(data json.RawMessage) []map[string]any {
+	if len(data) == 0 {
+		return nil
+	}
+	var arr []any
+	if err := json.Unmarshal(data, &arr); err != nil {
+		return nil
+	}
+	items := make([]map[string]any, 0, len(arr))
+	for _, v := range arr {
+		switch row := v.(type) {
+		case map[string]any:
+			items = append(items, normalizeAgentMap(row))
+		case []any:
+			m := map[string]any{}
+			for i, cell := range row {
+				m[fmt.Sprintf("col%d", i)] = cell
+			}
+			items = append(items, m)
+		default:
+			items = append(items, map[string]any{"name": row})
+		}
+	}
+	return items
 }
 
 // ─── instance describe ──────────────────────────────────────────────────────
@@ -360,38 +557,38 @@ var instanceDescribeCmd = &cobra.Command{
 			return err
 		}
 
+		// describe is session-only in v1.8.5 (no REST route). It reads tb_name
+		// (not table_name) and returns a ResultSet {column_list, rows} where rows
+		// are positional arrays. Zip them into per-row maps for a stable shape.
 		form := url.Values{
 			"instance_name": {instanceName},
 			"db_name":       {dbName},
-			"table_name":    {tableName},
+			"tb_name":       {tableName},
 		}
 		if schemaName != "" {
 			form.Set("schema_name", schemaName)
 		}
 
-		data, err := client.InternalPost(apiCtx(), "/instance/describetable/", form)
+		data, err := client.SessionPost(apiCtx(), "/instance/describetable/", form)
+		if err != nil {
+			return handleAPIError(err)
+		}
+
+		columns, err := parseDescribeColumns(data)
 		if err != nil {
 			return handleAPIError(err)
 		}
 
 		if jsonMode {
 			fields := getFieldsFlag(cmd)
-			var raw any
-			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
-			}
-			if cols, ok := raw.([]any); ok {
-				for _, col := range cols {
-					if cm, ok := col.(map[string]any); ok {
-						api.TagUntrusted(cm, "comment", "Comment")
-					}
-				}
+			for _, col := range columns {
+				api.TagUntrusted(col, "comment", "Comment", "Create Table")
 			}
 			m := map[string]any{
 				"instance": instanceName,
 				"db":       dbName,
 				"table":    tableName,
-				"columns":  raw,
+				"columns":  columns,
 			}
 			if schemaName != "" {
 				m["schema"] = schemaName
@@ -403,26 +600,53 @@ var instanceDescribeCmd = &cobra.Command{
 			return nil
 		}
 
-		// Text mode
-		var rows []map[string]any
-		if err := json.Unmarshal(data, &rows); err != nil {
-			// Try internal response format
-			var resp struct {
-				Status int             `json:"status"`
-				Msg    string          `json:"msg"`
-				Data   json.RawMessage `json:"data"`
-			}
-			if err2 := json.Unmarshal(data, &resp); err2 == nil && resp.Data != nil {
-				_ = json.Unmarshal(resp.Data, &rows)
-			}
-		}
-		if len(rows) == 0 {
+		if len(columns) == 0 {
 			output.Info("No column information found.")
 			return nil
 		}
-		printDescribeTable(rows)
+		printDescribeTable(columns)
 		return nil
 	},
+}
+
+// parseDescribeColumns parses the describetable response. data is
+// {status,msg,data:{column_list,rows,error}} where rows are positional arrays.
+// Each row is zipped with column_list into a map; if column_list is empty the
+// row is indexed col0/col1/.... A non-zero status surfaces as an APIError.
+func parseDescribeColumns(data []byte) ([]map[string]any, error) {
+	var resp struct {
+		Status int    `json:"status"`
+		Msg    string `json:"msg"`
+		Data   struct {
+			ColumnList []string `json:"column_list"`
+			Rows       [][]any  `json:"rows"`
+			Error      any      `json:"error"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &api.APIError{ErrorMessages: []string{"parsing describe response: " + err.Error()}}
+	}
+	if resp.Status != 0 {
+		msg := resp.Msg
+		if msg == "" {
+			msg = "describe failed"
+		}
+		return nil, &api.APIError{ErrorMessages: []string{msg}}
+	}
+	cols := resp.Data.ColumnList
+	out := make([]map[string]any, 0, len(resp.Data.Rows))
+	for _, row := range resp.Data.Rows {
+		m := map[string]any{}
+		for i, cell := range row {
+			key := fmt.Sprintf("col%d", i)
+			if i < len(cols) && cols[i] != "" {
+				key = cols[i]
+			}
+			m[key] = cell
+		}
+		out = append(out, m)
+	}
+	return out, nil
 }
 
 // ─── instance create ────────────────────────────────────────────────────────
@@ -563,7 +787,8 @@ func (s instanceSpec) buildPayload() (payload map[string]any, detail map[string]
 }
 
 // createInstance POSTs one instance payload and parses the result. Shared by the
-// single create path and the import loop.
+// single create path and the import loop. Instance management is REST-only
+// (admin scope); session web has no create route.
 func createInstance(client *api.Client, payload map[string]any) (instanceResult, string, output.ErrorCode) {
 	data, err := client.Post(apiCtx(), client.APIPath("/v1/instance/"), payload)
 	if err != nil {
@@ -688,15 +913,15 @@ var instanceDeleteCmd = &cobra.Command{
 	},
 }
 
-// ─── instance table-instances ───────────────────────────────────────────────
+// ─── instance test-instance ─────────────────────────────────────────────────
 
-var instanceTableInstancesCmd = &cobra.Command{
-	Use:   "table-instances",
-	Short: "Find which instances contain a given table",
+var instanceTestCmd = &cobra.Command{
+	Use:   "test-instance",
+	Short: "Test connectivity to an instance",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		tableName, _ := cmd.Flags().GetString("table")
-		if tableName == "" {
-			return failArg("--table is required")
+		instanceID, _ := cmd.Flags().GetInt("instance")
+		if instanceID == 0 {
+			return failArg("--instance is required")
 		}
 
 		client, _, _, err := newClient()
@@ -704,72 +929,41 @@ var instanceTableInstancesCmd = &cobra.Command{
 			return err
 		}
 
-		payload := map[string]any{
-			"table_name": tableName,
-		}
-
-		data, err := client.Post(apiCtx(), client.APIPath("/v1/instance/table-instances/"), payload)
+		// check.instance opens a connection and lists databases; status 0 = OK,
+		// status 1 carries the connection error in msg. Session-only endpoint.
+		form := url.Values{"instance_id": {strconv.Itoa(instanceID)}}
+		data, err := client.SessionPost(apiCtx(), "/check/instance/", form)
 		if err != nil {
 			return handleAPIError(err)
 		}
 
-		if jsonMode {
-			fields := getFieldsFlag(cmd)
-			var raw any
-			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
-			}
-			// Try to parse as list of instances
-			var instances []instanceResult
-			if err := json.Unmarshal(data, &instances); err != nil {
-				// Try DRF paginated response
-				var page struct {
-					Results []instanceResult `json:"results"`
-				}
-				if err2 := json.Unmarshal(data, &page); err2 == nil {
-					instances = page.Results
-				} else {
-					// Return raw
-					output.PrintJSON(normalizeAgentValue(raw))
-					return nil
-				}
-			}
-			items := make([]map[string]any, len(instances))
-			for i, inst := range instances {
-				items[i] = instanceResultToMap(inst)
-			}
-			if len(fields) > 0 {
-				filtered := make([]map[string]any, len(items))
-				for i, m := range items {
-					filtered[i] = output.FilterMap(m, fields)
-				}
-				items = filtered
-			}
-			output.PrintJSON(items)
-			return nil
+		var resp struct {
+			Status int    `json:"status"`
+			Msg    string `json:"msg"`
+		}
+		if err := json.Unmarshal(data, &resp); err != nil {
+			return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
 		}
 
-		var instances []instanceResult
-		if err := json.Unmarshal(data, &instances); err != nil {
-			output.Info("No instances found containing table.")
+		reachable := resp.Status == 0
+		result := map[string]any{
+			"instanceId": strconv.Itoa(instanceID),
+			"reachable":  reachable,
+		}
+		if !reachable {
+			result["message"] = resp.Msg
+			api.TagUntrusted(result, "message")
+		}
+
+		if jsonMode {
+			output.PrintJSON(result)
 			return nil
 		}
-		if len(instances) == 0 {
-			output.Info("No instances found containing table.")
-			return nil
+		if reachable {
+			output.Success(fmt.Sprintf("Instance %d is reachable", instanceID))
+		} else {
+			output.Error(fmt.Sprintf("Instance %d is NOT reachable: %s", instanceID, resp.Msg))
 		}
-		headers := []string{"ID", "NAME", "DB TYPE", "HOST", "PORT"}
-		rows := make([][]string, len(instances))
-		for i, inst := range instances {
-			rows[i] = []string{
-				inst.ID,
-				inst.InstanceName,
-				inst.DbType,
-				inst.Host,
-				strconv.Itoa(inst.Port),
-			}
-		}
-		output.Table(headers, rows)
 		return nil
 	},
 }
@@ -798,89 +992,381 @@ var instanceUsersCmd = &cobra.Command{
 			form.Set("saved", "true")
 		}
 
-		data, err := client.InternalPost(apiCtx(), "/instance/user/list", form)
+		// users is session-only. NOTE: route has no trailing slash. The response
+		// carries rows at the top level ({status,msg,rows}), not under data.
+		data, err := client.SessionPost(apiCtx(), "/instance/user/list", form)
 		if err != nil {
 			return handleAPIError(err)
 		}
 
+		var resp struct {
+			Status int              `json:"status"`
+			Msg    string           `json:"msg"`
+			Rows   []map[string]any `json:"rows"`
+		}
+		if err := json.Unmarshal(data, &resp); err != nil {
+			return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
+		}
+		if resp.Status != 0 {
+			return failWithCode(resp.Msg, exitForErrorCode(output.E_VALIDATION), output.E_VALIDATION)
+		}
+
 		if jsonMode {
 			fields := getFieldsFlag(cmd)
-			var raw any
-			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
-			}
-			// Try to extract rows from internal response format
-			var resp struct {
-				Status int    `json:"status"`
-				Msg    string `json:"msg"`
-				Data   struct {
-					Total int              `json:"total"`
-					Rows  []map[string]any `json:"rows"`
-				} `json:"data"`
-			}
-			if err := json.Unmarshal(data, &resp); err == nil && len(resp.Data.Rows) > 0 {
-				items := normalizeAgentRows(resp.Data.Rows)
-				if len(fields) > 0 {
-					filtered := make([]map[string]any, len(items))
-					for i, m := range items {
-						filtered[i] = output.FilterMap(m, fields)
-					}
-					items = filtered
+			items := normalizeAgentRows(resp.Rows)
+			if len(fields) > 0 {
+				filtered := make([]map[string]any, len(items))
+				for i, m := range items {
+					filtered[i] = output.FilterMap(m, fields)
 				}
-				output.PrintJSON(items)
-				return nil
+				items = filtered
 			}
-			// Fallback: return raw
-			if m, ok := raw.(map[string]any); ok && len(fields) > 0 {
-				output.PrintJSON(output.FilterMap(normalizeAgentMap(m), fields))
-			} else {
-				output.PrintJSON(normalizeAgentValue(raw))
-			}
+			output.PrintJSON(items)
 			return nil
 		}
 
-		// Text mode
+		if len(resp.Rows) == 0 {
+			output.Info("No users found.")
+			return nil
+		}
+		printDynamicTable(resp.Rows)
+		return nil
+	},
+}
+
+// ─── instance create-db ─────────────────────────────────────────────────────
+
+var instanceCreateDBCmd = &cobra.Command{
+	Use:   "create-db",
+	Short: "Create a database on an instance",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		instanceID, _ := cmd.Flags().GetInt("instance")
+		if instanceID == 0 {
+			return failArg("--instance is required")
+		}
+		dbName, err := requireFlagString(cmd, "db", "--db")
+		if err != nil {
+			return err
+		}
+		owner, _ := cmd.Flags().GetString("owner")
+		remark, _ := cmd.Flags().GetString("remark")
+
+		detail := map[string]any{"instanceId": strconv.Itoa(instanceID), "db": dbName}
+		if owner != "" {
+			detail["owner"] = owner
+		}
+		if markDryRunOrConfirmWithPayload("create database", detail, detail) {
+			return nil
+		}
+
+		client, _, _, err := newClient()
+		if err != nil {
+			return err
+		}
+
+		form := url.Values{
+			"instance_id": {strconv.Itoa(instanceID)},
+			"db_name":     {dbName},
+		}
+		if owner != "" {
+			form.Set("owner", owner)
+		}
+		if remark != "" {
+			form.Set("remark", remark)
+		}
+
+		if err := sessionMutate(client, "/instance/database/create/", form); err != nil {
+			return handleAPIError(err)
+		}
+
+		if jsonMode {
+			output.PrintJSON(map[string]any{
+				"created":    true,
+				"instanceId": strconv.Itoa(instanceID),
+				"db":         dbName,
+			})
+			return nil
+		}
+		output.Success(fmt.Sprintf("Database %q created on instance %d", dbName, instanceID))
+		return nil
+	},
+}
+
+// ─── instance create-user ───────────────────────────────────────────────────
+
+var instanceCreateUserCmd = &cobra.Command{
+	Use:   "create-user",
+	Short: "Create a database account on an instance",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		instanceID, _ := cmd.Flags().GetInt("instance")
+		if instanceID == 0 {
+			return failArg("--instance is required")
+		}
+		user, err := requireFlagString(cmd, "user", "--user")
+		if err != nil {
+			return err
+		}
+		host, err := requireFlagString(cmd, "host", "--host")
+		if err != nil {
+			return err
+		}
+		password, err := requireFlagString(cmd, "password", "--password")
+		if err != nil {
+			return err
+		}
+		remark, _ := cmd.Flags().GetString("remark")
+
+		detail := map[string]any{
+			"instanceId": strconv.Itoa(instanceID),
+			"user":       user,
+			"host":       host,
+			"password":   "***",
+		}
+		confirmPayload := map[string]any{
+			"instanceId": strconv.Itoa(instanceID),
+			"user":       user,
+			"host":       host,
+		}
+		if markDryRunOrConfirmWithPayload("create database account", detail, confirmPayload) {
+			return nil
+		}
+
+		client, _, _, err := newClient()
+		if err != nil {
+			return err
+		}
+
+		// instance_account.create requires password1==password2.
+		form := url.Values{
+			"instance_id": {strconv.Itoa(instanceID)},
+			"user":        {user},
+			"host":        {host},
+			"password1":   {password},
+			"password2":   {password},
+		}
+		if remark != "" {
+			form.Set("remark", remark)
+		}
+
+		if err := sessionMutate(client, "/instance/user/create/", form); err != nil {
+			return handleAPIError(err)
+		}
+
+		if jsonMode {
+			output.PrintJSON(map[string]any{
+				"created":    true,
+				"instanceId": strconv.Itoa(instanceID),
+				"user":       user,
+				"host":       host,
+			})
+			return nil
+		}
+		output.Success(fmt.Sprintf("Account '%s'@'%s' created on instance %d", user, host, instanceID))
+		return nil
+	},
+}
+
+// ─── instance grant ─────────────────────────────────────────────────────────
+
+var instanceGrantCmd = &cobra.Command{
+	Use:   "grant",
+	Short: "Grant or revoke privileges for a database account",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		instanceID, _ := cmd.Flags().GetInt("instance")
+		if instanceID == 0 {
+			return failArg("--instance is required")
+		}
+		userHost, err := requireFlagString(cmd, "user-host", "--user-host")
+		if err != nil {
+			return err
+		}
+		op, _ := cmd.Flags().GetString("op")
+		opType, err := grantOpType(op)
+		if err != nil {
+			return err
+		}
+		level, _ := cmd.Flags().GetString("level")
+		privType, privKey, err := grantPrivType(level)
+		if err != nil {
+			return err
+		}
+		privsRaw, _ := cmd.Flags().GetString("privs")
+		privs := splitCSVNonEmpty(privsRaw)
+		if len(privs) == 0 {
+			return failArg("--privs is required (comma-separated privilege names)")
+		}
+		dbNames, _ := cmd.Flags().GetStringSlice("db")
+		tbNames, _ := cmd.Flags().GetStringSlice("table")
+		colNames, _ := cmd.Flags().GetStringSlice("column")
+
+		// Validate the level-specific operands before any network call.
+		switch level {
+		case "db":
+			if len(dbNames) == 0 {
+				return failArg("--db is required at least once for db level")
+			}
+		case "table":
+			if len(dbNames) != 1 {
+				return failArg("table level needs exactly one --db")
+			}
+			if len(tbNames) == 0 {
+				return failArg("--table is required at least once for table level")
+			}
+		case "column":
+			if len(dbNames) != 1 {
+				return failArg("column level needs exactly one --db")
+			}
+			if len(tbNames) != 1 {
+				return failArg("column level needs exactly one --table")
+			}
+			if len(colNames) == 0 {
+				return failArg("--column is required at least once for column level")
+			}
+		}
+
+		privsJSON, err := json.Marshal(map[string][]string{privKey: privs})
+		if err != nil {
+			return failArg("encoding privs: " + err.Error())
+		}
+
+		detail := map[string]any{
+			"instanceId": strconv.Itoa(instanceID),
+			"userHost":   userHost,
+			"op":         strings.ToLower(op),
+			"level":      level,
+			"privs":      privs,
+		}
+		if len(dbNames) > 0 {
+			detail["db"] = dbNames
+		}
+		if len(tbNames) > 0 {
+			detail["table"] = tbNames
+		}
+		if len(colNames) > 0 {
+			detail["column"] = colNames
+		}
+		if markDryRunOrConfirmWithPayload("change account privileges", detail, detail) {
+			return nil
+		}
+
+		client, _, _, err := newClient()
+		if err != nil {
+			return err
+		}
+
+		form := url.Values{
+			"instance_id": {strconv.Itoa(instanceID)},
+			"user_host":   {userHost},
+			"op_type":     {strconv.Itoa(opType)},
+			"priv_type":   {strconv.Itoa(privType)},
+			"privs":       {string(privsJSON)},
+		}
+		// The view reads db_name[] (getlist) at db level, but a scalar db_name at
+		// table/column level; tb_name[] at table level and a scalar tb_name at
+		// column level (then col_name[]).
+		switch level {
+		case "db":
+			for _, db := range dbNames {
+				form.Add("db_name[]", db)
+			}
+		case "table":
+			form.Set("db_name", dbNames[0])
+			for _, tb := range tbNames {
+				form.Add("tb_name[]", tb)
+			}
+		case "column":
+			form.Set("db_name", dbNames[0])
+			form.Set("tb_name", tbNames[0])
+			for _, col := range colNames {
+				form.Add("col_name[]", col)
+			}
+		}
+
+		data, err := client.SessionPost(apiCtx(), "/instance/user/grant/", form)
+		if err != nil {
+			return handleAPIError(err)
+		}
 		var resp struct {
 			Status int    `json:"status"`
 			Msg    string `json:"msg"`
-			Data   struct {
-				Total int              `json:"total"`
-				Rows  []map[string]any `json:"rows"`
-			} `json:"data"`
+			Data   any    `json:"data"`
 		}
-		if err := json.Unmarshal(data, &resp); err != nil || len(resp.Data.Rows) == 0 {
-			output.Info("No users found.")
+		if err := json.Unmarshal(data, &resp); err != nil {
+			return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
+		}
+		if resp.Status != 0 {
+			return failWithCode(resp.Msg, exitForErrorCode(output.E_VALIDATION), output.E_VALIDATION)
+		}
+
+		// data is the executed GRANT/REVOKE SQL (external content).
+		grantSQL, _ := resp.Data.(string)
+		if jsonMode {
+			out := map[string]any{
+				"applied":    true,
+				"instanceId": strconv.Itoa(instanceID),
+				"userHost":   userHost,
+				"sql":        grantSQL,
+			}
+			api.TagUntrusted(out, "sql")
+			output.PrintJSON(out)
 			return nil
 		}
-		if len(resp.Data.Rows) == 0 {
-			output.Info("No users found.")
-			return nil
-		}
-		// Build table from dynamic keys
-		var headers []string
-		var rows [][]string
-		for i, row := range resp.Data.Rows {
-			if i == 0 {
-				for k := range row {
-					headers = append(headers, strings.ToUpper(k))
-				}
-			}
-			var cells []string
-			for _, h := range headers {
-				key := strings.ToLower(h)
-				if v, ok := row[key]; ok {
-					cells = append(cells, fmt.Sprintf("%v", v))
-				} else {
-					cells = append(cells, "")
-				}
-			}
-			rows = append(rows, cells)
-		}
-		if len(headers) > 0 {
-			output.Table(headers, rows)
-		}
+		output.Success(fmt.Sprintf("Privileges changed for %s on instance %d", userHost, instanceID))
 		return nil
 	},
+}
+
+// grantOpType maps the --op flag to Archery's op_type int (0 grant, 1 revoke).
+func grantOpType(op string) (int, error) {
+	switch strings.ToLower(strings.TrimSpace(op)) {
+	case "grant", "":
+		return 0, nil
+	case "revoke":
+		return 1, nil
+	default:
+		return 0, failArg("--op must be 'grant' or 'revoke'")
+	}
+}
+
+// grantPrivType maps the --level flag to Archery's priv_type int and the privs
+// JSON key the view expects (global_privs/db_privs/tb_privs/col_privs).
+func grantPrivType(level string) (int, string, error) {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "global":
+		return 0, "global_privs", nil
+	case "db":
+		return 1, "db_privs", nil
+	case "table":
+		return 2, "tb_privs", nil
+	case "column":
+		return 3, "col_privs", nil
+	default:
+		return 0, "", failArg("--level must be one of: global, db, table, column")
+	}
+}
+
+// sessionMutate POSTs a form to a session endpoint that answers with the Archery
+// internal envelope {status,msg,data}, surfacing status!=0 as a validation error.
+func sessionMutate(client *api.Client, path string, form url.Values) error {
+	data, err := client.SessionPost(apiCtx(), path, form)
+	if err != nil {
+		return err
+	}
+	var resp struct {
+		Status int    `json:"status"`
+		Msg    string `json:"msg"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return &api.APIError{ErrorMessages: []string{"parsing response: " + err.Error()}}
+	}
+	if resp.Status != 0 {
+		msg := resp.Msg
+		if msg == "" {
+			msg = "operation failed"
+		}
+		return &api.APIError{StatusCode: 400, ErrorMessages: []string{msg}}
+	}
+	return nil
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -961,6 +1447,19 @@ func printInstanceField(label, value string) {
 	}
 }
 
+// splitCSVNonEmpty splits a comma-separated string, trimming each element and
+// dropping empties.
+func splitCSVNonEmpty(s string) []string {
+	out := []string{}
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
 func extractResourceItems(raw any) []map[string]any {
 	if raw == nil {
 		return nil
@@ -969,8 +1468,11 @@ func extractResourceItems(raw any) []map[string]any {
 	if arr, ok := raw.([]any); ok {
 		items := make([]map[string]any, 0, len(arr))
 		for _, v := range arr {
-			if m, ok := v.(map[string]any); ok {
-				items = append(items, normalizeAgentMap(m))
+			switch row := v.(type) {
+			case map[string]any:
+				items = append(items, normalizeAgentMap(row))
+			default:
+				items = append(items, map[string]any{"name": row})
 			}
 		}
 		return items
@@ -987,6 +1489,7 @@ func extractResourceItems(raw any) []map[string]any {
 					return extractResourceItems(rows)
 				}
 			}
+			return extractResourceItems(data)
 		}
 	}
 	return nil
@@ -997,40 +1500,7 @@ func printResourceTable(items []map[string]any) {
 		output.Info("No resources found.")
 		return
 	}
-	// Collect all keys from items
-	keySet := map[string]bool{}
-	for _, m := range items {
-		for k := range m {
-			keySet[k] = true
-		}
-	}
-	var headers []string
-	for k := range keySet {
-		headers = append(headers, strings.ToUpper(k))
-	}
-	// Use stable order from first item
-	if len(items) > 0 {
-		headers = nil
-		for k := range items[0] {
-			headers = append(headers, strings.ToUpper(k))
-		}
-	}
-	rows := make([][]string, len(items))
-	for i, m := range items {
-		cells := make([]string, len(headers))
-		for j, h := range headers {
-			key := strings.ToLower(h)
-			// Try camelCase match
-			for mk, mv := range m {
-				if strings.ToLower(mk) == key {
-					cells[j] = fmt.Sprintf("%v", mv)
-					break
-				}
-			}
-		}
-		rows[i] = cells
-	}
-	output.Table(headers, rows)
+	printDynamicTable(items)
 }
 
 func printDescribeTable(rows []map[string]any) {
@@ -1038,29 +1508,5 @@ func printDescribeTable(rows []map[string]any) {
 		output.Info("No column information found.")
 		return
 	}
-	// Common DESCRIBE columns
-	headers := []string{"FIELD", "TYPE", "NULL", "KEY", "DEFAULT", "EXTRA"}
-	keyMap := map[string]string{
-		"FIELD":   "field",
-		"TYPE":    "type",
-		"NULL":    "null",
-		"KEY":     "key",
-		"DEFAULT": "default",
-		"EXTRA":   "extra",
-	}
-	tableRows := make([][]string, len(rows))
-	for i, row := range rows {
-		cells := make([]string, len(headers))
-		for j, h := range headers {
-			lower := keyMap[h]
-			for k, v := range row {
-				if strings.EqualFold(k, lower) {
-					cells[j] = fmt.Sprintf("%v", v)
-					break
-				}
-			}
-		}
-		tableRows[i] = cells
-	}
-	output.Table(headers, tableRows)
+	printDynamicTable(rows)
 }
