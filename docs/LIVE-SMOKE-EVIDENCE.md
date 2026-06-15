@@ -13,6 +13,62 @@ from scratch for this acceptance.
   asserted. JWT cached in the OS keyring; session-mode commands authenticate
   via the Django form login.
 
+## 2026-06-15 — `instance` group, session (AJAX) path
+
+Live run of every `instance` leaf command against the running
+`tools-e2e-archery` (`hhyo/archery:v1.8.5`, the production version) on
+`localhost:9123`, default **session** mode, superuser `cli_verify`. Reads
+verified end-to-end; session-native writes (`create-db`, `create-user`,
+`grant`) really submitted against `e2e-mysql` (instance #1) and cleaned up;
+REST-only writes verified through dry-run + contract.
+
+### Result by command
+
+| Command | Transport | Status | Note |
+|---|---|---|---|
+| `instance list` | `POST /instance/list/` | **live PASS** | returns `e2e-mysql`; `--db-type`, `--search`, text table all OK |
+| `instance detail <id>` | `POST /instance/list/` (scan) | **live PASS** | found #1; #999 → clean `E_NOT_FOUND` 404 |
+| `instance resource --type database\|table\|column` | `GET /instance/instance_resource/` | **live PASS** | uses `tb_name`; rows normalized to `{name:…}` |
+| `instance describe` | `POST /instance/describetable/` | **live PASS** | v1.8.5 returns `SHOW CREATE TABLE` (column_list + rows zipped); `Create Table`/`Comment` tagged untrusted |
+| `instance users [--saved]` | `POST /instance/user/list` (no trailing slash) | **live PASS** | rows at top level, not under `data`; privileges tagged untrusted |
+| `instance test-instance` | `POST /check/instance/` | **live PASS** | `reachable:true` |
+| `instance create-db` | `POST /instance/database/create/` | **live PASS** | real DB created + dropped; owner required by the view |
+| `instance create-user` | `POST /instance/user/create/` | **live PASS** | real account created (`password1==password2`) + dropped |
+| `instance grant` (grant/revoke, global/db) | `POST /instance/user/grant/` | **live PASS** | executed GRANT/REVOKE SQL returned + tagged untrusted |
+| `instance create` | `POST /api/v1/instance/` | **dry-run PASS; real = REST-only** | session has no AJAX CRUD route; real submit needs `--mode jwt` |
+| `instance update <id>` | `PUT /api/v1/instance/<id>/` | **dry-run PASS; real = REST-only** | same as create |
+| `instance delete <id>` | `DELETE /api/v1/instance/<id>/` | **dry-run PASS; real = REST-only** | same as create |
+| `instance import --file` | `POST /api/v1/instance/` per row | **dry-run PASS; real = REST-only** | CSV/JSON manifest preview correct |
+
+`create`/`update`/`delete`/`import` are REST-only by design: v1.8.5's
+`views.instance` only renders an HTML page and the UI edits instances via Django
+admin (`/admin/sql/instance/…`); the programmatic CRUD route is DRF
+`/api/v1/instance/`, which requires JWT. In session mode their dry-run/confirm
+contract is correct and the real submit honestly surfaces `E_AUTH` until
+`--mode jwt` is used.
+
+### Defects found and fixed by this run
+
+1. **Stale session cookie poisoned lazy re-login.** When `ensureSession` fell
+   through to a fresh form-login with an already-authenticated `sessionid` in
+   the jar, Archery's `/authenticate/` took a branch returning a `session_key`
+   in `data` with no new `Set-Cookie`, so `hasSessionCookie()` stayed false and
+   login spuriously failed with `session login failed: ok`. Fix: clear
+   `sessionid`/`csrftoken` from the jar before a fresh form-login so it always
+   starts clean (`clearSessionCookies`, `internal/api/client.go`).
+2. **`instance grant` emitted invalid SQL.** The grant view splices `user_host`
+   straight into `GRANT … TO <x>`, so the friendly `user@host` produced
+   `… TO e2e_probe@%;` → MySQL `1064` syntax error near `'%'`. Fix: normalize
+   `--user-host` to the backtick-quoted `` `user`@`host` `` form (pass an
+   already-quoted value through), with host defaulting to `%` (`quoteUserHost`,
+   `cmd/instance.go`; covered by `TestQuoteUserHost`).
+
+### Note
+
+`instance resource --type database` is served behind Archery's `@cache_page`
+(Redis `…insRes…` key), so a freshly dropped database lingers in the list until
+the cache expires — a server-side cache, not a CLI defect.
+
 ## 2026-06-15 — batch commands (`--ids` / `--instances` / `--file`)
 
 Smoke for the new client-side batch contract (CLI-SPEC §15) against the same

@@ -55,6 +55,17 @@ var pathOverrides = map[string]string{
 		`"desc":{"column_list":["col_name","col_type"],"rows":[["id","bigint"],["name","varchar(64)"]]},` +
 		`"index":{"column_list":["col_name","index_name"],"rows":[["id","PRIMARY"]]},` +
 		`"create_sql":[["users","CREATE TABLE users (...)"]]}}`,
+	// instance list (session) returns {total,rows}; detail filters this by id, so
+	// row id=1 must be present for `instance detail 1` to resolve.
+	"/instance/list/": `{"total":1,"rows":[{"id":1,"instance_name":"inst1","db_type":"mysql","type":"master","host":"127.0.0.1","port":3306,"user":"root"}]}`,
+	// instance_resource (session) returns data as a flat name list.
+	"/instance/instance_resource/": `{"status":0,"msg":"ok","data":["db1","db2"]}`,
+	// describetable (session) returns a ResultSet with positional rows.
+	"/instance/describetable/": `{"status":0,"msg":"ok","data":{"column_list":["Table","Create Table"],"rows":[["t1","CREATE TABLE t1 (...)"]],"error":null}}`,
+	// instance user list (session) carries rows at the top level.
+	"/instance/user/list": `{"status":0,"msg":"ok","rows":[]}`,
+	// grant (session) returns the executed SQL in data.
+	"/instance/user/grant/": `{"status":0,"msg":"ok","data":"GRANT SELECT ON *.* TO ` + "`app`@`%`" + `;"}`,
 }
 
 func universalMux() http.Handler {

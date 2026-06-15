@@ -40,16 +40,19 @@ var referenceLeafSchemas = map[string]referenceLeaf{
 	"workflow auto-review": {schema: "workflow_auto_review", examples: []string{"archery-cli workflow auto-review --instance-name prod-mysql --db app --sql 'UPDATE t SET x=1 WHERE id=1' --compact", "archery-cli workflow auto-review --instance-name prod-mysql --db app --sql 'UPDATE t SET x=1 WHERE id=1' --execute --ids 42,43 --dry-run --compact", "archery-cli workflow auto-review --instance-name prod-mysql --db app --sql 'UPDATE t SET x=1 WHERE id=1' --execute --ids 42,43 --confirm <confirm_token> --compact"}},
 
 	// ─── instance ─────────────────────────────────────────────────────────────
-	"instance list":            {schema: "instance_list", examples: []string{"archery-cli instance list --db-type mysql --limit 20 --compact"}},
-	"instance detail":          {schema: "instance_detail", examples: []string{"archery-cli instance detail 1 --compact"}},
-	"instance resource":        {schema: "resource_item_list", examples: []string{"archery-cli instance resource --instance 1 --type database --compact"}},
-	"instance describe":        {schema: "instance_describe", examples: []string{"archery-cli instance describe --instance prod-mysql --db app --table users --compact"}},
-	"instance create":          {schema: "instance_detail", examples: []string{"archery-cli instance create --name prod-mysql --type master --db-type mysql --host db.example.com --port 3306 --user app --dangerous --dry-run --compact", "archery-cli instance create --name prod-mysql --type master --db-type mysql --host db.example.com --port 3306 --user app --dangerous --confirm <confirm_token> --compact"}},
-	"instance import":          {schema: "batch_result", examples: []string{"archery-cli instance import --file instances.csv --dangerous --dry-run --compact", "archery-cli instance import --file instances.csv --dangerous --confirm <confirm_token> --compact"}},
-	"instance update":          {schema: "instance_detail", examples: []string{"archery-cli instance update 1 --host db2.example.com --dangerous --dry-run --compact", "archery-cli instance update 1 --host db2.example.com --dangerous --confirm <confirm_token> --compact"}},
-	"instance delete":          {schema: "instance_delete", examples: []string{"archery-cli instance delete 1 --dangerous --dry-run --compact", "archery-cli instance delete 1 --dangerous --confirm <confirm_token> --compact"}},
-	"instance table-instances": {schema: "instance_item_list", examples: []string{"archery-cli instance table-instances --table users --compact"}},
-	"instance users":           {schema: "instance_user_list", examples: []string{"archery-cli instance users --instance 1 --compact"}},
+	"instance list":          {schema: "instance_list", examples: []string{"archery-cli instance list --db-type mysql --limit 20 --compact"}},
+	"instance detail":        {schema: "instance_detail", examples: []string{"archery-cli instance detail 1 --compact"}},
+	"instance resource":      {schema: "resource_item_list", examples: []string{"archery-cli instance resource --instance 1 --type database --compact"}},
+	"instance describe":      {schema: "instance_describe", examples: []string{"archery-cli instance describe --instance prod-mysql --db app --table users --compact"}},
+	"instance create":        {schema: "instance_detail", examples: []string{"archery-cli instance create --name prod-mysql --type master --db-type mysql --host db.example.com --port 3306 --user app --dangerous --dry-run --compact", "archery-cli instance create --name prod-mysql --type master --db-type mysql --host db.example.com --port 3306 --user app --dangerous --confirm <confirm_token> --compact"}},
+	"instance import":        {schema: "batch_result", examples: []string{"archery-cli instance import --file instances.csv --dangerous --dry-run --compact", "archery-cli instance import --file instances.csv --dangerous --confirm <confirm_token> --compact"}},
+	"instance update":        {schema: "instance_detail", examples: []string{"archery-cli instance update 1 --host db2.example.com --dangerous --dry-run --compact", "archery-cli instance update 1 --host db2.example.com --dangerous --confirm <confirm_token> --compact"}},
+	"instance delete":        {schema: "instance_delete", examples: []string{"archery-cli instance delete 1 --dangerous --dry-run --compact", "archery-cli instance delete 1 --dangerous --confirm <confirm_token> --compact"}},
+	"instance users":         {schema: "instance_user_list", examples: []string{"archery-cli instance users --instance 1 --compact"}},
+	"instance test-instance": {schema: "instance_test", examples: []string{"archery-cli instance test-instance --instance 1 --compact"}},
+	"instance create-db":     {schema: "instance_create_db", examples: []string{"archery-cli instance create-db --instance 1 --db reporting --owner alice --dangerous --dry-run --compact", "archery-cli instance create-db --instance 1 --db reporting --owner alice --dangerous --confirm <confirm_token> --compact"}},
+	"instance create-user":   {schema: "instance_create_user", examples: []string{"archery-cli instance create-user --instance 1 --user app --host '%' --password 'S3cret!' --dangerous --dry-run --compact", "archery-cli instance create-user --instance 1 --user app --host '%' --password 'S3cret!' --dangerous --confirm <confirm_token> --compact"}},
+	"instance grant":         {schema: "instance_grant", examples: []string{"archery-cli instance grant --instance 1 --user-host '`app`@`%`' --op grant --level db --db reporting --privs SELECT,INSERT --dangerous --dry-run --compact", "archery-cli instance grant --instance 1 --user-host '`app`@`%`' --op grant --level db --db reporting --privs SELECT,INSERT --dangerous --confirm <confirm_token> --compact"}},
 
 	// ─── query ────────────────────────────────────────────────────────────────
 	"query run":      {schema: "query_run", examples: []string{"archery-cli query run --instance prod-mysql --db app --sql 'SELECT * FROM users LIMIT 10' --dangerous --dry-run --compact", "archery-cli query run --instance prod-mysql --db app --sql 'SELECT * FROM users LIMIT 10' --dangerous --confirm <confirm_token> --compact", "archery-cli query run --instances prod-mysql,prod-mysql-2 --db app --sql 'SELECT COUNT(*) FROM users' --dangerous --dry-run --compact", "archery-cli query run --instances prod-mysql,prod-mysql-2 --db app --sql 'SELECT COUNT(*) FROM users' --dangerous --confirm <confirm_token> --compact"}},
@@ -132,13 +135,16 @@ func referenceSchemas() map[string]refDataSchema {
 		"workflow_auto_review": {Shape: "object", Fields: []string{"compliant", "blocked", "results", "results[].sql", "results[].errlevel", "results[].level", "results[].stagestatus", "results[].message", "results[].affectedRows", "results[].verdict", "items", "summary", "preview", "confirm_token", "expires_at"}, UntrustedFields: []string{"results[].sql", "results[].message"}},
 
 		// ─── instance ─────────────────────────────────────────────────────────
-		"instance_list":      {Shape: "list", Fields: append(append([]string{}, listEnvelopeFields...), "id", "instanceName", "dbType", "host", "port", "user", "dbName", "charset", "environment", "instanceTag", "isActive")},
-		"instance_detail":    {Shape: "object", Fields: []string{"id", "instanceName", "dbType", "host", "port", "user", "dbName", "charset", "environment", "instanceTag", "isActive"}},
-		"instance_delete":    {Shape: "object", Fields: []string{"deleted", "instanceId"}},
-		"instance_item_list": {Shape: "array", Fields: []string{"id", "instanceName", "dbType", "host", "port", "user", "dbName", "charset", "environment", "instanceTag", "isActive"}},
-		"instance_user_list": {Shape: "array", Fields: []string{"<dynamic upstream user row keys>"}},
-		"instance_describe":  {Shape: "object", Fields: []string{"instance", "db", "table", "schema", "columns"}, UntrustedFields: []string{"columns[].comment", "columns[].Comment"}},
-		"resource_item_list": {Shape: "array", Fields: []string{"<dynamic resource row keys: database|schema|table|column>"}},
+		"instance_list":        {Shape: "list", Fields: append(append([]string{}, listEnvelopeFields...), "id", "instanceName", "dbType", "host", "port", "user", "dbName", "charset", "environment", "instanceTag", "isActive")},
+		"instance_detail":      {Shape: "object", Fields: []string{"id", "instanceName", "dbType", "host", "port", "user", "dbName", "charset", "environment", "instanceTag", "isActive"}},
+		"instance_delete":      {Shape: "object", Fields: []string{"deleted", "instanceId"}},
+		"instance_user_list":   {Shape: "array", Fields: []string{"<dynamic upstream user row keys: user_host, user, host, privileges, saved, is_locked, ...>"}, UntrustedFields: []string{"privileges"}},
+		"instance_describe":    {Shape: "object", Fields: []string{"instance", "db", "table", "schema", "columns"}, UntrustedFields: []string{"columns[].comment", "columns[].Comment", "columns[].Create Table"}},
+		"resource_item_list":   {Shape: "array", Fields: []string{"<dynamic resource row keys: name (database|schema|table) or colN (column)>"}},
+		"instance_test":        {Shape: "object", Fields: []string{"instanceId", "reachable", "message"}, UntrustedFields: []string{"message"}},
+		"instance_create_db":   {Shape: "object", Fields: []string{"created", "instanceId", "db"}},
+		"instance_create_user": {Shape: "object", Fields: []string{"created", "instanceId", "user", "host"}},
+		"instance_grant":       {Shape: "object", Fields: []string{"applied", "instanceId", "userHost", "sql"}, UntrustedFields: []string{"sql"}},
 
 		// ─── batch (CLI-SPEC §15) ──────────────────────────────────────────────
 		// Shared shape for client-side batch commands (class B): per-item items[]
