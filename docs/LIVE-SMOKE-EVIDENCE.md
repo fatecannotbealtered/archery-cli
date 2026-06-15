@@ -182,6 +182,58 @@ here.
    `msg`. Covered by `TestQueryExplainResponseDecode` (now exercises both the
    object success shape and the `data:[]` rejection envelope).
 
+## 2026-06-15 — `workflow` group, session path (v1.8.5)
+
+Full live verification of the `workflow` command group against
+`hhyo/archery:v1.8.5` on `localhost:9123` (= company production version), using
+a superuser (`cli_verify`) in session mode (the default). Credentials supplied
+via `ARCHERY_CLI_URL`/`USERNAME`/`PASSWORD`; each call performs the Django form
+login then the AJAX request with `X-CSRFToken`. No credentials, hostnames, or
+real workflow contents reproduced here.
+
+### Result by command
+
+| Command | Mode | Result |
+|---|---|---|
+| `workflow list` | **live (read)** | PASS — `/sqlworkflow_list/` offset envelope (`items`/`count`/`total`/`has_more`); `--status`/`--search`/`--limit`/`--offset` applied; `title` tagged `_untrusted`; row `statusCode`/`status` mapped. |
+| `workflow audit-list` | **live (read)** | PASS — `/sqlworkflow_list_audit/` same shape; empty set when nothing pending. |
+| `workflow detail <id>` | **live (read)** | PASS — `/sqlworkflow/detail_content/`; SQL content reconstructed from the review rows, `sql`+`title` `_untrusted`. Metadata fields (title/db/created) are blank by design — v1.8.5's `detail_content` returns only review rows, no metadata endpoint exists (documented in `workflow.go`). |
+| `workflow sqlcheck` | **live (read)** | PASS — `/simplecheck/` returns per-statement `{errlevel,level,message,stagestatus,affected_rows,sql}`; `SELECT` correctly rejected (DML/DDL only), clean DDL → `errlevel 0`, keyword DDL → `errlevel 1` warning. |
+| `workflow auto-review` (classify) | **live (read)** | PASS — same `/simplecheck/` engine; clean DDL → `compliant:true blocked:0`, warning DDL → `compliant:false blocked:1` (`verdict:block` on the non-zero `errlevel` row). |
+| `workflow submit` | **live (write)** | PASS — dry-run `preview`+`confirm_token`; confirmed real submit → `/autoreview/` 302 redirect, workflow id parsed from `Location`; new workflow visible via `list` at `workflow_manreviewing`. Medium-tier (no `--dangerous`). |
+| `workflow audit` (single) | **live (reversible)** | PASS — dry-run preview; confirmed `--action pass` → `/passed/`; status advanced to `workflow_review_pass`. `--action cancel` correctly routes to the Cancel view. |
+| `workflow audit --ids` (batch) | **live (reversible)** | PASS — shared single `confirm_token`, `items[]`+`summary{total,succeeded,failed,skipped}`; two workflows passed, `succeeded:2`. |
+| `workflow auto-review --execute` | **live (reversible)** | PASS — classified compliant, then approved the listed `--ids` via the batch audit path (shared confirm token, `succeeded:1`). Without `--execute` it stays a read-only classify. |
+| `workflow execute` | **live drive + contract (high-risk)** | PARTIAL — `--dangerous` double-gate verified (dry-run without it → `E_CONFIRMATION_REQUIRED`); dry-run `preview`+`confirm_token`; confirmed execute reaches the real engine (`/execute/`, status transitions). Terminal status is `workflow_exception` because GoInception's own backup requires MySQL binlog, which is **off** in this `mysql:5.7` e2e container (`binlog日志未开启,无法备份`) — an environment constraint, not a CLI defect. No DDL was applied (engine failed at the CHECKED stage). CLI contract fully verified. |
+| `workflow cancel` | **live (reversible)** | PASS — dry-run preview; confirmed `/cancel/` with `cancel_remark`; status → `workflow_abort`. |
+| `workflow list --mode jwt` | **contract** | PASS — REST path returns a clean `E_FORBIDDEN` (session auth is not a Bearer token); JWT is opt-in and out of scope for the session run. |
+
+### Defects found and fixed by this run
+
+None. Every `workflow` session-mode endpoint and payload matched v1.8.5 as
+shipped; no `archery-cli` code change was needed for the workflow group.
+
+### Environment provisioning (not CLI changes)
+
+The fresh e2e container had no workflow-capable data, so the following Archery
+config was provisioned in the isolated container to exercise the write path
+(reversible, no CLI code involved). The blockers were surfaced cleanly by the
+CLI before each fix:
+
+1. **GoInception unconfigured** (`connect() argument 1 must be str, not None`) —
+   set `go_inception_host=goinception`, `go_inception_port=4000` (the reachable
+   `tools-e2e-goinception` container).
+2. **Instance had no tags** (`你所在组未关联该实例`) — added the `can_write` /
+   `can_read` tags to `e2e-mysql`, which the submit RBAC check requires.
+3. **No audit flow** (`Column 'audit_auth_groups' cannot be null`) — created a
+   `WorkflowAuditSetting` for the resource group (workflow_type 2 = sqlreview)
+   and an auth group `cli_verify_auditors` containing the verify user.
+
+All verification workflows (and their audit/log records) were deleted from the
+container afterward; no `cli_verify*` tables were created on the target DB
+(execute never reached the apply stage). The enabling config above was left in
+place so the shared e2e stack stays workflow-capable.
+
 ## Reproduce
 
 ```bash
