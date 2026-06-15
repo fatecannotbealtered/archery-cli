@@ -47,7 +47,7 @@ func init() {
 	markRiskLevel(archiveApplyCmd, "high")
 
 	// archive audit
-	archiveAuditCmd.Flags().String("action", "", "Audit action: pass|cancel (required)")
+	archiveAuditCmd.Flags().String("action", "", "Audit action: pass|reject|cancel (required)")
 	archiveAuditCmd.Flags().String("remark", "", "Audit remark/comment")
 	archiveCmd.AddCommand(archiveAuditCmd)
 	markWrite(archiveAuditCmd)
@@ -104,10 +104,12 @@ var archiveListCmd = &cobra.Command{
 
 		params := url.Values{}
 		if instanceID > 0 {
-			params.Set("instance_id", strconv.Itoa(instanceID))
+			// v1.8.5 archive_list reads request.GET['filter_instance_id'].
+			params.Set("filter_instance_id", strconv.Itoa(instanceID))
 		}
 		if state != "" {
-			params.Set("state", state)
+			// The view compares against the strings 'true'/'false', not enable/disable.
+			params.Set("state", boolFormValue(state == "enable"))
 		}
 		if search != "" {
 			params.Set("search", search)
@@ -144,36 +146,28 @@ var archiveListCmd = &cobra.Command{
 			return nil
 		}
 
-		// Text mode
+		// Text mode. The view returns a flat {total, rows} document.
 		var resp struct {
-			Status int    `json:"status"`
-			Msg    string `json:"msg"`
-			Data   struct {
-				Total int              `json:"total"`
-				Rows  []map[string]any `json:"rows"`
-			} `json:"data"`
+			Rows []map[string]any `json:"rows"`
 		}
 		if err := json.Unmarshal(data, &resp); err != nil {
 			return failArg("failed to parse response: " + err.Error())
 		}
-		if resp.Status != 0 && resp.Msg != "" {
-			return failArg(resp.Msg)
-		}
-		if len(resp.Data.Rows) == 0 {
+		if len(resp.Rows) == 0 {
 			output.Info("No archive tasks found.")
 			return nil
 		}
 
 		headers := []string{"ID", "TITLE", "STATE", "INSTANCE", "SRC_DB", "SRC_TABLE", "MODE"}
-		rows := make([][]string, len(resp.Data.Rows))
-		for i, r := range resp.Data.Rows {
+		rows := make([][]string, len(resp.Rows))
+		for i, r := range resp.Rows {
 			rows[i] = []string{
 				fmt.Sprintf("%v", r["id"]),
 				fmt.Sprintf("%v", r["title"]),
 				fmt.Sprintf("%v", r["state"]),
-				fmt.Sprintf("%v", r["src_instance"]),
-				fmt.Sprintf("%v", r["src_db"]),
-				fmt.Sprintf("%v", r["src_table"]),
+				fmt.Sprintf("%v", r["src_instance__instance_name"]),
+				fmt.Sprintf("%v", r["src_db_name"]),
+				fmt.Sprintf("%v", r["src_table_name"]),
 				fmt.Sprintf("%v", r["mode"]),
 			}
 		}
@@ -217,10 +211,14 @@ var archiveApplyCmd = &cobra.Command{
 			return failArg("--mode must be one of: dest, file, purge")
 		}
 
+		// The view's all([...]) check treats condition as required.
+		condition, err := requireFlagString(cmd, "condition", "--condition")
+		if err != nil {
+			return err
+		}
 		destInstance, _ := cmd.Flags().GetString("dest-instance")
 		destDB, _ := cmd.Flags().GetString("dest-db")
 		destTable, _ := cmd.Flags().GetString("dest-table")
-		condition, _ := cmd.Flags().GetString("condition")
 		noDelete, _ := cmd.Flags().GetBool("no-delete")
 		sleep, _ := cmd.Flags().GetInt("sleep")
 
@@ -230,21 +228,20 @@ var archiveApplyCmd = &cobra.Command{
 			}
 		}
 
+		// Field names mirror archiver.archive_apply request.POST keys.
 		form := url.Values{
-			"title":        {title},
-			"group_name":   {group},
-			"src_instance": {srcInstance},
-			"src_db":       {srcDB},
-			"src_table":    {srcTable},
-			"mode":         {mode},
+			"title":             {title},
+			"group_name":        {group},
+			"src_instance_name": {srcInstance},
+			"src_db_name":       {srcDB},
+			"src_table_name":    {srcTable},
+			"mode":              {mode},
+			"condition":         {condition},
 		}
 		if mode == "dest" {
-			form.Set("dest_instance", destInstance)
-			form.Set("dest_db", destDB)
-			form.Set("dest_table", destTable)
-		}
-		if condition != "" {
-			form.Set("condition", condition)
+			form.Set("dest_instance_name", destInstance)
+			form.Set("dest_db_name", destDB)
+			form.Set("dest_table_name", destTable)
 		}
 		if noDelete {
 			form.Set("no_delete", "true")
@@ -260,6 +257,7 @@ var archiveApplyCmd = &cobra.Command{
 			"srcDb":       srcDB,
 			"srcTable":    srcTable,
 			"mode":        mode,
+			"condition":   condition,
 		}
 		if destInstance != "" {
 			detail["destInstance"] = destInstance
@@ -269,9 +267,6 @@ var archiveApplyCmd = &cobra.Command{
 		}
 		if destTable != "" {
 			detail["destTable"] = destTable
-		}
-		if condition != "" {
-			detail["condition"] = condition
 		}
 		if noDelete {
 			detail["noDelete"] = true
@@ -334,17 +329,19 @@ var archiveAuditCmd = &cobra.Command{
 			return err
 		}
 		action = strings.ToLower(action)
-		if action != "pass" && action != "cancel" {
-			return failArg("--action must be 'pass' or 'cancel'")
+		// archive_audit reads audit_status (int): 1=pass, 2=reject, 3=cancel.
+		auditStatus, ok := archiveAuditStatus(action)
+		if !ok {
+			return failArg("--action must be one of: pass, reject, cancel")
 		}
 		remark, _ := cmd.Flags().GetString("remark")
 
 		form := url.Values{
-			"archive_id": {strconv.Itoa(id)},
-			"action":     {action},
+			"archive_id":   {strconv.Itoa(id)},
+			"audit_status": {strconv.Itoa(auditStatus)},
 		}
 		if remark != "" {
-			form.Set("remark", remark)
+			form.Set("audit_remark", remark)
 		}
 
 		detail := map[string]any{
@@ -360,29 +357,21 @@ var archiveAuditCmd = &cobra.Command{
 			return err
 		}
 
-		data, err := client.InternalPost(apiCtx(), "/archive/audit/", form)
-		if err != nil {
+		// archive_audit returns a 302 redirect to archive_detail on success and
+		// renders error.html (HTTP 200) on a permission/state failure, so it never
+		// returns JSON. SessionPostExpectRedirect captures the redirected id.
+		if _, err := client.SessionPostExpectRedirect(apiCtx(), "/archive/audit/", form); err != nil {
 			return handleAPIError(err)
 		}
 
 		if jsonMode {
-			var raw any
-			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
-			}
-			output.PrintJSON(normalizeAgentValue(raw))
+			output.PrintJSON(normalizeAgentValue(map[string]any{
+				"status":     0,
+				"msg":        "ok",
+				"archive_id": id,
+				"action":     action,
+			}))
 			return nil
-		}
-
-		var resp struct {
-			Status int    `json:"status"`
-			Msg    string `json:"msg"`
-		}
-		if err := json.Unmarshal(data, &resp); err != nil {
-			return failArg("failed to parse response: " + err.Error())
-		}
-		if resp.Status != 0 && resp.Msg != "" {
-			return failArg(resp.Msg)
 		}
 		output.Success(fmt.Sprintf("Archive task %d: %s", id, action))
 		return nil
@@ -410,9 +399,10 @@ var archiveSwitchCmd = &cobra.Command{
 			return failArg("--state must be 'enable' or 'disable'")
 		}
 
+		// The view compares request.POST['state'] against the literal 'true'.
 		form := url.Values{
 			"archive_id": {strconv.Itoa(id)},
-			"state":      {state},
+			"state":      {boolFormValue(state == "enable")},
 		}
 
 		detail := map[string]any{
@@ -574,35 +564,30 @@ var archiveLogCmd = &cobra.Command{
 			return nil
 		}
 
-		// Text mode
+		// Text mode. archive_log returns a flat {total, rows} document whose rows
+		// carry pt-archiver stats, not a task id/state.
 		var resp struct {
-			Status int    `json:"status"`
-			Msg    string `json:"msg"`
-			Data   struct {
-				Total int              `json:"total"`
-				Rows  []map[string]any `json:"rows"`
-			} `json:"data"`
+			Rows []map[string]any `json:"rows"`
 		}
 		if err := json.Unmarshal(data, &resp); err != nil {
 			return failArg("failed to parse response: " + err.Error())
 		}
-		if resp.Status != 0 && resp.Msg != "" {
-			return failArg(resp.Msg)
-		}
-		if len(resp.Data.Rows) == 0 {
+		if len(resp.Rows) == 0 {
 			output.Info("No archive log entries found.")
 			return nil
 		}
 
-		headers := []string{"ID", "STATE", "START", "END", "ROWS"}
-		rows := make([][]string, len(resp.Data.Rows))
-		for i, r := range resp.Data.Rows {
+		headers := []string{"START", "END", "MODE", "SUCCESS", "SELECT", "INSERT", "DELETE"}
+		rows := make([][]string, len(resp.Rows))
+		for i, r := range resp.Rows {
 			rows[i] = []string{
-				fmt.Sprintf("%v", r["id"]),
-				fmt.Sprintf("%v", r["state"]),
 				fmt.Sprintf("%v", r["start_time"]),
 				fmt.Sprintf("%v", r["end_time"]),
-				fmt.Sprintf("%v", r["success_rows"]),
+				fmt.Sprintf("%v", r["mode"]),
+				fmt.Sprintf("%v", r["success"]),
+				fmt.Sprintf("%v", r["select_cnt"]),
+				fmt.Sprintf("%v", r["insert_cnt"]),
+				fmt.Sprintf("%v", r["delete_cnt"]),
 			}
 		}
 		output.Table(headers, rows)
@@ -618,6 +603,30 @@ func parseArchiveID(s string) (int, error) {
 		return 0, failArg("ARCHIVE_ID must be a positive integer")
 	}
 	return id, nil
+}
+
+// archiveAuditStatus maps a CLI --action to the WorkflowDict.workflow_status
+// int that archive_audit forwards to Audit.audit: pass=1, reject=2, cancel=3.
+func archiveAuditStatus(action string) (int, bool) {
+	switch action {
+	case "pass":
+		return 1, true
+	case "reject":
+		return 2, true
+	case "cancel":
+		return 3, true
+	default:
+		return 0, false
+	}
+}
+
+// boolFormValue renders the literal 'true'/'false' strings that the archiver
+// views compare request params against (state == 'true', no_delete == 'true').
+func boolFormValue(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
 }
 
 // extractArchiveItems extracts items from internal API response formats.
@@ -647,17 +656,19 @@ func extractArchiveLogItems(raw any) []map[string]any {
 	return extractArchiveItems(raw)
 }
 
-// extractArchiveTotal extracts the total count from an internal API paginated response.
+// extractArchiveTotal extracts the total count from the archiver views' flat
+// {total, rows} document, falling back to a nested {data:{total}} shape.
 func extractArchiveTotal(raw any) int {
-	if m, ok := raw.(map[string]any); ok {
-		if data, ok := m["data"]; ok {
-			if dm, ok := data.(map[string]any); ok {
-				if t, ok := dm["total"]; ok {
-					if n, ok := t.(float64); ok {
-						return int(n)
-					}
-				}
-			}
+	m, ok := raw.(map[string]any)
+	if !ok {
+		return 0
+	}
+	if t, ok := m["total"].(float64); ok {
+		return int(t)
+	}
+	if dm, ok := m["data"].(map[string]any); ok {
+		if t, ok := dm["total"].(float64); ok {
+			return int(t)
 		}
 	}
 	return 0
