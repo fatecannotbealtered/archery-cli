@@ -344,6 +344,13 @@ func (c *Client) ensureSession(ctx context.Context) error {
 		}
 	}
 
+	// A fresh form-login must start from an empty jar. If an already-authenticated
+	// sessionid is present (e.g. a stale cached cookie that lazy-login fell through
+	// on), Archery's /authenticate/ takes a branch that returns a session_key in
+	// `data` and issues no new sessionid Set-Cookie, so hasSessionCookie() stays
+	// false and login spuriously "fails". Clearing first makes login deterministic.
+	c.clearSessionCookies()
+
 	// Step 1: prime the csrftoken cookie.
 	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.host+"/login/", nil)
 	if err != nil {
@@ -405,6 +412,22 @@ func (c *Client) ensureSession(ctx context.Context) error {
 		StatusCode:    http.StatusUnauthorized,
 		ErrorMessages: []string{"session login failed: " + msg},
 	}
+}
+
+// clearSessionCookies evicts any sessionid/csrftoken from the jar by overwriting
+// them with already-expired cookies. net/http/cookiejar has no delete API, so an
+// expired cookie is the supported way to drop one. Used before a fresh form-login
+// so a stale cached cookie can't poison Archery's /authenticate/ branch selection.
+func (c *Client) clearSessionCookies() {
+	u, err := url.Parse(c.host)
+	if err != nil {
+		return
+	}
+	expired := time.Unix(0, 0)
+	c.httpClient.Jar.SetCookies(u, []*http.Cookie{
+		{Name: "sessionid", Value: "", Path: "/", Expires: expired, MaxAge: -1},
+		{Name: "csrftoken", Value: "", Path: "/", Expires: expired, MaxAge: -1},
+	})
 }
 
 // hasSessionCookie reports whether the jar holds a non-empty sessionid cookie.
