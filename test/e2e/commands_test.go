@@ -70,8 +70,14 @@ var boundaryCases = []boundaryCase{
 		"--host", "127.0.0.1", "--port", "3306", "--user", "root", "--dangerous"}},
 	{name: "instance update", write: true, args: []string{"instance", "update", "1", "--host", "127.0.0.2", "--dangerous"}},
 	{name: "instance delete", write: true, args: []string{"instance", "delete", "1", "--dangerous"}},
-	{name: "instance table-instances", args: []string{"instance", "table-instances", "--table", "t1"}},
 	{name: "instance users", args: []string{"instance", "users", "--instance", "1"}},
+	{name: "instance test-instance", args: []string{"instance", "test-instance", "--instance", "1"}},
+	{name: "instance create-db", write: true, args: []string{
+		"instance", "create-db", "--instance", "1", "--db", "newdb", "--dangerous"}},
+	{name: "instance create-user", write: true, args: []string{
+		"instance", "create-user", "--instance", "1", "--user", "app", "--host", "%", "--password", "p", "--dangerous"}},
+	{name: "instance grant", write: true, args: []string{
+		"instance", "grant", "--instance", "1", "--user-host", "`app`@`%`", "--level", "global", "--privs", "SELECT", "--dangerous"}},
 
 	// query
 	{name: "query run", write: true, args: []string{"query", "run", "--instance", "inst1", "--db", "db1", "--sql", "select 1", "--dangerous"}},
