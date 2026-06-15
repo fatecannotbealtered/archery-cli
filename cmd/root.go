@@ -444,6 +444,28 @@ func effectiveMode(region config.RegionConfig) string {
 	return region.EffectiveMode()
 }
 
+// activeTransportMode resolves the transport mode for the active region without
+// building a client or touching the network — needed by write commands that
+// must know which identifier set to validate before the dry-run gate. The
+// --mode flag wins; a config-load failure falls back to the default session.
+func activeTransportMode() string {
+	if m := strings.ToLower(strings.TrimSpace(modeFlag)); m == config.ModeJWT || m == config.ModeSession {
+		return m
+	}
+	cfg, err := config.MustLoad()
+	if err != nil {
+		return config.ModeSession
+	}
+	regionName := regionFlag
+	if regionName == "" {
+		regionName = config.ActiveRegion(cfg)
+	}
+	if region, ok := cfg.Regions[regionName]; ok {
+		return region.EffectiveMode()
+	}
+	return config.ModeSession
+}
+
 // newClient loads config and creates an API client for the active region.
 func newClient() (*api.Client, *config.Config, *config.RegionConfig, error) {
 	cfg, err := config.MustLoad()

@@ -29,13 +29,15 @@ type referenceLeaf struct {
 // high/critical-risk writes (the --dangerous gate) carry --dangerous in both.
 var referenceLeafSchemas = map[string]referenceLeaf{
 	// ─── workflow ─────────────────────────────────────────────────────────────
-	"workflow list":     {schema: "workflow_list", examples: []string{"archery-cli workflow list --status workflow_finish --limit 20 --compact"}},
-	"workflow submit":   {schema: "workflow_submit", examples: []string{"archery-cli workflow submit --name 'add idx' --instance 1 --db app --sql 'ALTER TABLE t ADD INDEX(x)' --dry-run --compact", "archery-cli workflow submit --name 'add idx' --instance 1 --db app --sql 'ALTER TABLE t ADD INDEX(x)' --confirm <confirm_token> --compact"}},
-	"workflow detail":   {schema: "workflow_detail", examples: []string{"archery-cli workflow detail 42 --compact"}},
-	"workflow audit":    {schema: "workflow_audit", examples: []string{"archery-cli workflow audit 42 --action pass --dry-run --compact", "archery-cli workflow audit 42 --action pass --confirm <confirm_token> --compact", "archery-cli workflow audit --ids 42,43,44 --action pass --dry-run --compact", "archery-cli workflow audit --ids 42,43,44 --action pass --confirm <confirm_token> --compact"}},
-	"workflow execute":  {schema: "workflow_execute", examples: []string{"archery-cli workflow execute 42 --dangerous --dry-run --compact", "archery-cli workflow execute 42 --dangerous --confirm <confirm_token> --compact", "archery-cli workflow execute --ids 42,43 --dangerous --dry-run --compact", "archery-cli workflow execute --ids 42,43 --dangerous --confirm <confirm_token> --compact"}},
-	"workflow cancel":   {schema: "workflow_cancel", examples: []string{"archery-cli workflow cancel 42 --remark 'abort' --dry-run --compact", "archery-cli workflow cancel 42 --remark 'abort' --confirm <confirm_token> --compact"}},
-	"workflow sqlcheck": {schema: "sqlcheck_result", examples: []string{"archery-cli workflow sqlcheck --instance 1 --db app --sql 'SELECT 1' --compact"}},
+	"workflow list":        {schema: "workflow_list", examples: []string{"archery-cli workflow list --status workflow_finish --limit 20 --compact"}},
+	"workflow audit-list":  {schema: "workflow_list", examples: []string{"archery-cli workflow audit-list --limit 20 --compact"}},
+	"workflow submit":      {schema: "workflow_submit", examples: []string{"archery-cli workflow submit --name 'add idx' --instance-name prod-mysql --group-name dev --db app --sql 'ALTER TABLE t ADD INDEX(x)' --dry-run --compact", "archery-cli workflow submit --name 'add idx' --instance-name prod-mysql --group-name dev --db app --sql 'ALTER TABLE t ADD INDEX(x)' --confirm <confirm_token> --compact"}},
+	"workflow detail":      {schema: "workflow_detail", examples: []string{"archery-cli workflow detail 42 --compact"}},
+	"workflow audit":       {schema: "workflow_audit", examples: []string{"archery-cli workflow audit 42 --action pass --dry-run --compact", "archery-cli workflow audit 42 --action pass --confirm <confirm_token> --compact", "archery-cli workflow audit --ids 42,43,44 --action pass --dry-run --compact", "archery-cli workflow audit --ids 42,43,44 --action pass --confirm <confirm_token> --compact"}},
+	"workflow execute":     {schema: "workflow_execute", examples: []string{"archery-cli workflow execute 42 --dangerous --dry-run --compact", "archery-cli workflow execute 42 --dangerous --confirm <confirm_token> --compact", "archery-cli workflow execute --ids 42,43 --dangerous --dry-run --compact", "archery-cli workflow execute --ids 42,43 --dangerous --confirm <confirm_token> --compact"}},
+	"workflow cancel":      {schema: "workflow_cancel", examples: []string{"archery-cli workflow cancel 42 --remark 'abort' --dry-run --compact", "archery-cli workflow cancel 42 --remark 'abort' --confirm <confirm_token> --compact"}},
+	"workflow sqlcheck":    {schema: "sqlcheck_result", examples: []string{"archery-cli workflow sqlcheck --instance-name prod-mysql --db app --sql 'SELECT 1' --compact"}},
+	"workflow auto-review": {schema: "workflow_auto_review", examples: []string{"archery-cli workflow auto-review --instance-name prod-mysql --db app --sql 'UPDATE t SET x=1 WHERE id=1' --compact", "archery-cli workflow auto-review --instance-name prod-mysql --db app --sql 'UPDATE t SET x=1 WHERE id=1' --execute --ids 42,43 --dry-run --compact", "archery-cli workflow auto-review --instance-name prod-mysql --db app --sql 'UPDATE t SET x=1 WHERE id=1' --execute --ids 42,43 --confirm <confirm_token> --compact"}},
 
 	// ─── instance ─────────────────────────────────────────────────────────────
 	"instance list":            {schema: "instance_list", examples: []string{"archery-cli instance list --db-type mysql --limit 20 --compact"}},
@@ -120,13 +122,14 @@ var offsetEnvelopeFields = []string{"items", "total", "count", "offset", "has_mo
 func referenceSchemas() map[string]refDataSchema {
 	return map[string]refDataSchema{
 		// ─── workflow ─────────────────────────────────────────────────────────
-		"workflow_list":    {Shape: "list", Fields: append(append([]string{}, listEnvelopeFields...), "id", "title", "status", "engineer", "instanceId", "db", "created", "webUrl"), UntrustedFields: []string{"title"}},
-		"workflow_submit":  {Shape: "object", Fields: []string{"workflowId", "url"}},
-		"workflow_detail":  {Shape: "object", Fields: []string{"id", "title", "status", "engineer", "instanceId", "db", "groupId", "sql", "created", "demandUrl", "webUrl", "auditLog"}, UntrustedFields: []string{"title", "sql", "auditLog", "demandUrl"}},
-		"workflow_audit":   {Shape: "object", Fields: []string{"workflowId", "status"}},
-		"workflow_execute": {Shape: "object", Fields: []string{"workflowId", "status", "mode"}},
-		"workflow_cancel":  {Shape: "object", Fields: []string{"workflowId", "status"}},
-		"sqlcheck_result":  {Shape: "array", Fields: []string{"level", "message", "affected_rows", "sql"}, UntrustedFields: []string{"sql"}},
+		"workflow_list":        {Shape: "list", Fields: append(append([]string{}, listEnvelopeFields...), "id", "title", "status", "statusCode", "engineer", "instanceId", "instance", "db", "group", "created", "webUrl"), UntrustedFields: []string{"title"}},
+		"workflow_submit":      {Shape: "object", Fields: []string{"workflowId", "url"}},
+		"workflow_detail":      {Shape: "object", Fields: []string{"id", "title", "status", "engineer", "instanceId", "db", "groupId", "sql", "created", "demandUrl", "webUrl", "auditLog"}, UntrustedFields: []string{"title", "sql", "auditLog", "demandUrl"}},
+		"workflow_audit":       {Shape: "object", Fields: []string{"workflowId", "status"}},
+		"workflow_execute":     {Shape: "object", Fields: []string{"workflowId", "status", "mode"}},
+		"workflow_cancel":      {Shape: "object", Fields: []string{"workflowId", "status"}},
+		"sqlcheck_result":      {Shape: "array", Fields: []string{"level", "message", "affected_rows", "sql", "errlevel", "stagestatus"}, UntrustedFields: []string{"sql"}},
+		"workflow_auto_review": {Shape: "object", Fields: []string{"compliant", "blocked", "results", "results[].sql", "results[].errlevel", "results[].level", "results[].stagestatus", "results[].message", "results[].affectedRows", "results[].verdict", "items", "summary", "preview", "confirm_token", "expires_at"}, UntrustedFields: []string{"results[].sql", "results[].message"}},
 
 		// ─── instance ─────────────────────────────────────────────────────────
 		"instance_list":      {Shape: "list", Fields: append(append([]string{}, listEnvelopeFields...), "id", "instanceName", "dbType", "host", "port", "user", "dbName", "charset", "environment", "instanceTag", "isActive")},

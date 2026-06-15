@@ -261,3 +261,36 @@ func TestWorkflowExecuteFlags(t *testing.T) {
 		t.Errorf("flag 'mode' default = %q, want 'auto'", got)
 	}
 }
+
+func TestWorkflowSubmitSessionFlags(t *testing.T) {
+	cmd := workflowSubmitCmd
+	for _, name := range []string{"instance-name", "group-name", "cc"} {
+		if cmd.Flags().Lookup(name) == nil {
+			t.Errorf("flag %q not registered on workflow submit", name)
+		}
+	}
+}
+
+func TestWorkflowAuditListFlags(t *testing.T) {
+	cmd := workflowAuditListCmd
+	for _, name := range []string{"status", "instance", "group", "search", "limit", "offset"} {
+		if cmd.Flags().Lookup(name) == nil {
+			t.Errorf("flag %q not registered on workflow audit-list", name)
+		}
+	}
+	if got, _ := cmd.Flags().GetInt("limit"); got != 20 {
+		t.Errorf("limit default = %d, want 20", got)
+	}
+}
+
+func TestWorkflowAutoReviewFlags(t *testing.T) {
+	cmd := workflowAutoReviewCmd
+	for _, name := range []string{"instance-name", "db", "sql", "ids", "execute", "remark"} {
+		if cmd.Flags().Lookup(name) == nil {
+			t.Errorf("flag %q not registered on workflow auto-review", name)
+		}
+	}
+	if got, _ := cmd.Flags().GetBool("execute"); got != false {
+		t.Errorf("execute default = %v, want false", got)
+	}
+}
