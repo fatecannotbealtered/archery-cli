@@ -90,9 +90,10 @@ var referenceLeafSchemas = map[string]referenceLeaf{
 	"dict export":     {schema: "dict_export", examples: []string{"archery-cli dict export --instance prod-mysql --db app --compact"}},
 
 	// ─── user ─────────────────────────────────────────────────────────────────
-	"user list":            {schema: "user_list", examples: []string{"archery-cli user list --limit 20 --compact"}},
-	"user groups":          {schema: "group_list", examples: []string{"archery-cli user groups --limit 20 --compact"}},
-	"user resource-groups": {schema: "resource_group_list", examples: []string{"archery-cli user resource-groups --limit 20 --compact"}},
+	"user list":              {schema: "user_list", examples: []string{"archery-cli user list --limit 20 --compact"}},
+	"user groups":            {schema: "group_list", examples: []string{"archery-cli user groups --mode jwt --limit 20 --compact"}},
+	"user resource-groups":   {schema: "resource_group_list", examples: []string{"archery-cli user resource-groups --limit 20 --compact"}},
+	"user resourcegroup-add": {schema: "resource_group_add", examples: []string{"archery-cli user resourcegroup-add --group 1 --type user --ids 3,4 --dry-run --compact", "archery-cli user resourcegroup-add --group 1 --type user --ids 3,4 --confirm <confirm_token> --compact"}},
 
 	// ─── auth ─────────────────────────────────────────────────────────────────
 	"auth login":  {schema: "auth_login", examples: []string{"archery-cli auth login --url https://archery.example.com --username admin --password secret --dry-run --compact", "archery-cli auth login --url https://archery.example.com --username admin --password secret --confirm <confirm_token> --compact"}},
@@ -181,9 +182,12 @@ func referenceSchemas() map[string]refDataSchema {
 		"dict_export":     {Shape: "object", Fields: []string{"instance", "db", "format", "content"}, UntrustedFields: []string{"content"}},
 
 		// ─── user ─────────────────────────────────────────────────────────────
-		"user_list":           {Shape: "list", Fields: append(append([]string{}, listEnvelopeFields...), "id", "username", "isActive", "display", "email", "isStaff")},
+		"user_list": {Shape: "list", Fields: append(append([]string{}, listEnvelopeFields...), "id", "username", "isActive", "display", "email", "isStaff")},
+		// group_list has no session route in v1.8.5; it requires --mode jwt. In
+		// session mode the command gates with E_NOT_FOUND instead of requesting.
 		"group_list":          {Shape: "list", Fields: append(append([]string{}, listEnvelopeFields...), "id", "name"), UntrustedFields: []string{"name"}},
 		"resource_group_list": {Shape: "list", Fields: append(append([]string{}, listEnvelopeFields...), "id", "name", "activeUsers", "bindUsers"), UntrustedFields: []string{"name"}},
+		"resource_group_add":  {Shape: "object", Fields: []string{"groupId", "objectType", "added", "count"}},
 
 		// ─── auth ─────────────────────────────────────────────────────────────
 		"auth_login":  {Shape: "object", Fields: []string{"status", "region", "url", "message"}},
