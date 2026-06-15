@@ -29,7 +29,7 @@ const (
 	updateDefaultRepo   = "fatecannotbealtered/archery-cli"
 	updateBinaryName    = "archery-cli"
 	updateAPIBaseURL    = "https://api.github.com"
-	updateNPMPackage    = "@ananke/archery-cli"
+	updateNPMPackage    = "@fateforge/archery-cli"
 	updatePipPackage    = "archery-cli"
 	updateChannelStable = "stable"
 	updateChannelCanary = "canary"

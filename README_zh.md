@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/fatecannotbealtered/archery-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/fatecannotbealtered/archery-cli/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/fatecannotbealtered/archery-cli)](https://goreportcard.com/report/github.com/fatecannotbealtered/archery-cli)
-[![npm version](https://img.shields.io/npm/v/@ananke/archery-cli.svg)](https://www.npmjs.com/package/@ananke/archery-cli)
+[![npm version](https://img.shields.io/npm/v/@fateforge/archery-cli.svg)](https://www.npmjs.com/package/@fateforge/archery-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 > 面向 AI Agent 的 Archery SQL 审核 CLI。它让 Agent 能以确定性的机器契约操作 SQL 工单、查询、实例、诊断、binlog、归档任务和数据字典。
@@ -15,7 +15,7 @@
 
 ```bash
 # 安装 CLI 和 Agent Skill。
-npm install -g @ananke/archery-cli
+npm install -g @fateforge/archery-cli
 npx skills add fatecannotbealtered/archery-cli -y -g
 
 # 提供运行上下文。把占位符替换为本地 shell/密钥管理器里的值。
