@@ -25,6 +25,10 @@
   "bin": {
     "archery-cli": "scripts/run.js"
   },
+  "scripts": {
+    "version": "node scripts/sync-version.js",
+    "check-version": "node scripts/check-version.js"
+  },
   "optionalDependencies": {
     "@fateforge/archery-cli-darwin-arm64": "1.0.7",
     "@fateforge/archery-cli-darwin-x64": "1.0.7",
