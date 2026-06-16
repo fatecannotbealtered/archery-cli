@@ -35,6 +35,7 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 		Notices         []updateNotice `json:"notices,omitempty"`
 		Checks          []doctorCheck  `json:"checks"`
 		ConfigExists    bool           `json:"configExists"`
+		ReadOnly        bool           `json:"readOnly"`
 		AuthValid       bool           `json:"authValid"`
 		LatencyMs       int64          `json:"latencyMs"`
 		Region          string         `json:"region,omitempty"`
@@ -45,7 +46,7 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 		Error           string         `json:"error,omitempty"`
 	}
 
-	result := doctorResult{Version: version, Notices: refreshUpdateNotices(apiCtx(), "doctor")}
+	result := doctorResult{Version: version, ReadOnly: ReadOnly(), Notices: refreshUpdateNotices(apiCtx(), "doctor")}
 	check := func(name, status, fix string) {
 		var fixPtr *string
 		if fix != "" {
@@ -60,6 +61,10 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 		check("version", "fail", "upgrade archery-cli to at least "+skillMinVersion)
 	}
 	check("release_readiness", releaseReadinessCheckStatus(), releaseReadinessCheckFix())
+
+	if ReadOnly() {
+		check("read-only", "warn", "read-only mode is on; write commands are disabled. Unset --read-only / ARCHERY_CLI_READONLY to enable writes")
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -121,6 +126,7 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	// for jwt mode, or a session establishment for the default session mode.
 	client := api.NewClient(region.URL)
 	client.SetMode(result.Mode)
+	client.SetOTP(effectiveOTP())
 
 	hasCreds, authFix, verifyErr := doctorVerify(client, region, result.Mode, &result.LatencyMs)
 
@@ -175,6 +181,9 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	output.Success("Config found")
 	if InsecureTLS() {
 		output.Warn("TLS verification disabled (--insecure)")
+	}
+	if ReadOnly() {
+		output.Warn("Read-only mode: write commands disabled")
 	}
 	if result.AuthValid {
 		if result.Mode == config.ModeJWT {

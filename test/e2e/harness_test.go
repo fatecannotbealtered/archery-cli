@@ -73,6 +73,15 @@ var pathOverrides = map[string]string{
 		`{"id":"2","username":"bob","display":"Bob","email":"b@x.io","is_active":true,"is_staff":false,"is_superuser":false}]}`,
 	// resource_group.group returns {total, rows:[{group_id, group_name}]}.
 	"/group/group/": `{"total":1,"rows":[{"group_id":"1","group_name":"ops","ding_webhook":""}]}`,
+	// workflow detail_content returns the execution/review result rows (the data
+	// `workflow detail` surfaces as result[], including any execution error).
+	"/sqlworkflow/detail_content/": `{"rows":[` +
+		`{"id":1,"stage":"Executed","errlevel":2,"stagestatus":"异常终止","errormessage":"Invalid remote backup information","sql":"alter table t add c int","affected_rows":0,"execute_time":"0.000"}]}`,
+	// workflow list (session) supplies the detail's metadata (title/status/
+	// instance/group), matched by id; row id=1 must be present for `detail 1`.
+	"/sqlworkflow_list/": `{"total":1,"rows":[` +
+		`{"id":"1","workflow_name":"add column c","status":"workflow_exception","engineer_display":"alice",` +
+		`"instance__instance_name":"inst1","db_name":"db1","group_name":"ops","is_backup":true,"syntax_type":1,"create_time":"2026-06-15 10:00:00"}]}`,
 	// resource_group.addrelation returns {status, msg}.
 	"/group/addrelation/": `{"status":0,"msg":"ok"}`,
 }

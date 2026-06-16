@@ -4,6 +4,59 @@ import (
 	"testing"
 )
 
+func TestReadOnlyFlagRegistered(t *testing.T) {
+	for _, name := range []string{"read-only", "otp"} {
+		if f := rootCmd.PersistentFlags().Lookup(name); f == nil {
+			t.Fatalf("persistent flag %q not registered on rootCmd", name)
+		}
+	}
+}
+
+func TestApplyReadOnlyFromEnv(t *testing.T) {
+	defer func() { readOnlyMode = false }()
+
+	readOnlyMode = false
+	t.Setenv("ARCHERY_CLI_READONLY", "")
+	applyReadOnlyFromEnv()
+	if readOnlyMode {
+		t.Error("readOnlyMode should stay false when env unset")
+	}
+
+	t.Setenv("ARCHERY_CLI_READONLY", "1")
+	applyReadOnlyFromEnv()
+	if !readOnlyMode {
+		t.Error("readOnlyMode should be true when ARCHERY_CLI_READONLY is non-empty")
+	}
+
+	// The flag, once set, is never cleared by the env helper.
+	readOnlyMode = true
+	t.Setenv("ARCHERY_CLI_READONLY", "")
+	applyReadOnlyFromEnv()
+	if !readOnlyMode {
+		t.Error("an explicitly-set flag must win over an empty env")
+	}
+}
+
+func TestEffectiveOTP(t *testing.T) {
+	defer func() { otpFlag = "" }()
+
+	otpFlag = ""
+	t.Setenv("ARCHERY_CLI_OTP", "")
+	if got := effectiveOTP(); got != "" {
+		t.Errorf("effectiveOTP() = %q, want empty", got)
+	}
+
+	t.Setenv("ARCHERY_CLI_OTP", "654321")
+	if got := effectiveOTP(); got != "654321" {
+		t.Errorf("effectiveOTP() = %q, want env value", got)
+	}
+
+	otpFlag = "123456"
+	if got := effectiveOTP(); got != "123456" {
+		t.Errorf("effectiveOTP() = %q, want flag value (flag wins over env)", got)
+	}
+}
+
 func TestGlobalFlags(t *testing.T) {
 	type flagTest struct {
 		name      string

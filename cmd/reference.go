@@ -104,6 +104,7 @@ func buildReferenceTree(root *cobra.Command) refTree {
 		6: "conflict",
 		7: "retryable",
 		8: "timeout",
+		9: "human_required",
 	}
 	globalFlags := collectPersistentRefFlags(root)
 	errorCodes := referenceErrorCodes()
@@ -211,6 +212,7 @@ func referenceErrorCodes() map[string]refErrorCode {
 		{output.E_USAGE, ExitBadArgs},
 		{output.E_VALIDATION, ExitBadArgs},
 		{output.E_CONFIRMATION_REQUIRED, ExitConfirm},
+		{output.E_2FA_REQUIRED, ExitHumanRequired},
 		{output.E_CONFLICT, ExitConflict},
 		{output.E_RATE_LIMIT, ExitRateLimit},
 		{output.E_SERVER, ExitNetwork},

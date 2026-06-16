@@ -154,6 +154,16 @@ type SQLWorkflowDetail struct {
 	DemandURL  string                  `json:"demand_url"`
 	CreateDate string                  `json:"create_date"`
 	AuditLog   []SQLWorkflowAuditEntry `json:"audit_log"`
+
+	// 以下字段来自 session 路径的组合查询（detail_content + 列表），不来自单一 JSON 端点。
+	// StatusCode 是字符串状态码（如 workflow_exception），从工单列表取，
+	// 避免 detail 把缺省 status 误报成 0。
+	StatusCode   string `json:"-"`
+	InstanceName string `json:"-"`
+	GroupName    string `json:"-"`
+	// Result 是执行/审核结果行（含 stage、errlevel、errormessage、affected_rows），
+	// 来自 /sqlworkflow/detail_content/，是「执行失败看原因」的关键数据。
+	Result []reviewResultRow `json:"-"`
 }
 
 // SQLWorkflowAuditEntry is a single audit log entry within a workflow detail.

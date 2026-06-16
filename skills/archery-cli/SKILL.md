@@ -1,10 +1,10 @@
 ---
 name: archery-cli
-version: "1.0.4"
+version: "1.0.5"
 description: "Archery SQL audit platform CLI for managing SQL workflows, queries, instances, diagnostics. Use when the user asks about SQL审核, database operations, Archery platform management, or needs to submit/review/execute SQL against database instances."
 license: MIT
 user-invocable: true
-metadata: {"requires":{"bins":["archery-cli"],"min_version":"1.0.4"}}
+metadata: {"requires":{"bins":["archery-cli"],"min_version":"1.0.5"}}
 ---
 
 # archery-cli
@@ -58,6 +58,10 @@ First-time setup: ask user for Archery URL + credentials, then run `archery-cli 
 | Dangerous writes | If `reference` shows `requiresDangerous`, include `--dangerous` in both dry-run and confirm commands |
 | Discovery | `archery-cli reference` is the machine truth for params, `write`, `requiresConfirmation`, `requiresDangerous`, `riskLevel`, output schemas, and errors |
 | Transport | Defaults to **session** mode (Archery web AJAX endpoints) — works for ordinary accounts on all versions. REST + JWT is opt-in via `--mode jwt` or a region's `mode: jwt`. Precedence: `--mode` flag → region config → `session`. |
+| Read-only | Pass `--read-only` (or set `ARCHERY_CLI_READONLY`) to hard-disable all writes; they fail with `E_FORBIDDEN` (exit 4) before any network call. Use it when the task is read-only/analysis. |
+| 2FA | If a command fails with `E_2FA_REQUIRED` (exit 9), the account has 2FA on. Ask the user for a fresh 6-digit code and retry the **same** command with `--otp <code>` (codes last ~30s). The session is then cached, so later commands need no OTP. |
+| Instance/group IDs | `workflow submit/sqlcheck/auto-review` accept either `--instance`/`--group` (numeric IDs, resolved automatically) **or** `--instance-name`/`--group-name`. IDs work in both transport modes. |
+| Schema discovery | To locate a table/column by **meaning** (not its exact name), use `dict tables` → `{name, comment}` then `dict table-info` → per-column `column_comment`: those carry the human labels (e.g. `班级学生表`, `性别`). `instance resource`/`instance describe` return **bare names with no comments** — use them only when you already know the exact identifier. Already know the table name but not which instance holds it? `instance table-instances --table <name>`. `dict` needs `--instance <name>` (not ID) **and** `--db-type <mysql/...>` (db-type is required on v1.8.5; omitting it fails with `Instance.DoesNotExist`). |
 
 ## Trigger list
 
@@ -99,7 +103,8 @@ First-time setup: ask user for Archery URL + credentials, then run `archery-cli 
 | Review slow queries | `archery-cli slowquery review --instance mydb --start "2024-01-01 00:00:00" --end "2024-01-31 23:59:59"` |
 | List processes | `archery-cli diagnostic process --instance mydb` |
 | List binlog files | `archery-cli binlog list --instance mydb` |
-| Browse tables | `archery-cli dict tables --instance mydb --db test` |
+| Find a table/column by meaning | `archery-cli dict tables --instance mydb --db test --db-type mysql` (scan `comment`), then `dict table-info ... --table t` (scan `column_comment`) |
+| Browse tables | `archery-cli dict tables --instance mydb --db test --db-type mysql` |
 | Test instance connectivity | `archery-cli instance test-instance --instance 1 --compact` |
 | Create a database on an instance | `archery-cli instance create-db --instance 1 --db reporting --owner alice --dangerous --dry-run`, then `--dangerous --confirm <token>` |
 | Create a database account | `archery-cli instance create-user --instance 1 --user app --host '%' --password '...' --dangerous --dry-run`, then `--dangerous --confirm <token>` |
@@ -177,6 +182,7 @@ Check `ok` first, then act on exit code:
 | 6 | `E_CONFLICT` | Stale or invalid token | Re-run `--dry-run`, get fresh token, retry |
 | 7 | `E_NETWORK`/`E_RATE_LIMIT`/`E_SERVER` | Transient error | Back off and retry |
 | 8 | `E_TIMEOUT` | Timeout | Back off and retry |
+| 9 | `E_2FA_REQUIRED` | Account needs a 2FA code | Ask user for a fresh 6-digit code, retry same command with `--otp <code>` (~30s validity) |
 
 ## Permission and security boundary declarations
 
@@ -218,7 +224,12 @@ archery-cli workflow detail 42
 # After approval, execute
 archery-cli workflow execute 42 --mode auto --dangerous --dry-run
 archery-cli workflow execute 42 --mode auto --dangerous --confirm ct_...
+
+# If execution fails, `workflow detail 42` now shows the reason in result[]:
+archery-cli workflow detail 42 --compact   # look at result[].error / statusCode
 ```
+
+**DDL execution + backups.** If a DDL execution fails with `result[].error = "Invalid remote backup information"`, the target Archery environment has not configured backups (no `enable_backup_switch` / no reachable backup database). This is an **Archery configuration prerequisite, not a CLI bug**. Either ask a DBA to configure the backup database, or submit the workflow with backup disabled (`--backup=false`). The cause is visible directly from `workflow detail` (as of 1.0.5), so check `result[]` before escalating.
 
 ### 2. Query a database and analyze results
 
@@ -269,23 +280,37 @@ archery-cli diagnostic kill --instance prod-mysql --threads "12345,12346" --dang
 
 ### 5. Browse data dictionary and table structure
 
+**Locating a table/column from a vague ask** (e.g. "how old is 张三") — the comment is your map, don't guess at names:
+
+```bash
+# 1. Scan table comments to find the table that matches the concept ("学生")
+archery-cli dict tables --instance prod-mysql --db mydb --db-type mysql --compact
+#    → [{"name":"students","comment":"班级学生表"}, ...]
+
+# 2. Scan column comments to map the concept to a column ("年龄")
+archery-cli dict table-info --instance prod-mysql --db mydb --db-type mysql --table students --compact
+#    → if no age/birthday column exists, STOP guessing — ask the user or derive it.
+```
+
+Prefer the two steps above over `instance resource` (bare names) and `instance describe` (no comments) whenever the user names a **concept**, not an exact identifier. `dict` requires `--db-type` on v1.8.5.
+
 ```bash
 # List all tables in a database
-archery-cli dict tables --instance prod-mysql --db mydb
+archery-cli dict tables --instance prod-mysql --db mydb --db-type mysql
 
-# Show table metadata and indexes
-archery-cli dict table-info --instance prod-mysql --db mydb --table orders
+# Show table metadata and indexes (includes column_comment)
+archery-cli dict table-info --instance prod-mysql --db mydb --db-type mysql --table orders
 
-# Describe table columns
+# Describe table columns (bare structure, no comments — use when the name is already known)
 archery-cli instance describe --instance prod-mysql --db mydb --table orders
 
 # List views, triggers, procedures
-archery-cli dict views --instance prod-mysql --db mydb
-archery-cli dict triggers --instance prod-mysql --db mydb
-archery-cli dict procedures --instance prod-mysql --db mydb
+archery-cli dict views --instance prod-mysql --db mydb --db-type mysql
+archery-cli dict triggers --instance prod-mysql --db mydb --db-type mysql
+archery-cli dict procedures --instance prod-mysql --db mydb --db-type mysql
 
 # Export data dictionary as HTML
-archery-cli dict export --instance prod-mysql --db mydb --format raw > dict.html
+archery-cli dict export --instance prod-mysql --db mydb --db-type mysql --format raw > dict.html
 ```
 
 ### 6. Binlog parsing and data recovery

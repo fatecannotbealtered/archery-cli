@@ -41,6 +41,10 @@ PowerShell uses `$env:NAME = "value"` for the same environment variables. Keep r
 
 **Dual-mode transport — usable by ordinary developer accounts.** By default the CLI logs in and talks to Archery over its **web session + AJAX endpoints** (`/authenticate/`, `/sqlworkflow_list/`, `/sqlquery/`, …). This path works on every Archery version and for plain accounts, where the `/api/v1` REST surface is typically closed (`403`) or simply not enabled. REST + JWT is kept as an opt-in advanced mode: pass `--mode jwt` or set `mode: jwt` on a region. Mode precedence is `--mode` flag → region config → `session` default. Verified live against `hhyo/archery:v1.8.5` with an ordinary account.
 
+**Read-only mode.** Pass `--read-only` (or set `ARCHERY_CLI_READONLY` to any non-empty value) to hard-disable every write command. Writes are refused at the shared chokepoint with an `E_FORBIDDEN` envelope (exit 4) before any network call, regardless of `--dry-run`/`--confirm`; read commands are unaffected. Use it to run safely against production. `doctor` and `context` report the active state.
+
+**Two-factor auth.** For accounts with 2FA enabled, supply a fresh 6-digit code with `--otp <code>` (or `ARCHERY_CLI_OTP`). The CLI detects when Archery requires a second factor and, without a code, fails fast with `E_2FA_REQUIRED` (exit 9) and a hint to retry with `--otp`. Codes are ~30s-lived, so generate one immediately before running; the resulting session is cached, so later commands need no OTP until it expires.
+
 Worst-case risk tier: **T2 high** - can execute and manage SQL workflows against configured database instances. See [SECURITY.md](SECURITY.md) and [.agent/SEC-SPEC.md](.agent/SEC-SPEC.md).
 
 ## Capabilities
@@ -86,6 +90,8 @@ Config location: `~/.archery-cli/config.json`.
 | `ARCHERY_CLI_USERNAME` | Username |
 | `ARCHERY_CLI_PASSWORD` | Password |
 | `ARCHERY_CLI_REGION` | Active region/profile |
+| `ARCHERY_CLI_READONLY` | Any non-empty value disables all write commands (same as `--read-only`) |
+| `ARCHERY_CLI_OTP` | 6-digit 2FA code for accounts with two-factor auth (same as `--otp`) |
 | `NO_COLOR` | Disable colored text output when text mode is explicitly requested |
 
 Saved credentials, when supported, are encrypted or stored in the OS credential store. Environment variables take precedence and are the preferred path for short-lived Agent sessions.

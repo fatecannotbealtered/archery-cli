@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 // WorkflowAPI provides methods for the SQL workflow endpoints.
@@ -226,16 +227,39 @@ func (w *WorkflowAPI) Detail(ctx context.Context, id int) (*SQLWorkflowDetail, e
 	}
 
 	detail := &SQLWorkflowDetail{ID: id}
-	// Rebuild the SQL content from the review rows; each row carries one
-	// statement. This is the only SQL source for the session detail view.
+	// detail_content 的 rows 是执行/审核结果(含 errlevel/stagestatus/errormessage)。
+	// 全部保留到 Result —— 这是「执行失败看原因」的关键。同时从 rows 重建真实 SQL,
+	// 但过滤掉 inception 的包装语句(inception_magic_start/commit),它们不是用户 SQL。
+	detail.Result = resp.Rows
 	for _, row := range resp.Rows {
-		if row.SQL == "" {
+		sqlText := strings.TrimSpace(row.SQL)
+		if sqlText == "" || strings.HasPrefix(sqlText, "inception_magic") {
 			continue
 		}
 		if detail.SQLContent != "" {
 			detail.SQLContent += "\n"
 		}
-		detail.SQLContent += row.SQL
+		detail.SQLContent += sqlText
+	}
+
+	// 元信息(title/status/engineer/db/group)在 session 模式没有 by-id JSON 端点
+	// (详情页是 HTML)。从工单列表里按 id 匹配补齐;拿不到则只缺元信息,执行结果照常。
+	if list, lerr := w.listSession(ctx, WorkflowListParams{Limit: 500}); lerr == nil {
+		for _, wf := range list.Page.Results {
+			if wf.ID == id {
+				detail.Title = wf.Title
+				detail.Status = wf.Status
+				detail.StatusCode = wf.StatusCode
+				detail.Engineer = wf.Engineer
+				detail.InstanceID = wf.InstanceID
+				detail.InstanceName = wf.InstanceName
+				detail.DBName = wf.DBName
+				detail.GroupID = wf.GroupID
+				detail.GroupName = wf.GroupName
+				detail.CreateDate = wf.CreateDate
+				break
+			}
+		}
 	}
 	return detail, nil
 }

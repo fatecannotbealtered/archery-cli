@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.5] - 2026-06-16
+
+### Added
+
+- **`--read-only` global switch (and `ARCHERY_CLI_READONLY` env var).** When set, every write command is refused at the shared write chokepoint with an `E_FORBIDDEN` envelope (exit 4) — before the dry-run preview or any network call. Read commands are unaffected. This lets an agent run safely against production with writes hard-disabled regardless of `--dry-run`/`--confirm`. `doctor` and `context` report the current read-only state.
+- **2FA detection + `--otp` (and `ARCHERY_CLI_OTP`).** Session login now understands Archery's two-factor flow. If an account has 2FA enabled, `/authenticate/` accepts the password but does not log in (it returns a `session_key` in `data` with no `sessionid` cookie); the CLI now detects this:
+  - With `--otp <6-digit code>` it completes the login via `POST /api/v1/user/2fa/` and caches the resulting session, so **subsequent commands need no OTP** until the session expires.
+  - Without an OTP it fails fast with the new **`E_2FA_REQUIRED`** code (exit 9, "human required") and a clear hint to retry with `--otp`, instead of the old opaque "session login failed".
+  - 2FA codes are ~30s-lived: generate the code immediately before running. The cached `sessionid` (keyring) is reused afterwards, so OTP is a one-time cost per session.
+
+### Changed
+
+- **`workflow detail` reworked to surface execution results.** Detail now reads the execution/review result rows from `/sqlworkflow/detail_content/` and exposes them as `result[]` (each row carries `stage`, `stageStatus`, `errLevel`, `error`, `affectedRows`, `executeTime`), plus the string `statusCode` (e.g. `workflow_exception`) backfilled from the workflow list. An agent can now see **why an execution failed** (e.g. `Invalid remote backup information`) straight from the CLI instead of opening the web UI. SQL content is reconstructed from the rows, with inception wrapper statements filtered out.
+- **Unified instance/group flags for `workflow submit` / `sqlcheck` / `auto-review`.** Session mode now also accepts the numeric `--instance` (ID) and `--group` (ID), resolving them to names via the instance/resource-group lists — the same flags JWT mode already used, so agents no longer have to remember a different flag set per transport. The name flags (`--instance-name` / `--group-name`) still work and win when both are given; an unknown ID fails with a clear `E_NOT_FOUND`.
+- **Skill schema-discovery guidance.** The Skill now steers agents to locate tables/columns by **meaning** via `dict tables` / `dict table-info` (which carry table and column comments) instead of `instance resource` / `instance describe` (bare names only), with an explicit "stop guessing, ask the user" rule when no matching column exists. Fixes all `dict` examples that omitted the required `--db-type`, which fail with `Instance.DoesNotExist` on Archery v1.8.5.
+
+### Notes
+
+- **DDL execution and backups.** Executing a DDL workflow with backup enabled needs Archery's backup feature configured (`enable_backup_switch` on and a reachable backup database). On environments without it, execution fails with `Invalid remote backup information` — this is an Archery configuration prerequisite, not a CLI bug. Either have a DBA configure the backup database, or submit with backup disabled (`--backup=false`).
+
 ## [1.0.4] - 2026-06-16
 
 ### Added

@@ -116,11 +116,24 @@ func (c *Client) applyInternalHeaders(req *http.Request) {
 	}
 }
 
+// Code2FARequired is the sentinel APIError.Code value set when a login is
+// blocked on a missing 2FA code. The cmd layer maps it to output.E_2FA_REQUIRED
+// + the human-required exit code; carrying it as a plain string keeps the api
+// package free of an output dependency.
+const Code2FARequired = "E_2FA_REQUIRED"
+
+// CodeValidation is the APIError.Code for a client-side validation failure (e.g.
+// a wrong/expired 2FA code). It mirrors output.E_VALIDATION as a plain string.
+const CodeValidation = "E_VALIDATION"
+
 // APIError represents an error returned by the Archery API.
 type APIError struct {
 	StatusCode    int
 	ErrorMessages []string
 	Errors        map[string]string
+	// Code, when non-empty, is an explicit error-code override the cmd layer uses
+	// instead of deriving the code from StatusCode (e.g. Code2FARequired).
+	Code string
 }
 
 func (e *APIError) Error() string {
@@ -225,6 +238,12 @@ type Client struct {
 	sessionUser  string
 	sessionPass  string
 	sessionReady bool
+
+	// otp is an optional 6-digit TOTP code supplied for accounts with 2FA
+	// enabled. It is consumed once during the /authenticate/ + /api/v1/user/2fa/
+	// handshake; the resulting sessionid is cached so later commands need no OTP
+	// (until the session expires). 2FA codes are ~30s-lived, so it must be fresh.
+	otp string
 }
 
 // NewClient creates a new API client using global HTTP options. The transport
@@ -273,6 +292,13 @@ func (c *Client) SetTokens(accessToken, refreshToken string) {
 func (c *Client) SetSessionCredentials(username, password string) {
 	c.sessionUser = username
 	c.sessionPass = password
+}
+
+// SetOTP supplies a 6-digit 2FA code used to complete login for accounts with
+// two-factor authentication enabled. Empty means "no code provided": ensureSession
+// then surfaces an E_2FA_REQUIRED error when the account demands one.
+func (c *Client) SetOTP(otp string) {
+	c.otp = strings.TrimSpace(otp)
 }
 
 // InjectSessionCookies seeds the cookie jar with cached Django cookies so that
@@ -397,8 +423,88 @@ func (c *Client) ensureSession(ctx context.Context) error {
 	body, _ := io.ReadAll(postResp.Body)
 	_ = postResp.Body.Close()
 
-	// Success: status==0 and Django set a sessionid cookie. A status!=0 carries
-	// Archery's reason (wrong password, 2FA required, etc.).
+	// Archery's /authenticate/ has two success branches (verified on v1.8.5):
+	//   no 2FA  -> {"status":0,"msg":"ok","data":null}      + sessionid cookie
+	//   2FA on  -> {"status":0,"msg":"ok","data":"<key>"}   + only a temp cookie,
+	//              NOT logged in yet; the session_key in `data` must be completed
+	//              via POST /api/v1/user/2fa/ with the OTP.
+	// A status!=0 carries Archery's reason (wrong password, etc.).
+	var ar struct {
+		Status int             `json:"status"`
+		Msg    string          `json:"msg"`
+		Data   json.RawMessage `json:"data"`
+	}
+	_ = json.Unmarshal(body, &ar)
+	if ar.Status == 0 && c.hasSessionCookie() {
+		c.sessionReady = true
+		return nil
+	}
+
+	// status==0 but no sessionid and a non-empty string `data` means the password
+	// was accepted and the account needs a second factor to finish logging in.
+	if ar.Status == 0 && !c.hasSessionCookie() && sessionKeyFromData(ar.Data) != "" {
+		return c.complete2FA(ctx, csrf)
+	}
+
+	msg := strings.TrimSpace(ar.Msg)
+	if msg == "" {
+		msg = "check ARCHERY_CLI_USERNAME / ARCHERY_CLI_PASSWORD"
+	}
+	return &APIError{
+		StatusCode:    http.StatusUnauthorized,
+		ErrorMessages: []string{"session login failed: " + msg},
+	}
+}
+
+// sessionKeyFromData returns the session_key string Archery puts in the
+// /authenticate/ `data` field when an account has 2FA enabled. `data` is null
+// (or absent) for non-2FA accounts, so an empty return means "no 2FA pending".
+func sessionKeyFromData(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(s)
+}
+
+// complete2FA finishes a login that /authenticate/ left pending on a second
+// factor. With no OTP supplied it returns E_2FA_REQUIRED so the agent knows to
+// retry with --otp. With an OTP it POSTs to /api/v1/user/2fa/ (DRF, AllowAny)
+// using the temporary cookie + CSRF already in the jar; on success Archery's
+// view calls login() and sets the sessionid, which we then mark ready.
+func (c *Client) complete2FA(ctx context.Context, csrf string) error {
+	if c.otp == "" {
+		return &APIError{
+			StatusCode:    http.StatusUnauthorized,
+			Code:          Code2FARequired,
+			ErrorMessages: []string{"该 Archery 账号开启了 2FA，需要 6 位验证码，请加 --otp <code> 重试"},
+		}
+	}
+
+	form := url.Values{
+		"engineer": {c.sessionUser},
+		"otp":      {c.otp},
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.host+"/api/v1/user/2fa/", strings.NewReader(form.Encode()))
+	if err != nil {
+		return fmt.Errorf("2fa verify: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("User-Agent", defaultUserAgent())
+	req.Header.Set("Referer", c.host+"/login/")
+	if csrf != "" {
+		req.Header.Set("X-CSRFToken", csrf)
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("2fa verify: %w", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+
 	var ar struct {
 		Status int    `json:"status"`
 		Msg    string `json:"msg"`
@@ -410,11 +516,12 @@ func (c *Client) ensureSession(ctx context.Context) error {
 	}
 	msg := strings.TrimSpace(ar.Msg)
 	if msg == "" {
-		msg = "check ARCHERY_CLI_USERNAME / ARCHERY_CLI_PASSWORD"
+		msg = "2FA 验证码错误或已过期（2FA 验证码有效期约 30 秒，请重新生成后重试）"
 	}
 	return &APIError{
-		StatusCode:    http.StatusUnauthorized,
-		ErrorMessages: []string{"session login failed: " + msg},
+		StatusCode:    http.StatusBadRequest,
+		Code:          CodeValidation,
+		ErrorMessages: []string{"2FA 验证码错误：" + msg},
 	}
 }
 

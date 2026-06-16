@@ -361,6 +361,37 @@ intermittently returned `用户名或密码错误`. Using `http://127.0.0.1:9123
 defect; the session login flow itself (GET csrf → POST authenticate → cookie)
 matches the verified curl flow byte-for-byte.
 
+## 2026-06-16 — 1.0.5 features (read-only, 2FA, param unification, detail rework)
+
+Verified against the same `tools-e2e-archery` container (`hhyo/archery:v1.8.5`,
+base `http://localhost:9123`) with the ordinary superuser account `cli_verify`,
+binary built from this working tree (`go build -o /tmp/a.exe ./cmd/archery-cli`),
+`ARCHERY_CLI_NO_KEYRING=1`.
+
+### Result by feature
+
+| Feature | Status | Evidence |
+|---------|--------|----------|
+| `--read-only` reflected in `doctor` | live (read) | PASS — `doctor` JSON shows `readOnly:true` and a `read-only` warn check; `auth` still `pass` (logged in to the real server). |
+| `--read-only` reflected in `context` | live (read) | PASS — `context.data.readOnly == true`. |
+| `--read-only` refuses a write | live | PASS — `workflow submit ... --read-only --dry-run` → `E_FORBIDDEN`, exit 4, before any network call. |
+| `ARCHERY_CLI_READONLY` env | live | PASS — read command (`workflow list`) succeeds under the env var; the env is a pure read-allow path. |
+| Param unification: `--instance`/`--group` IDs (session) | live | PASS — `workflow submit --instance 1 --group 1 --dry-run` preview resolves `instanceName:e2e-mysql`, `groupName:smoke-rg`; confirm submitted real workflow id 4. |
+| Unknown instance ID | live | PASS — `--instance 999` → `E_NOT_FOUND` (exit 3) with a clear "check 'instance list'" message. |
+| `workflow detail` result rework | live | PASS — `detail 4` returns `result[]` (real auto-review rejection "仅支持DML和DDL语句…") + `statusCode:workflow_autoreviewwrong` + numeric `status:3`. |
+| `--otp` harmless for non-2FA account | live | PASS — passing `--otp 000000` for `cli_verify` (no 2FA) does not break login; the OTP path only fires when the server signals 2FA. |
+| 2FA detection + `--otp` completion | **mock only** | The `cli_verify` account has **no 2FA enabled**, so the 2FA login branch cannot be exercised live. Covered by unit tests `TestEnsureSession_2FARequiredNoOTP` / `2FAWithOTPSucceeds` / `2FAWrongOTP` against an httptest server that mimics v1.8.5's `/authenticate/` (status 0 + `data` session_key, no sessionid) and `/api/v1/user/2fa/`. **Honest gap: the real `/api/v1/user/2fa/` round-trip is not live-verified.** |
+
+Test workflow id 4 was cancelled after verification (`workflow cancel 4`) to
+leave the container clean.
+
+### Honesty notes
+
+- **Race detector not run on this host:** `go test -race` needs cgo + gcc, which
+  are unavailable on the verifier machine. The non-race suite (`go test ./...`)
+  is fully green, and `golangci-lint run` reports 0 issues.
+- **2FA is mock-verified only** for the reason above.
+
 ## Reproduce
 
 ```bash

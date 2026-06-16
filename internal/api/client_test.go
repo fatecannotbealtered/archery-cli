@@ -1100,3 +1100,112 @@ func TestEnsureSession_NoCredentials(t *testing.T) {
 		t.Fatal("expected an error when session credentials are absent")
 	}
 }
+
+// twoFAServer mimics Archery v1.8.5's 2FA login branch: /authenticate/ returns
+// status 0 with a session_key in `data` and NO sessionid cookie (password ok,
+// not logged in yet). /api/v1/user/2fa/ accepts the OTP "123456" and only then
+// sets the sessionid.
+func twoFAServer(t *testing.T, sawAuth, saw2FA *bool) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/login/" && r.Method == http.MethodGet:
+			http.SetCookie(w, &http.Cookie{Name: "csrftoken", Value: "csrf-2fa", Path: "/"})
+			w.WriteHeader(http.StatusOK)
+		case r.URL.Path == "/authenticate/" && r.Method == http.MethodPost:
+			*sawAuth = true
+			// 2FA branch: session_key in data, no sessionid cookie.
+			_, _ = w.Write([]byte(`{"status":0,"msg":"ok","data":"sess-key-123"}`))
+		case r.URL.Path == "/api/v1/user/2fa/" && r.Method == http.MethodPost:
+			*saw2FA = true
+			_ = r.ParseForm()
+			if r.Form.Get("otp") == "123456" && r.Form.Get("engineer") == "admin" {
+				http.SetCookie(w, &http.Cookie{Name: "sessionid", Value: "sess-2fa-ok", Path: "/"})
+				_, _ = w.Write([]byte(`{"status":0,"msg":"ok"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"status":1,"msg":"验证码错误"}`))
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"status":0,"msg":"ok","data":{}}`))
+		}
+	}))
+}
+
+// TestEnsureSession_2FARequiredNoOTP: a 2FA account with no OTP supplied must
+// surface an APIError carrying Code2FARequired, without calling /api/v1/user/2fa/.
+func TestEnsureSession_2FARequiredNoOTP(t *testing.T) {
+	var sawAuth, saw2FA bool
+	srv := twoFAServer(t, &sawAuth, &saw2FA)
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	c.SetSessionCredentials("admin", "secret")
+	_, _, err := c.Auth.LoginWithSession(testCtx, "admin", "secret")
+	if err == nil {
+		t.Fatal("expected a 2FA-required error")
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("want *APIError, got %T: %v", err, err)
+	}
+	if apiErr.Code != Code2FARequired {
+		t.Fatalf("Code = %q, want %q", apiErr.Code, Code2FARequired)
+	}
+	if !sawAuth {
+		t.Error("expected /authenticate/ to be called")
+	}
+	if saw2FA {
+		t.Error("/api/v1/user/2fa/ must NOT be called without an OTP")
+	}
+}
+
+// TestEnsureSession_2FAWithOTPSucceeds: supplying the correct OTP completes the
+// login via /api/v1/user/2fa/ and marks the session ready.
+func TestEnsureSession_2FAWithOTPSucceeds(t *testing.T) {
+	var sawAuth, saw2FA bool
+	srv := twoFAServer(t, &sawAuth, &saw2FA)
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	c.SetSessionCredentials("admin", "secret")
+	c.SetOTP("123456")
+	sessionID, _, err := c.Auth.LoginWithSession(testCtx, "admin", "secret")
+	if err != nil {
+		t.Fatalf("LoginWithSession: %v", err)
+	}
+	if !saw2FA {
+		t.Error("expected /api/v1/user/2fa/ to be called with the OTP")
+	}
+	if sessionID != "sess-2fa-ok" {
+		t.Fatalf("sessionID = %q, want sess-2fa-ok", sessionID)
+	}
+	if !c.sessionReady {
+		t.Error("session should be ready after a successful 2FA verify")
+	}
+}
+
+// TestEnsureSession_2FAWrongOTP: a wrong OTP fails with an E_VALIDATION code.
+func TestEnsureSession_2FAWrongOTP(t *testing.T) {
+	var sawAuth, saw2FA bool
+	srv := twoFAServer(t, &sawAuth, &saw2FA)
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	c.SetSessionCredentials("admin", "secret")
+	c.SetOTP("000000")
+	_, _, err := c.Auth.LoginWithSession(testCtx, "admin", "secret")
+	if err == nil {
+		t.Fatal("expected a 2FA verify failure")
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("want *APIError, got %T: %v", err, err)
+	}
+	if apiErr.Code != CodeValidation {
+		t.Fatalf("Code = %q, want %q", apiErr.Code, CodeValidation)
+	}
+	if !saw2FA {
+		t.Error("expected /api/v1/user/2fa/ to be called with the wrong OTP")
+	}
+}
