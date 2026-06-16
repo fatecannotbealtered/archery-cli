@@ -48,6 +48,7 @@ signs:
     signature: "${artifact}.sigstore.json"
     args:
       - "sign-blob"
+      - "--new-bundle-format"
       - "--bundle=${signature}"
       - "${artifact}"
       - "--yes"

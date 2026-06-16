@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.6] - 2026-06-16
+
+### Changed
+
+- `update` now verifies the release Sigstore signature on `checksums.txt` **in-process** (embedded `sigstore-go`, bootstrapped from the embedded TUF trust root) instead of shelling out to an external `cosign`. Verification is mandatory and fail-closed: a missing signature bundle, a signature that does not verify against this repo's tagged release-workflow identity, or a checksum mismatch all refuse the update — there is no skip path. Releases are now signed with `cosign sign-blob --new-bundle-format`.
+
+### Security
+
+- Release-integrity failures (missing/invalid signature or checksum mismatch) now return the non-retryable `E_INTEGRITY` error code (exit 1) instead of a retryable network code, so an agent treats a possible supply-chain issue as a hard stop rather than retrying.
+
 ## [1.0.5] - 2026-06-16
 
 ### Added
