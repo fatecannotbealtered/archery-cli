@@ -102,6 +102,7 @@ const (
 	E_USAGE                 ErrorCode = "E_USAGE"
 	E_VALIDATION            ErrorCode = "E_VALIDATION"
 	E_CONFIRMATION_REQUIRED ErrorCode = "E_CONFIRMATION_REQUIRED"
+	E_2FA_REQUIRED          ErrorCode = "E_2FA_REQUIRED"
 	E_CONFLICT              ErrorCode = "E_CONFLICT"
 	E_RATE_LIMIT            ErrorCode = "E_RATE_LIMIT"
 	E_SERVER                ErrorCode = "E_SERVER"
@@ -120,6 +121,9 @@ const (
 	ExitConflict        = 6
 	ExitTransient       = 7
 	ExitTimeout         = 8
+	// ExitHumanRequired marks operations that cannot proceed without a human
+	// action the agent cannot supply non-interactively (e.g. a fresh 2FA code).
+	ExitHumanRequired = 9
 )
 
 // ErrorCodeFromStatus maps HTTP status codes to error codes.
@@ -163,6 +167,8 @@ func HintForErrorCode(code ErrorCode) string {
 		return "Check command arguments and flags"
 	case E_CONFIRMATION_REQUIRED:
 		return "Run the same command with --dry-run, inspect the preview, then retry with --confirm <confirm_token>"
+	case E_2FA_REQUIRED:
+		return "This Archery account has 2FA enabled. Re-run with --otp <6-digit code> (or set ARCHERY_CLI_OTP). The code expires in ~30s, so generate it just before running"
 	case E_CONFLICT:
 		return "Resource conflict; another change may have happened concurrently. Re-fetch and retry"
 	case E_RATE_LIMIT:

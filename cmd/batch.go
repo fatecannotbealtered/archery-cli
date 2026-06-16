@@ -41,6 +41,8 @@ func exitForErrorCode(code output.ErrorCode) int {
 		return ExitNetwork
 	case output.E_TIMEOUT:
 		return ExitTimeout
+	case output.E_2FA_REQUIRED:
+		return ExitHumanRequired
 	default:
 		return ExitBadArgs
 	}
@@ -189,6 +191,15 @@ func batchDryRunOrConfirm(action string, targets []string, changes []map[string]
 	cmdPath := action
 	if activeCmd != nil {
 		cmdPath = activeCmd.CommandPath()
+	}
+
+	// Read-only gate: the batch write path is a separate chokepoint from the
+	// single-target one, so it must refuse writes here too.
+	if readOnlyMode {
+		emitError(
+			"read-only mode: write commands are disabled (unset --read-only / ARCHERY_CLI_READONLY to enable writes)",
+			ExitForbidden, output.E_FORBIDDEN)
+		return true
 	}
 
 	// The confirm payload binds the whole resolved target set: any change to the

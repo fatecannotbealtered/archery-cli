@@ -46,11 +46,17 @@ archery-cli workflow sqlcheck --instance 1 --db mydb --sql "ALTER TABLE users AD
 |------|------|-------------|
 | `--fields` | string | Comma-separated output fields |
 
+`workflow detail` returns the execution/review result rows in `result[]` (each
+`{stage, stageStatus, errLevel, error, affectedRows, executeTime}`) plus the
+string `statusCode` (e.g. `workflow_exception`). When an execution failed, the
+reason is in `result[].error` — read it before escalating.
+
 ### `workflow sqlcheck` flags
 
 | Flag | Type | Required | Description |
 |------|------|----------|-------------|
-| `--instance` | int | yes | Target instance ID |
+| `--instance` | int | one of | Target instance ID (resolved to a name in session mode) |
+| `--instance-name` | string | one of | Target instance name (session mode; wins over `--instance`) |
 | `--db` | string | yes | Target database name |
 | `--sql` | string | yes | SQL to check |
 
@@ -71,12 +77,20 @@ archery-cli workflow submit --name "Add email index" --instance 1 --db mydb \
 | Flag | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
 | `--name` | string | yes | -- | Workflow title |
-| `--instance` | int | yes | -- | Target instance ID |
+| `--instance` | int | one of | -- | Target instance ID (resolved to a name in session mode) |
+| `--instance-name` | string | one of | -- | Target instance name (session mode; wins over `--instance`) |
 | `--db` | string | yes | -- | Target database name |
 | `--sql` | string | yes | -- | SQL content |
-| `--group` | int | no | (auto) | Resource group ID |
-| `--backup` | bool | no | true | Require backup before execution |
+| `--group` | int | one of | (auto) | Resource group ID (resolved to a name in session mode) |
+| `--group-name` | string | one of | -- | Resource group name (session mode; wins over `--group`) |
+| `--backup` | bool | no | true | Require backup before execution (needs Archery backups configured; see note below) |
 | `--demand-url` | string | no | -- | Related demand/requirement URL |
+
+> **Backup prerequisite:** with `--backup=true` (the default), DDL execution
+> needs Archery's backup feature configured (`enable_backup_switch` + a reachable
+> backup DB). Without it, execution fails with `Invalid remote backup
+> information` (visible in `workflow detail` → `result[].error`). Submit with
+> `--backup=false` to skip backups, or have a DBA configure the backup database.
 
 ### Audit (approve or reject) a workflow
 

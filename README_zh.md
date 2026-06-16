@@ -41,6 +41,10 @@ PowerShell 使用 `$env:NAME = "value"` 设置同样的环境变量。真实密�
 
 **双模传输 —— 普通开发者账号即可用。** CLI **默认走 Archery 网页端的 session + AJAX 端点**（`/authenticate/`、`/sqlworkflow_list/`、`/sqlquery/` 等）登录和请求。这条路径在所有 Archery 版本、对普通账号都可用；而 `/api/v1` REST 面通常对普通账号关闭（`403`）或根本未开启。REST + JWT 作为可选的高级模式保留：传 `--mode jwt` 或在 region 配置 `mode: jwt` 即可。模式优先级为 `--mode` 参数 → region 配置 → 默认 `session`。已在 `hhyo/archery:v1.8.5` 上用普通账号真机验证。
 
+**只读模式。** 传 `--read-only`（或将 `ARCHERY_CLI_READONLY` 设为任意非空值）即可硬禁用所有写命令。写命令会在统一入口处被拒，返回 `E_FORBIDDEN`（退出码 4），且发生在任何网络调用之前，不受 `--dry-run`/`--confirm` 影响；读命令不受影响。适合在生产环境安全运行。`doctor` 和 `context` 会显示当前是否只读。
+
+**二次验证（2FA）。** 对开启了 2FA 的账号，用 `--otp <验证码>`（或 `ARCHERY_CLI_OTP`）传入新鲜的 6 位验证码。CLI 会检测到 Archery 要求二次验证；若未提供验证码，会立即失败并返回 `E_2FA_REQUIRED`（退出码 9），提示用 `--otp` 重试。验证码有效期约 30 秒，请在运行前即时生成；验证成功后会话会被缓存，后续命令在会话过期前无需再次输入 OTP。
+
 最坏情况风险等级：**T2 高风险** - 可对已配置数据库实例执行和管理 SQL 工单。参见 [SECURITY.md](SECURITY.md) 和 [.agent/SEC-SPEC.md](.agent/SEC-SPEC.md)。
 
 ## 能力
@@ -86,6 +90,8 @@ README 只做地图，不做完整手册。Agent 在执行任务命令前，应�
 | `ARCHERY_CLI_USERNAME` | 用户名 |
 | `ARCHERY_CLI_PASSWORD` | 密码 |
 | `ARCHERY_CLI_REGION` | 当前区域/profile |
+| `ARCHERY_CLI_READONLY` | 任意非空值即禁用所有写命令（等价于 `--read-only`） |
+| `ARCHERY_CLI_OTP` | 开启 2FA 账号的 6 位验证码（等价于 `--otp`） |
 | `NO_COLOR` | 显式使用 text 模式时禁用彩色输出 |
 
 支持保存凭据时，凭据会加密或进入 OS 凭据库。环境变量优先级更高，也是短生命周期 Agent 会话的推荐方式。

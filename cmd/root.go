@@ -30,6 +30,9 @@ const (
 	ExitRateLimit = 7
 	ExitNetwork   = 7
 	ExitTimeout   = 8
+	// ExitHumanRequired marks an operation blocked on a human-only action the
+	// agent cannot supply non-interactively, e.g. a fresh 2FA code.
+	ExitHumanRequired = 9
 )
 
 // ErrSilent indicates the error has been printed; cobra should not print again.
@@ -46,11 +49,13 @@ var (
 	quietMode      bool
 	dryRun         bool
 	dangerousMode  bool
+	readOnlyMode   bool
 	regionFlag     string
 	modeFlag       string
 	formatMode     = formatJSON
 	insecureTLS    bool
 	timeoutSeconds int
+	otpFlag        string
 )
 
 const defaultTimeoutSeconds = 30
@@ -111,10 +116,12 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&quietMode, "quiet", false, "Suppress non-JSON stdout output (for scripts and AI Agents)")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Show what would be done without executing")
 	rootCmd.PersistentFlags().BoolVar(&dangerousMode, "dangerous", false, "Enable high/critical risk write commands; required in both dry-run and confirm steps")
+	rootCmd.PersistentFlags().BoolVar(&readOnlyMode, "read-only", false, "Disable all write commands (or set ARCHERY_CLI_READONLY to any non-empty value)")
 	rootCmd.PersistentFlags().StringVar(&regionFlag, "region", "", "Override active region (default: config default_region)")
 	rootCmd.PersistentFlags().StringVar(&modeFlag, "mode", "", "Transport mode: session (default) | jwt; overrides region config")
 	rootCmd.PersistentFlags().BoolVar(&insecureTLS, "insecure", false, "Skip TLS certificate verification (corporate/self-signed CA)")
 	rootCmd.PersistentFlags().IntVar(&timeoutSeconds, "timeout", defaultTimeoutSeconds, "HTTP request timeout in seconds")
+	rootCmd.PersistentFlags().StringVar(&otpFlag, "otp", "", "6-digit 2FA code for accounts with two-factor auth (or set ARCHERY_CLI_OTP); ~30s validity")
 	initConfirmFlag()
 	installUpdateNoticeHelp(rootCmd)
 
@@ -126,6 +133,7 @@ func init() {
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		cmdStartTime = time.Now()
 		activeCmd = cmd
+		applyReadOnlyFromEnv()
 		if err := applyFormatFlags(cmd); err != nil {
 			return err
 		}
@@ -174,12 +182,18 @@ func handleAPIError(err error) error {
 	if errors.As(err, &apiErr) {
 		msg := apiErr.Error()
 		code := output.ErrorCodeFromStatus(apiErr.StatusCode)
+		exit := exitCodeForStatus(apiErr.StatusCode)
+		// An explicit Code (e.g. 2FA) overrides the status-derived classification.
+		if apiErr.Code != "" {
+			code = output.ErrorCode(apiErr.Code)
+			exit = exitForErrorCode(code)
+		}
 		if jsonMode {
 			output.PrintErrorJSONWithCode(msg, apiErr.StatusCode, code)
 		} else {
 			output.Error(msg)
 		}
-		setExitCode(exitCodeForStatus(apiErr.StatusCode))
+		setExitCode(exit)
 		return ErrSilent
 	}
 	msg := err.Error()
@@ -259,6 +273,15 @@ func markDryRunOrConfirmWithPayload(action string, detail map[string]any, confir
 	cmdPath := action
 	if activeCmd != nil {
 		cmdPath = activeCmd.CommandPath()
+	}
+	// Read-only is the outermost gate: every write command funnels through here,
+	// so refusing at this chokepoint blocks writes regardless of --dry-run /
+	// --confirm. The dangerous gate and dry-run preview never run once refused.
+	if readOnlyMode {
+		emitError(
+			"read-only mode: write commands are disabled (unset --read-only / ARCHERY_CLI_READONLY to enable writes)",
+			ExitForbidden, output.E_FORBIDDEN)
+		return true
 	}
 	if requiresDangerousGate(activeCmd) {
 		if !dangerousMode {
@@ -508,6 +531,9 @@ func newClient() (*api.Client, *config.Config, *config.RegionConfig, error) {
 	// no cached cookie is present (or a cookie went stale). JWT-only setups leave
 	// these empty, in which case session endpoints surface a clear error.
 	client.SetSessionCredentials(region.Username, region.Password)
+	// A 2FA code (if any) feeds the session login handshake; harmless in JWT mode
+	// where the form login never runs.
+	client.SetOTP(effectiveOTP())
 
 	if mode == config.ModeJWT {
 		// JWT transport: prefer a cached token; otherwise mint one now.
@@ -584,6 +610,28 @@ func trim(s string) string {
 
 // InsecureTLS returns true if --insecure is active (for doctor checks).
 func InsecureTLS() bool { return insecureTLS }
+
+// ReadOnly reports whether write commands are disabled (for doctor/context).
+func ReadOnly() bool { return readOnlyMode }
+
+// applyReadOnlyFromEnv turns on read-only mode when ARCHERY_CLI_READONLY holds
+// any non-empty value, mirroring the --read-only flag. The flag, once set, wins.
+func applyReadOnlyFromEnv() {
+	if readOnlyMode {
+		return
+	}
+	if strings.TrimSpace(os.Getenv("ARCHERY_CLI_READONLY")) != "" {
+		readOnlyMode = true
+	}
+}
+
+// effectiveOTP resolves the 2FA code: --otp flag wins, else ARCHERY_CLI_OTP.
+func effectiveOTP() string {
+	if v := strings.TrimSpace(otpFlag); v != "" {
+		return v
+	}
+	return strings.TrimSpace(os.Getenv("ARCHERY_CLI_OTP"))
+}
 
 func applyInsecureFromEnv() {
 	if insecureTLS {

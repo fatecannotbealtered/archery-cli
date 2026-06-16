@@ -117,7 +117,7 @@ func TestErrorCodeFromStatus(t *testing.T) {
 func TestHintForErrorCode_AllCodesHaveHint(t *testing.T) {
 	codes := []ErrorCode{
 		E_CONFIG, E_AUTH, E_FORBIDDEN, E_NOT_FOUND, E_USAGE,
-		E_VALIDATION, E_CONFIRMATION_REQUIRED, E_CONFLICT, E_RATE_LIMIT,
+		E_VALIDATION, E_CONFIRMATION_REQUIRED, E_2FA_REQUIRED, E_CONFLICT, E_RATE_LIMIT,
 		E_SERVER, E_NETWORK, E_TIMEOUT,
 	}
 	for _, c := range codes {

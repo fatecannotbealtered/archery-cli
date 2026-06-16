@@ -57,6 +57,7 @@ type contextResult struct {
 	ActiveRegion  string             `json:"activeRegion"`
 	Regions       []contextRegion    `json:"regions"`
 	ConfigPath    string             `json:"configPath"`
+	ReadOnly      bool               `json:"readOnly"`
 	Credentials   contextCredentials `json:"credentials"`
 	Notices       []updateNotice     `json:"notices,omitempty"`
 }
@@ -73,6 +74,7 @@ func runContext(cmd *cobra.Command, _ []string) error {
 			Version:     version,
 			Env:         "local",
 			ConfigPath:  config.FilePath(),
+			ReadOnly:    ReadOnly(),
 			Credentials: contextCredentials{Configured: false},
 			Notices:     readCachedUpdateNotices(),
 		}
@@ -86,6 +88,7 @@ func runContext(cmd *cobra.Command, _ []string) error {
 		DefaultRegion: cfg.DefaultRegion,
 		ActiveRegion:  activeRegion,
 		ConfigPath:    config.FilePath(),
+		ReadOnly:      ReadOnly(),
 		Notices:       readCachedUpdateNotices(),
 	}
 
@@ -144,6 +147,9 @@ func renderContext(r *contextResult, unauthenticated bool) error {
 	output.Gray(fmt.Sprintf("    Config:  %s", r.ConfigPath))
 	output.Gray(fmt.Sprintf("    Default: %s", r.DefaultRegion))
 	output.Gray(fmt.Sprintf("    Active:  %s", r.ActiveRegion))
+	if r.ReadOnly {
+		output.Gray("    Mode:    read-only (write commands disabled)")
+	}
 	fmt.Println()
 
 	output.Bold("  Regions")

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/fatecannotbealtered/archery-cli/internal/api"
+	"github.com/fatecannotbealtered/archery-cli/internal/config"
 	"github.com/fatecannotbealtered/archery-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -42,12 +43,12 @@ func init() {
 
 	// workflow submit
 	workflowSubmitCmd.Flags().String("name", "", "Workflow title (required)")
-	workflowSubmitCmd.Flags().Int("instance", 0, "Target instance ID (jwt mode)")
-	workflowSubmitCmd.Flags().String("instance-name", "", "Target instance name (session mode)")
+	workflowSubmitCmd.Flags().Int("instance", 0, "Target instance ID (both modes; session resolves it to a name)")
+	workflowSubmitCmd.Flags().String("instance-name", "", "Target instance name (session mode; wins over --instance)")
 	workflowSubmitCmd.Flags().String("db", "", "Target database name (required)")
 	workflowSubmitCmd.Flags().String("sql", "", "SQL content (required)")
-	workflowSubmitCmd.Flags().Int("group", 0, "Resource group ID (jwt mode)")
-	workflowSubmitCmd.Flags().String("group-name", "", "Resource group name (session mode, required)")
+	workflowSubmitCmd.Flags().Int("group", 0, "Resource group ID (both modes; session resolves it to a name)")
+	workflowSubmitCmd.Flags().String("group-name", "", "Resource group name (session mode; wins over --group)")
 	workflowSubmitCmd.Flags().Bool("backup", true, "Require backup before execution")
 	workflowSubmitCmd.Flags().String("demand-url", "", "Related demand/requirement URL")
 	workflowSubmitCmd.Flags().StringSlice("cc", nil, "CC notify usernames (session mode)")
@@ -84,15 +85,15 @@ func init() {
 	markRiskLevel(workflowCancelCmd, "medium")
 
 	// workflow sqlcheck
-	workflowSQLCheckCmd.Flags().Int("instance", 0, "Target instance ID (jwt mode)")
-	workflowSQLCheckCmd.Flags().String("instance-name", "", "Target instance name (session mode)")
+	workflowSQLCheckCmd.Flags().Int("instance", 0, "Target instance ID (both modes; session resolves it to a name)")
+	workflowSQLCheckCmd.Flags().String("instance-name", "", "Target instance name (session mode; wins over --instance)")
 	workflowSQLCheckCmd.Flags().String("db", "", "Target database name (required)")
 	workflowSQLCheckCmd.Flags().String("sql", "", "SQL to check (required)")
 	workflowCmd.AddCommand(workflowSQLCheckCmd)
 
 	// workflow auto-review
-	workflowAutoReviewCmd.Flags().Int("instance", 0, "Target instance ID (jwt mode)")
-	workflowAutoReviewCmd.Flags().String("instance-name", "", "Target instance name (session mode)")
+	workflowAutoReviewCmd.Flags().Int("instance", 0, "Target instance ID (both modes; session resolves it to a name)")
+	workflowAutoReviewCmd.Flags().String("instance-name", "", "Target instance name (session mode; wins over --instance)")
 	workflowAutoReviewCmd.Flags().String("db", "", "Target database name (required)")
 	workflowAutoReviewCmd.Flags().String("sql", "", "SQL to classify (required)")
 	workflowAutoReviewCmd.Flags().StringSlice("ids", nil, "Approve these workflow IDs after they pass the rules (with --execute)")
@@ -241,16 +242,38 @@ var workflowSubmitCmd = &cobra.Command{
 		demandURL, _ := cmd.Flags().GetString("demand-url")
 		ccUsers, _ := cmd.Flags().GetStringSlice("cc")
 
+		getClientRegion := newClientRegionMemo()
+		getClient := func() (*api.Client, error) {
+			c, _, err := getClientRegion()
+			return c, err
+		}
 		mode := activeTransportMode()
-		// Session submit keys on names; REST keys on numeric IDs. Validate the
-		// identifier the active transport actually sends.
+		// Session submit keys on names; REST keys on numeric IDs. In session mode
+		// the agent may pass the name directly, or the numeric ID (resolved to a
+		// name here) — same flags as JWT mode, no per-transport memorisation. The
+		// name flag wins when both are present.
 		if mode == api.ModeSession {
 			if instanceName == "" {
-				return failArg("--instance-name is required in session mode")
+				if instanceID == 0 {
+					return failArg("--instance-name or --instance (ID) is required in session mode")
+				}
+				instanceName, err = resolveInstanceName(getClient, instanceID)
+				if err != nil {
+					return err
+				}
 			}
 			if groupName == "" {
-				return failArg("--group-name is required in session mode")
+				if groupID == 0 {
+					return failArg("--group-name or --group (ID) is required in session mode")
+				}
+				groupName, err = resolveGroupName(getClient, groupID)
+				if err != nil {
+					return err
+				}
 			}
+			// The session endpoint keys on names; clear the IDs so the request and
+			// preview never carry a stale numeric identifier the server ignores.
+			instanceID, groupID = 0, 0
 		} else if instanceID == 0 {
 			return failArg("--instance is required in jwt mode")
 		}
@@ -294,7 +317,7 @@ var workflowSubmitCmd = &cobra.Command{
 			return nil
 		}
 
-		client, _, region, err := newClient()
+		client, region, err := getClientRegion()
 		if err != nil {
 			return err
 		}
@@ -614,12 +637,14 @@ var workflowSQLCheckCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		instanceID, instanceName, err := workflowInstanceIdentifier(cmd)
+
+		getClient := newClientMemo()
+		instanceID, instanceName, err := workflowInstanceIdentifier(cmd, getClient)
 		if err != nil {
 			return err
 		}
 
-		client, _, _, err := newClient()
+		client, err := getClient()
 		if err != nil {
 			return err
 		}
@@ -668,7 +693,8 @@ var workflowAutoReviewCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		instanceID, instanceName, err := workflowInstanceIdentifier(cmd)
+		getClient := newClientMemo()
+		instanceID, instanceName, err := workflowInstanceIdentifier(cmd, getClient)
 		if err != nil {
 			return err
 		}
@@ -680,7 +706,7 @@ var workflowAutoReviewCmd = &cobra.Command{
 			return failArg("--execute needs --ids listing the workflow IDs to approve")
 		}
 
-		client, _, _, err := newClient()
+		client, err := getClient()
 		if err != nil {
 			return err
 		}
@@ -790,21 +816,105 @@ func printAutoReviewResult(classified []map[string]any, compliant bool, blocked 
 // ─── helper ─────────────────────────────────────────────────────────────────
 
 // workflowInstanceIdentifier resolves the instance identifier the active
-// transport needs: session mode requires --instance-name, JWT mode requires
-// the numeric --instance. Returns (id, name) with the unused side zero/empty.
-func workflowInstanceIdentifier(cmd *cobra.Command) (int, string, error) {
+// transport needs: session mode keys on --instance-name, JWT mode on the
+// numeric --instance. Returns (id, name) with the unused side zero/empty.
+//
+// In session mode the caller may pass --instance-name directly, or supply the
+// numeric --instance (ID) which is resolved to a name via the instance list —
+// so agents no longer have to remember a different flag per transport. The name
+// flag wins when both are given. lazyClient builds the API client on first use
+// (only when an ID actually needs resolving), so the no-resolution paths stay
+// network-free for the dry-run gate.
+func workflowInstanceIdentifier(cmd *cobra.Command, lazyClient func() (*api.Client, error)) (int, string, error) {
 	instanceID, _ := cmd.Flags().GetInt("instance")
 	instanceName, _ := cmd.Flags().GetString("instance-name")
 	if activeTransportMode() == api.ModeSession {
-		if instanceName == "" {
-			return 0, "", failArg("--instance-name is required in session mode")
+		if instanceName != "" {
+			return 0, instanceName, nil
 		}
-		return 0, instanceName, nil
+		if instanceID > 0 {
+			name, err := resolveInstanceName(lazyClient, instanceID)
+			if err != nil {
+				return 0, "", err
+			}
+			return 0, name, nil
+		}
+		return 0, "", failArg("--instance-name or --instance (ID) is required in session mode")
 	}
 	if instanceID == 0 {
 		return 0, "", failArg("--instance is required in jwt mode")
 	}
 	return instanceID, "", nil
+}
+
+// resolveInstanceName maps a numeric instance ID to its instance name by paging
+// the instance list (session mode has no by-id JSON endpoint). A page of 500
+// covers any realistic single-region fleet.
+func resolveInstanceName(lazyClient func() (*api.Client, error), instanceID int) (string, error) {
+	client, err := lazyClient()
+	if err != nil {
+		return "", err
+	}
+	instances, _, err := listInstancesSession(client, "", "", "", 500, 0)
+	if err != nil {
+		return "", handleAPIError(err)
+	}
+	want := strconv.Itoa(instanceID)
+	for _, inst := range instances {
+		if inst.ID == want {
+			return inst.InstanceName, nil
+		}
+	}
+	return "", failNotFound(fmt.Sprintf("instance ID %d not found; check 'archery-cli instance list'", instanceID))
+}
+
+// resolveGroupName maps a numeric resource-group ID to its group name via the
+// resource-group list. Used so session-mode submit accepts --group (ID) too.
+func resolveGroupName(lazyClient func() (*api.Client, error), groupID int) (string, error) {
+	client, err := lazyClient()
+	if err != nil {
+		return "", err
+	}
+	groups, _, err := client.Users.ListResourceGroups(apiCtx(), 500, 0, "")
+	if err != nil {
+		return "", handleAPIError(err)
+	}
+	for _, g := range groups {
+		if g.ID == groupID {
+			return g.Name, nil
+		}
+	}
+	return "", failNotFound(fmt.Sprintf("resource group ID %d not found; check 'archery-cli user resource-groups'", groupID))
+}
+
+// newClientMemo returns a function that builds the API client once and caches
+// it (and any error). Commands that may need the client both for ID→name
+// resolution and for the actual request use this so newClient runs at most once.
+func newClientMemo() func() (*api.Client, error) {
+	get := newClientRegionMemo()
+	return func() (*api.Client, error) {
+		c, _, err := get()
+		return c, err
+	}
+}
+
+// newClientRegionMemo is newClientMemo but also exposes the active region (for
+// commands that need region.URL after the request, e.g. submit).
+func newClientRegionMemo() func() (*api.Client, *config.RegionConfig, error) {
+	var (
+		client *api.Client
+		region *config.RegionConfig
+		cached bool
+		cerr   error
+	)
+	return func() (*api.Client, *config.RegionConfig, error) {
+		if cached {
+			return client, region, cerr
+		}
+		cached = true
+		client, _, region, cerr = newClient()
+		return client, region, cerr
+	}
 }
 
 // parseWorkflowID parses and validates a workflow ID string.

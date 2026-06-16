@@ -215,6 +215,8 @@ func doAuthLogin(cfg *config.Config, regionName, regionURL, username, password s
 
 	client := api.NewClient(regionURL)
 	client.SetMode(mode)
+	// Pass any 2FA code through to the session login handshake.
+	client.SetOTP(effectiveOTP())
 
 	region := cfg.Regions[regionName]
 	region.URL = regionURL

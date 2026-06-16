@@ -240,6 +240,39 @@ func workflowDetailToMap(d *api.SQLWorkflowDetail, host string) map[string]any {
 		"sql":        d.SQLContent,
 		"created":    d.CreateDate,
 	}
+	// 字符串状态码(如 workflow_exception) —— 比裸 int 可读, 也修掉 detail 误报 status:0。
+	if d.StatusCode != "" {
+		m["statusCode"] = d.StatusCode
+	}
+	if d.InstanceName != "" {
+		m["instance"] = d.InstanceName
+	}
+	if d.GroupName != "" {
+		m["group"] = d.GroupName
+	}
+	// 执行/审核结果 —— 执行失败时这里带 errormessage(如 "Invalid remote backup information")，
+	// 让开发者从 CLI 就能看到失败原因，而不必去网页/DB 查。
+	if len(d.Result) > 0 {
+		rows := make([]map[string]any, 0, len(d.Result))
+		for _, r := range d.Result {
+			row := map[string]any{
+				"stage":       r.Stage,
+				"stageStatus": r.StageStatus,
+				"errLevel":    r.ErrLevel,
+			}
+			if r.ErrorMessage != "" {
+				row["error"] = r.ErrorMessage
+			}
+			if r.AffectedRows != 0 {
+				row["affectedRows"] = r.AffectedRows
+			}
+			if r.ExecuteTime != "" && r.ExecuteTime != "0" {
+				row["executeTime"] = r.ExecuteTime
+			}
+			rows = append(rows, row)
+		}
+		m["result"] = rows
+	}
 	if d.DemandURL != "" {
 		m["demandUrl"] = d.DemandURL
 	}
@@ -259,7 +292,7 @@ func workflowDetailToMap(d *api.SQLWorkflowDetail, host string) map[string]any {
 		m["auditLog"] = logs
 	}
 	// Tag externally-sourced fields as untrusted (SEC-SPEC §2).
-	api.TagUntrusted(m, "title", "sql", "auditLog", "demandUrl")
+	api.TagUntrusted(m, "title", "sql", "auditLog", "demandUrl", "result")
 	return normalizeAgentMap(m)
 }
 
