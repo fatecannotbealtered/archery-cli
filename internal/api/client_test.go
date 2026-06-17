@@ -1101,12 +1101,24 @@ func TestEnsureSession_NoCredentials(t *testing.T) {
 	}
 }
 
-// twoFAServer mimics Archery v1.8.5's 2FA login branch: /authenticate/ returns
-// status 0 with a session_key in `data` and NO sessionid cookie (password ok,
-// not logged in yet). /api/v1/user/2fa/ accepts the OTP "123456" and only then
-// sets the sessionid.
-func twoFAServer(t *testing.T, sawAuth, saw2FA *bool) *httptest.Server {
+// twoFAServer faithfully mimics Archery v1.8.5's real 2FA login contract
+// (verified live against hhyo/archery:v1.8.5):
+//   - GET  /login/             -> sets the csrftoken cookie.
+//   - POST /authenticate/      -> password ok + 2FA on: returns the temp
+//     session_key in `data` and NO sessionid cookie (user not logged in yet).
+//   - POST /api/v1/user/2fa/verify/ -> the REAL verify endpoint. It resolves the
+//     pending user from request.session, so the client MUST replay the temp
+//     session_key as the `sessionid` cookie. Missing cookie -> "需先校验用户密码！";
+//     wrong code -> "验证码不正确！"; correct code + cookie -> login() sets the
+//     authenticated sessionid.
+//   - POST /api/v1/user/2fa/   -> the 2FA *config* endpoint. Hitting it during a
+//     login is the original bug; the mock fails the test if it is called.
+//
+// This encodes both halves of the fix (correct endpoint + replayed session
+// cookie), so a regression on either flips a test red.
+func twoFAServer(t *testing.T, sawAuth, sawVerify *bool) *httptest.Server {
 	t.Helper()
+	const tempSessionKey = "sess-key-123"
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/login/" && r.Method == http.MethodGet:
@@ -1114,17 +1126,28 @@ func twoFAServer(t *testing.T, sawAuth, saw2FA *bool) *httptest.Server {
 			w.WriteHeader(http.StatusOK)
 		case r.URL.Path == "/authenticate/" && r.Method == http.MethodPost:
 			*sawAuth = true
-			// 2FA branch: session_key in data, no sessionid cookie.
-			_, _ = w.Write([]byte(`{"status":0,"msg":"ok","data":"sess-key-123"}`))
-		case r.URL.Path == "/api/v1/user/2fa/" && r.Method == http.MethodPost:
-			*saw2FA = true
+			// 2FA branch: temp session_key in data, no sessionid cookie.
+			_, _ = w.Write([]byte(`{"status":0,"msg":"ok","data":"` + tempSessionKey + `"}`))
+		case r.URL.Path == "/api/v1/user/2fa/verify/" && r.Method == http.MethodPost:
+			*sawVerify = true
 			_ = r.ParseForm()
+			ck, _ := r.Cookie("sessionid")
+			if ck == nil || ck.Value != tempSessionKey {
+				// Pending user not found because the temp session was not replayed.
+				_, _ = w.Write([]byte(`{"status":1,"msg":"需先校验用户密码！"}`))
+				return
+			}
 			if r.Form.Get("otp") == "123456" && r.Form.Get("engineer") == "admin" {
 				http.SetCookie(w, &http.Cookie{Name: "sessionid", Value: "sess-2fa-ok", Path: "/"})
 				_, _ = w.Write([]byte(`{"status":0,"msg":"ok"}`))
 				return
 			}
-			_, _ = w.Write([]byte(`{"status":1,"msg":"验证码错误"}`))
+			_, _ = w.Write([]byte(`{"status":1,"msg":"验证码不正确！"}`))
+		case r.URL.Path == "/api/v1/user/2fa/" && r.Method == http.MethodPost:
+			// The config endpoint must never be used to verify a login OTP.
+			t.Errorf("login OTP must POST to /api/v1/user/2fa/verify/, not the config endpoint /api/v1/user/2fa/")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"auth_type":["This field is required."]}`))
 		default:
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"status":0,"msg":"ok","data":{}}`))
@@ -1133,10 +1156,10 @@ func twoFAServer(t *testing.T, sawAuth, saw2FA *bool) *httptest.Server {
 }
 
 // TestEnsureSession_2FARequiredNoOTP: a 2FA account with no OTP supplied must
-// surface an APIError carrying Code2FARequired, without calling /api/v1/user/2fa/.
+// surface an APIError carrying Code2FARequired, without calling the verify endpoint.
 func TestEnsureSession_2FARequiredNoOTP(t *testing.T) {
-	var sawAuth, saw2FA bool
-	srv := twoFAServer(t, &sawAuth, &saw2FA)
+	var sawAuth, sawVerify bool
+	srv := twoFAServer(t, &sawAuth, &sawVerify)
 	defer srv.Close()
 
 	c := NewClient(srv.URL)
@@ -1155,16 +1178,17 @@ func TestEnsureSession_2FARequiredNoOTP(t *testing.T) {
 	if !sawAuth {
 		t.Error("expected /authenticate/ to be called")
 	}
-	if saw2FA {
-		t.Error("/api/v1/user/2fa/ must NOT be called without an OTP")
+	if sawVerify {
+		t.Error("/api/v1/user/2fa/verify/ must NOT be called without an OTP")
 	}
 }
 
-// TestEnsureSession_2FAWithOTPSucceeds: supplying the correct OTP completes the
-// login via /api/v1/user/2fa/ and marks the session ready.
+// TestEnsureSession_2FAWithOTPSucceeds: the correct OTP completes the login via
+// /api/v1/user/2fa/verify/ (with the temp session_key replayed as the sessionid
+// cookie) and marks the session ready.
 func TestEnsureSession_2FAWithOTPSucceeds(t *testing.T) {
-	var sawAuth, saw2FA bool
-	srv := twoFAServer(t, &sawAuth, &saw2FA)
+	var sawAuth, sawVerify bool
+	srv := twoFAServer(t, &sawAuth, &sawVerify)
 	defer srv.Close()
 
 	c := NewClient(srv.URL)
@@ -1174,8 +1198,8 @@ func TestEnsureSession_2FAWithOTPSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoginWithSession: %v", err)
 	}
-	if !saw2FA {
-		t.Error("expected /api/v1/user/2fa/ to be called with the OTP")
+	if !sawVerify {
+		t.Error("expected /api/v1/user/2fa/verify/ to be called with the OTP")
 	}
 	if sessionID != "sess-2fa-ok" {
 		t.Fatalf("sessionID = %q, want sess-2fa-ok", sessionID)
@@ -1185,10 +1209,11 @@ func TestEnsureSession_2FAWithOTPSucceeds(t *testing.T) {
 	}
 }
 
-// TestEnsureSession_2FAWrongOTP: a wrong OTP fails with an E_VALIDATION code.
+// TestEnsureSession_2FAWrongOTP: a wrong OTP fails with an E_VALIDATION code,
+// after reaching the verify endpoint with the session cookie replayed.
 func TestEnsureSession_2FAWrongOTP(t *testing.T) {
-	var sawAuth, saw2FA bool
-	srv := twoFAServer(t, &sawAuth, &saw2FA)
+	var sawAuth, sawVerify bool
+	srv := twoFAServer(t, &sawAuth, &sawVerify)
 	defer srv.Close()
 
 	c := NewClient(srv.URL)
@@ -1205,7 +1230,7 @@ func TestEnsureSession_2FAWrongOTP(t *testing.T) {
 	if apiErr.Code != CodeValidation {
 		t.Fatalf("Code = %q, want %q", apiErr.Code, CodeValidation)
 	}
-	if !saw2FA {
-		t.Error("expected /api/v1/user/2fa/ to be called with the wrong OTP")
+	if !sawVerify {
+		t.Error("expected /api/v1/user/2fa/verify/ to be called with the wrong OTP")
 	}
 }

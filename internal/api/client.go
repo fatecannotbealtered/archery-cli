@@ -443,7 +443,7 @@ func (c *Client) ensureSession(ctx context.Context) error {
 	// status==0 but no sessionid and a non-empty string `data` means the password
 	// was accepted and the account needs a second factor to finish logging in.
 	if ar.Status == 0 && !c.hasSessionCookie() && sessionKeyFromData(ar.Data) != "" {
-		return c.complete2FA(ctx, csrf)
+		return c.complete2FA(ctx, csrf, sessionKeyFromData(ar.Data))
 	}
 
 	msg := strings.TrimSpace(ar.Msg)
@@ -472,10 +472,13 @@ func sessionKeyFromData(raw json.RawMessage) string {
 
 // complete2FA finishes a login that /authenticate/ left pending on a second
 // factor. With no OTP supplied it returns E_2FA_REQUIRED so the agent knows to
-// retry with --otp. With an OTP it POSTs to /api/v1/user/2fa/ (DRF, AllowAny)
-// using the temporary cookie + CSRF already in the jar; on success Archery's
-// view calls login() and sets the sessionid, which we then mark ready.
-func (c *Client) complete2FA(ctx context.Context, csrf string) error {
+// retry with --otp. With an OTP it POSTs to /api/v1/user/2fa/verify/ (DRF,
+// AllowAny) — NOT /api/v1/user/2fa/, which is the 2FA *config* endpoint and
+// rejects a verify payload — using the temporary cookie + CSRF already in the
+// jar; on success Archery's TwoFAVerify view calls login() and sets the
+// sessionid, which we then mark ready. For an already-configured account the
+// server reads auth_type from its own config, so engineer + otp suffice.
+func (c *Client) complete2FA(ctx context.Context, csrf, sessionKey string) error {
 	if c.otp == "" {
 		return &APIError{
 			StatusCode:    http.StatusUnauthorized,
@@ -484,11 +487,23 @@ func (c *Client) complete2FA(ctx context.Context, csrf string) error {
 		}
 	}
 
+	// /authenticate/ stashed the password-verified user in a fresh temp session
+	// and returned ONLY its session_key in the response body (no Set-Cookie). The
+	// /2fa/verify/ view resolves that pending user via request.session, so we must
+	// replay the key as the sessionid cookie; without it the view rejects the OTP
+	// with "需先校验用户密码！" even when the code is correct. On success Archery's
+	// login() issues a new authenticated sessionid that overwrites this one.
+	if sessionKey != "" {
+		if u, err := url.Parse(c.host); err == nil {
+			c.httpClient.Jar.SetCookies(u, []*http.Cookie{{Name: "sessionid", Value: sessionKey, Path: "/"}})
+		}
+	}
+
 	form := url.Values{
 		"engineer": {c.sessionUser},
 		"otp":      {c.otp},
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.host+"/api/v1/user/2fa/", strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.host+"/api/v1/user/2fa/verify/", strings.NewReader(form.Encode()))
 	if err != nil {
 		return fmt.Errorf("2fa verify: %w", err)
 	}
