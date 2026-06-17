@@ -63,6 +63,47 @@ func TestDetail_SessionCombinesResultAndMetadata(t *testing.T) {
 	}
 }
 
+// TestDetail_SessionNumericExecuteTime guards the real-world shape that broke
+// `workflow detail 42594` live: Archery returns execute_time (and sometimes
+// sequence) as a bare JSON number for an executed workflow, not a string. The
+// row must still parse and render the value as a string.
+func TestDetail_SessionNumericExecuteTime(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/sqlworkflow/detail_content/":
+			// execute_time as a NUMBER (0.008516) and sequence as a NUMBER.
+			_, _ = w.Write([]byte(`{"rows":[` +
+				`{"id":1,"stage":"Executed","errlevel":0,"stagestatus":"Execute Successfully",` +
+				`"errormessage":"None","sql":"DEL pangu:sso:token","affected_rows":0,` +
+				`"sequence":12,"execute_time":0.008516}]}`))
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"total":0,"rows":[]}`))
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	c.SetMode(ModeSession)
+
+	detail, err := c.Workflows.Detail(testCtx, 42594)
+	if err != nil {
+		t.Fatalf("Detail with numeric execute_time must parse, got: %v", err)
+	}
+	if len(detail.Result) != 1 {
+		t.Fatalf("Result len = %d, want 1", len(detail.Result))
+	}
+	if got := string(detail.Result[0].ExecuteTime); got != "0.008516" {
+		t.Fatalf("ExecuteTime = %q, want 0.008516", got)
+	}
+	if got := string(detail.Result[0].Sequence); got != "12" {
+		t.Fatalf("Sequence = %q, want 12", got)
+	}
+	if detail.SQLContent != "DEL pangu:sso:token" {
+		t.Fatalf("SQLContent = %q", detail.SQLContent)
+	}
+}
+
 // TestDetail_SessionFiltersInceptionWrapperSQL confirms the inception_magic
 // wrapper statements are excluded from the reconstructed SQLContent.
 func TestDetail_SessionFiltersInceptionWrapperSQL(t *testing.T) {

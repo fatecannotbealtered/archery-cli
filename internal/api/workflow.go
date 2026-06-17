@@ -223,7 +223,11 @@ func (w *WorkflowAPI) Detail(ctx context.Context, id int) (*SQLWorkflowDetail, e
 		Rows []reviewResultRow `json:"rows"`
 	}
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("parsing workflow detail: %w", err)
+		// A response we received but cannot decode is a contract/parse failure,
+		// not a network problem. Return it as an APIError (no status) so it maps
+		// to a non-retryable E_UNKNOWN instead of the retryable E_NETWORK the
+		// plain-error fallback would assign.
+		return nil, &APIError{ErrorMessages: []string{"parsing workflow detail: " + err.Error()}}
 	}
 
 	detail := &SQLWorkflowDetail{ID: id}

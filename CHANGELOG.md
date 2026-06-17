@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.9] - 2026-06-17
+
+### Fixed
+
+- **`instance list` works for non-DBA users.** It posted to `/instance/list/`, which Archery gates behind the DBA permission `sql.menu_instance_list`, so an ordinary user who can still *query* instances (granted via a resource group) got `403 permission denied` — even though the web SQL-query page lists those instances fine. On 403 the CLI now falls back to the ungated, user-scoped `/group/user_all_instances/` (the endpoint the web query page actually uses), returning the instances the user is authorized to use. That endpoint exposes only `{id, type, db_type, instance_name}` and has no server-side search, so host/port/credentials are omitted (with a stderr note) and `--search`/`--limit` are applied client-side. Verified on a local container with a non-DBA account in a resource group.
+- **`workflow detail` no longer fails to parse executed workflows.** Archery returns `execute_time` (and `sequence`) on a ReviewResult row as a bare JSON number for some workflows and a string for others; the struct hard-typed them as `string`, so a numeric value failed the whole detail parse (`cannot unmarshal number into ... execute_time of type string`) and the SQL content could not be shown. These fields now accept either form. Reproduced and fixed against a real executed workflow.
+- **Response-decode failures are no longer reported as retryable network errors.** A body the CLI received but could not parse (e.g. the `execute_time` mismatch above) surfaced as retryable `E_NETWORK` ("check host URL and network connectivity"); it now maps to non-retryable `E_UNKNOWN`, so an agent fixes the contract mismatch instead of blindly retrying.
+
+### Notes
+
+- These came out of an endpoint audit cross-referencing every CLI call against the Archery v1.8.5 source (route, permission decorator, request fields, response types). The audit also confirmed that `user list` (`/user/list/`) and `user resource-groups` (`/group/group/`) are `@superuser_required` upstream with no ungated user-scoped session endpoint, so they remain admin-only by Archery's design (the CLI degrades to `E_FORBIDDEN`); and that the workflow list/submit/review gates (`menu_sqlworkflow`, `sql_submit`, `sql_review`, `audit_user`) are legitimate feature permissions.
+
 ## [1.0.8] - 2026-06-17
 
 ### Fixed

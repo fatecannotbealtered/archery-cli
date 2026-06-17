@@ -361,6 +361,28 @@ intermittently returned `用户名或密码错误`. Using `http://127.0.0.1:9123
 defect; the session login flow itself (GET csrf → POST authenticate → cookie)
 matches the verified curl flow byte-for-byte.
 
+## 2026-06-17 — 1.0.9 endpoint audit: instance-list fallback + detail type fixes
+
+Triggered by two real-usage reports (a non-DBA account getting 403 on `instance
+list` while the web could list instances, and `workflow detail 42594` failing to
+parse). Method: a **static endpoint audit** cross-referencing every endpoint the
+CLI calls against the `hhyo/archery:v1.8.5` source inside the container (route,
+permission decorator, request fields, response types) — **zero requests to any
+real instance**. Dynamic verification was done **only on the local container**;
+the production instance was never used.
+
+| Check | Status | Evidence |
+|-------|--------|----------|
+| `instance list` 403 → user-scoped fallback | live (local container) | PASS — seeded a non-DBA `cliuser` in resource group `pangu_test` granting `pangu_test_redis`; `instance list --db-type redis --search pangu` returned that instance (id 2) via `/group/user_all_instances/` instead of 403, with a stderr note that host/port need DBA permission. |
+| `workflow detail` numeric `execute_time` | unit + earlier real read | PASS — `flexString` accepts number or string; unit test `TestDetail_SessionNumericExecuteTime` encodes the real `0.008516` / numeric `sequence` shape. |
+| Parse failure non-retryable | code review | The decode error now returns a status-less `APIError` → `E_UNKNOWN` (non-retryable), not `E_NETWORK`. |
+| Audit: admin-only endpoints are correct | static | `instance.lists`=`menu_instance_list`, `user.lists`/`resource_group.group`=`@superuser_required`, `data_dictionary.table_list`=`menu_data_dictionary`, workflow gates=`menu_sqlworkflow`/`sql_submit`/`sql_review`/`audit_user`. No ungated user-scoped session alternative for user/group lists, so they stay admin-only by design. |
+
+The self-fulfilling test pattern that hid the 2FA and instance-list defects is
+the audit's core lesson: mocks/fixtures were authored from the client's own
+assumptions. New tests encode the **real** Archery contract (numeric field forms,
+403-then-fallback) so a regression flips them red.
+
 ## 2026-06-17 — 1.0.8 real 2FA login round-trip (closes the prior 2FA gap)
 
 The earlier runs could only mock 2FA because the `cli_verify` account had no 2FA
