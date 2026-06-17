@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [1.0.8] - 2026-06-17
+
+### Fixed
+
+- **2FA login now works against real Archery.** Session-mode login posted the OTP to `/api/v1/user/2fa/` (the 2FA *config* endpoint) instead of `/api/v1/user/2fa/verify/`, and never replayed the temp `session_key` from `/authenticate/` as the `sessionid` cookie — so the verify view could not find the password-verified user and rejected every code as wrong/expired, even when correct. The OTP is now posted to `/api/v1/user/2fa/verify/` with the temp session replayed as the `sessionid` cookie, matching Archery's real handshake. Verified live against `hhyo/archery:v1.8.5` (correct code logs in and caches the session; a wrong code returns the server's `验证码不正确！`). The prior unit test was self-fulfilling (its mock accepted exactly what the client sent); it now faithfully encodes the real contract — correct endpoint plus replayed session cookie — so a regression on either half fails the test.
+
 ## [1.0.7] - 2026-06-16
 
 ### Fixed
