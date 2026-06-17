@@ -361,6 +361,24 @@ intermittently returned `用户名或密码错误`. Using `http://127.0.0.1:9123
 defect; the session login flow itself (GET csrf → POST authenticate → cookie)
 matches the verified curl flow byte-for-byte.
 
+## 2026-06-17 — 1.0.8 real 2FA login round-trip (closes the prior 2FA gap)
+
+The earlier runs could only mock 2FA because the `cli_verify` account had no 2FA
+enabled. A dedicated TOTP account was seeded on the same `tools-e2e-archery`
+container (`hhyo/archery:v1.8.5`) — user `cli2fa`, `TwoFactorAuthConfig` with a
+known base32 secret — so valid codes can be minted with `pyotp` and the real
+`/authenticate/` → `/api/v1/user/2fa/verify/` handshake is exercised end to end.
+
+| Check | Status | Evidence |
+|-------|--------|----------|
+| Correct OTP completes login | live | PASS — `auth login --otp <fresh>` → `ok:true`, "session cookie cached successfully". The OTP is posted to `/api/v1/user/2fa/verify/` with the temp `session_key` replayed as the `sessionid` cookie. |
+| Cached 2FA session is usable | live | PASS — a following `doctor --region local` (no OTP) shows `authValid:true`, `username:cli2fa`, `mode:session`. |
+| Wrong OTP rejected cleanly | live | PASS — `--otp 000000` → `ok:false`, server message `验证码不正确！` (real `TwoFAVerify` rejection, not the client's generic fallback). |
+| Wrong endpoint regression guard | unit | The faithful mock now requires `/api/v1/user/2fa/verify/` **and** the replayed `sessionid` cookie; reverting either half fails `TestEnsureSession_2FAWithOTPSucceeds`. |
+
+This **closes the "honest gap"** recorded for 1.0.5 below: the real
+`/api/v1/user/2fa/verify/` round-trip is now live-verified.
+
 ## 2026-06-16 — 1.0.5 features (read-only, 2FA, param unification, detail rework)
 
 Verified against the same `tools-e2e-archery` container (`hhyo/archery:v1.8.5`,
