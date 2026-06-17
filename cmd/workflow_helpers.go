@@ -267,7 +267,7 @@ func workflowDetailToMap(d *api.SQLWorkflowDetail, host string) map[string]any {
 				row["affectedRows"] = r.AffectedRows
 			}
 			if r.ExecuteTime != "" && r.ExecuteTime != "0" {
-				row["executeTime"] = r.ExecuteTime
+				row["executeTime"] = string(r.ExecuteTime)
 			}
 			rows = append(rows, row)
 		}

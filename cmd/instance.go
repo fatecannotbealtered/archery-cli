@@ -244,6 +244,15 @@ func listInstancesSession(client *api.Client, instanceType, dbType, search strin
 
 	data, err := client.SessionPost(apiCtx(), "/instance/list/", form)
 	if err != nil {
+		// /instance/list/ is gated by the DBA permission `sql.menu_instance_list`.
+		// An ordinary user who can still *query* instances (granted via a resource
+		// group) gets 403 here, even though the web SQL-query page lists those
+		// instances fine — it uses the ungated, user-scoped
+		// /group/user_all_instances/ endpoint instead. Fall back to it so a
+		// non-DBA account can still discover the instances it is authorized to use.
+		if apiStatusForbidden(err) {
+			return listUserAllInstancesSession(client, instanceType, dbType, search, limit, offset)
+		}
 		return nil, 0, err
 	}
 
@@ -255,6 +264,78 @@ func listInstancesSession(client *api.Client, instanceType, dbType, search strin
 		return nil, 0, &api.APIError{ErrorMessages: []string{"parsing instance list: " + err.Error()}}
 	}
 	return resp.Rows, resp.Total, nil
+}
+
+// listUserAllInstancesSession is the non-DBA fallback for instance discovery. It
+// reads GET /group/user_all_instances/ (resource_group.user_all_instances), the
+// ungated endpoint the web query page uses, which returns only the instances the
+// user is authorized to use and only the fields {id, type, db_type,
+// instance_name}. Host/port/credentials are NOT exposed here (they require the
+// DBA list), so those fields stay empty. The endpoint has no search/paging, so
+// --search and --limit/--offset are applied client-side.
+func listUserAllInstancesSession(client *api.Client, instanceType, dbType, search string, limit, offset int) ([]instanceResult, int, error) {
+	params := url.Values{}
+	if instanceType != "" {
+		params.Set("type", instanceType)
+	}
+	if dbType != "" {
+		// The view reads getlist('db_type[]'), so the param name carries the [].
+		params.Set("db_type[]", dbType)
+	}
+	path := "/group/user_all_instances/"
+	if enc := params.Encode(); enc != "" {
+		path += "?" + enc
+	}
+
+	data, err := client.SessionGet(apiCtx(), path)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	var resp struct {
+		Status int    `json:"status"`
+		Msg    string `json:"msg"`
+		Data   []struct {
+			ID           json.Number `json:"id"`
+			Type         string      `json:"type"`
+			DbType       string      `json:"db_type"`
+			InstanceName string      `json:"instance_name"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, 0, &api.APIError{ErrorMessages: []string{"parsing user instances: " + err.Error()}}
+	}
+
+	all := make([]instanceResult, 0, len(resp.Data))
+	for _, d := range resp.Data {
+		if search != "" && !strings.Contains(strings.ToLower(d.InstanceName), strings.ToLower(search)) {
+			continue
+		}
+		all = append(all, instanceResult{
+			ID:           d.ID.String(),
+			InstanceName: d.InstanceName,
+			DbType:       d.DbType,
+		})
+	}
+	total := len(all)
+
+	output.Warn("listed via user-authorized instances (/group/user_all_instances/): host/port/credentials need DBA permission and are omitted")
+
+	// Apply client-side paging to mirror the server-paged path.
+	if offset >= total {
+		return []instanceResult{}, total, nil
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	return all[offset:end], total, nil
+}
+
+// apiStatusForbidden reports whether err is an API error with HTTP 403.
+func apiStatusForbidden(err error) bool {
+	var apiErr *api.APIError
+	return asAPI(err, &apiErr) && apiErr.StatusCode == 403
 }
 
 // listInstancesREST lists instances via the DRF endpoint (GET /api/v1/instance/),
