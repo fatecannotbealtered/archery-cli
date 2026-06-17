@@ -1,10 +1,70 @@
 package cmd
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/fatecannotbealtered/archery-cli/internal/api"
 	"github.com/spf13/cobra"
 )
+
+// TestListInstancesSession_ForbiddenFallsBackToUserInstances reproduces the
+// non-DBA case: /instance/list/ is gated by sql.menu_instance_list and returns
+// 403, so the CLI must fall back to the ungated, user-scoped
+// /group/user_all_instances/ (the same endpoint the web query page uses). That
+// endpoint returns id as a bare NUMBER and only {id,type,db_type,instance_name},
+// has no server-side search, and the fallback must map + client-filter correctly.
+func TestListInstancesSession_ForbiddenFallsBackToUserInstances(t *testing.T) {
+	var sawList, sawUserAll bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/instance/list/":
+			sawList = true
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"msg":"permission denied"}`))
+		case "/group/user_all_instances/":
+			sawUserAll = true
+			if r.URL.Query().Get("db_type[]") != "redis" {
+				t.Errorf("db_type[] = %q, want redis", r.URL.Query().Get("db_type[]"))
+			}
+			_, _ = w.Write([]byte(`{"status":0,"msg":"ok","data":[` +
+				`{"id":7,"type":"redis","db_type":"redis","instance_name":"pangu_test_redis"},` +
+				`{"id":8,"type":"redis","db_type":"redis","instance_name":"other_cache"}]}`))
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"status":0,"msg":"ok"}`))
+		}
+	}))
+	defer srv.Close()
+
+	c := api.NewClient(srv.URL)
+	c.SetMode(api.ModeSession)
+	c.InjectSessionCookies("sid-1", "csrf-1") // mark session ready, skip form login
+
+	instances, total, err := listInstancesSession(c, "", "redis", "pangu", 20, 0)
+	if err != nil {
+		t.Fatalf("listInstancesSession: %v", err)
+	}
+	if !sawList || !sawUserAll {
+		t.Fatalf("expected both endpoints hit: list=%v userAll=%v", sawList, sawUserAll)
+	}
+	// "pangu" search filters out other_cache client-side.
+	if total != 1 || len(instances) != 1 {
+		t.Fatalf("total=%d len=%d, want 1/1", total, len(instances))
+	}
+	got := instances[0]
+	if got.ID != "7" {
+		t.Errorf("ID = %q, want \"7\" (numeric id coerced to string)", got.ID)
+	}
+	if got.InstanceName != "pangu_test_redis" || got.DbType != "redis" {
+		t.Errorf("instance = %+v, want pangu_test_redis/redis", got)
+	}
+	if !strings.Contains(got.InstanceName, "pangu") {
+		t.Errorf("search filter failed: %q", got.InstanceName)
+	}
+}
 
 func TestInstanceListFlags(t *testing.T) {
 	cmd := instanceListCmd

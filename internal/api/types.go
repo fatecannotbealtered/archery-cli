@@ -279,21 +279,47 @@ type SQLCheckResult struct {
 	StageStatus  string `json:"stagestatus,omitempty"`
 }
 
+// flexString unmarshals a JSON value Archery returns inconsistently as either a
+// string or a bare number into a string, keeping the CLI contract string-typed.
+// Archery's ReviewResult projects fields like execute_time straight from the
+// backend, where the same field is "0.000" for one workflow and 0 for another;
+// a plain string field then fails the whole detail parse on the numeric form.
+type flexString string
+
+func (s *flexString) UnmarshalJSON(b []byte) error {
+	if len(b) == 0 || string(b) == "null" {
+		*s = ""
+		return nil
+	}
+	if b[0] == '"' {
+		var str string
+		if err := json.Unmarshal(b, &str); err != nil {
+			return err
+		}
+		*s = flexString(str)
+		return nil
+	}
+	// Number (or any other scalar token): keep its literal text.
+	*s = flexString(b)
+	return nil
+}
+
 // reviewResultRow is the session ReviewResult shape returned by /simplecheck/
 // (data.rows) and /sqlworkflow/detail_content/ (rows). It mirrors Archery's
-// ReviewResult.__dict__ projection.
+// ReviewResult.__dict__ projection. Numeric-or-string fields use flexString
+// because Archery emits them inconsistently across workflows/stages.
 type reviewResultRow struct {
-	ID           int    `json:"id"`
-	Stage        string `json:"stage"`
-	ErrLevel     int    `json:"errlevel"`
-	StageStatus  string `json:"stagestatus"`
-	ErrorMessage string `json:"errormessage"`
-	SQL          string `json:"sql"`
-	AffectedRows int    `json:"affected_rows"`
-	Sequence     string `json:"sequence"`
-	BackupDBName string `json:"backup_dbname"`
-	ExecuteTime  string `json:"execute_time"`
-	SQLSha1      string `json:"sqlsha1"`
+	ID           int        `json:"id"`
+	Stage        string     `json:"stage"`
+	ErrLevel     int        `json:"errlevel"`
+	StageStatus  string     `json:"stagestatus"`
+	ErrorMessage string     `json:"errormessage"`
+	SQL          string     `json:"sql"`
+	AffectedRows int        `json:"affected_rows"`
+	Sequence     flexString `json:"sequence"`
+	BackupDBName string     `json:"backup_dbname"`
+	ExecuteTime  flexString `json:"execute_time"`
+	SQLSha1      string     `json:"sqlsha1"`
 }
 
 // toSQLCheckResult adapts a session ReviewResult into the common SQLCheckResult,
