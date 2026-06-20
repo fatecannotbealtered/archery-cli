@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.10] - 2026-06-20
+
+### Fixed
+
+- **`instance list` (`--mode jwt`) now returns every instance, not just the first page.** The REST path (`listInstancesREST`) built the request as DRF *LimitOffset* (`?limit=&offset=&search=`) and read only `next != null` as `has_more` while discarding the `next` link, so it could never page past the first result set and silently ignored `--limit` / `--offset` / `--search`. But Archery's REST API is configured as `PageNumberPagination` (param `page`, `PAGE_SIZE` 5 upstream) with `DjangoFilterBackend` only (no `SearchFilter`) — so against more than 5 instances everything past page 1 was unreachable, which also broke any flow that discovers an instance ID before calling `instance resource` / `dict` / etc. The CLI now paginates via `page`, stops when the contract's `next` is null, filters `--search` client-side (DRF exposes no name-search param), and applies `--limit` / `--offset` client-side — mirroring the existing non-DBA session fallback `listUserAllInstancesSession`. When `--search` is unused the server's `count` is used as the true total (early-stopping once the requested window is filled); when it is used the matched count is the total. A page-walk safety cap guards against a misbehaving paginator. Session mode (the default) was never affected — it uses the Django AJAX `POST /instance/list/`, which genuinely honors `limit`/`offset`. Reproduced and verified live against `hhyo/archery:v1.8.5` in `--mode jwt` (8 instances across 2 pages: full enumeration, client-side `--limit`/`--offset` window, and cross-page `--search` all correct). Fixes #12.
+
 ## [1.0.9] - 2026-06-17
 
 ### Fixed

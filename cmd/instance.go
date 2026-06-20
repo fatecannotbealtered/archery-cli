@@ -340,40 +340,88 @@ func apiStatusForbidden(err error) bool {
 
 // listInstancesREST lists instances via the DRF endpoint (GET /api/v1/instance/),
 // used when --mode jwt is selected.
+//
+// Archery's REST API (settings.py REST_FRAMEWORK) is wired as PageNumberPagination
+// (param `page`, default PAGE_SIZE 5) with DjangoFilterBackend only — no
+// SearchFilter. So DRF LimitOffset params (`limit`/`offset`) and `search` are all
+// ignored server-side: a naive single GET only ever returns page 1. We therefore
+// paginate via `page`, stopping when the contract's `next` link is null, filter
+// `search` client-side (DRF exposes no name-search param), and apply
+// --limit/--offset client-side — mirroring listUserAllInstancesSession.
 func listInstancesREST(client *api.Client, instanceType, dbType, search string, limit, offset int) ([]instanceResult, int, bool, error) {
-	params := url.Values{}
-	if instanceType != "" {
-		params.Set("instance_type", instanceType)
+	// maxPages backstops a misbehaving paginator so a server that never returns a
+	// null `next` cannot loop forever (5 rows/page upstream → 5000-instance reach).
+	const maxPages = 1000
+	want := offset + limit // rows needed to fill the requested window (no-search fast path)
+
+	var all []instanceResult
+	serverTotal := 0
+	truncated := false
+
+	for page := 1; page <= maxPages; page++ {
+		params := url.Values{}
+		if instanceType != "" {
+			params.Set("instance_type", instanceType)
+		}
+		if dbType != "" {
+			params.Set("db_type", dbType)
+		}
+		params.Set("page", strconv.Itoa(page))
+
+		data, err := client.Get(apiCtx(), client.APIPath("/v1/instance/")+"?"+params.Encode())
+		if err != nil {
+			return nil, 0, false, err
+		}
+
+		var pg struct {
+			Count   int              `json:"count"`
+			Next    string           `json:"next"`
+			Results []instanceResult `json:"results"`
+		}
+		if err := json.Unmarshal(data, &pg); err != nil {
+			return nil, 0, false, &api.APIError{ErrorMessages: []string{"parsing instance list: " + err.Error()}}
+		}
+		serverTotal = pg.Count
+		for _, r := range pg.Results {
+			if search != "" && !strings.Contains(strings.ToLower(r.InstanceName), strings.ToLower(search)) {
+				continue
+			}
+			all = append(all, r)
+		}
+
+		if pg.Next == "" {
+			break // last page
+		}
+		// Fast path: with no client-side search filter the server `count` is the
+		// true total, so stop once we have enough rows to fill the window.
+		if search == "" && len(all) >= want {
+			break
+		}
+		if page == maxPages {
+			truncated = true
+		}
 	}
-	if dbType != "" {
-		params.Set("db_type", dbType)
+
+	if truncated {
+		output.Warn("instance list hit the pagination safety cap; some instances may be omitted")
 	}
+
+	// total: server count is pre-filter, so when --search filtered client-side the
+	// real total is the matched count.
+	total := serverTotal
 	if search != "" {
-		params.Set("search", search)
-	}
-	params.Set("limit", strconv.Itoa(limit))
-	params.Set("offset", strconv.Itoa(offset))
-
-	path := client.APIPath("/v1/instance/")
-	if encoded := params.Encode(); encoded != "" {
-		path += "?" + encoded
+		total = len(all)
 	}
 
-	data, err := client.Get(apiCtx(), path)
-	if err != nil {
-		return nil, 0, false, err
+	if offset >= len(all) {
+		return []instanceResult{}, total, false, nil
 	}
-
-	var page struct {
-		Count    int              `json:"count"`
-		Next     any              `json:"next"`
-		Previous any              `json:"previous"`
-		Results  []instanceResult `json:"results"`
+	end := offset + limit
+	if end > len(all) {
+		end = len(all)
 	}
-	if err := json.Unmarshal(data, &page); err != nil {
-		return nil, 0, false, &api.APIError{ErrorMessages: []string{"parsing instance list: " + err.Error()}}
-	}
-	return page.Results, page.Count, page.Next != nil, nil
+	pageRows := all[offset:end]
+	return pageRows, total, offset+len(pageRows) < total, nil
 }
 
 // ─── instance detail ────────────────────────────────────────────────────────

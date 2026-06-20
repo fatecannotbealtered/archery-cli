@@ -1,10 +1,10 @@
 ---
 name: archery-cli
-version: "1.0.9"
+version: "1.0.10"
 description: "Archery SQL audit platform CLI for managing SQL workflows, queries, instances, diagnostics. Use when the user asks about SQL审核, database operations, Archery platform management, or needs to submit/review/execute SQL against database instances."
 license: MIT
 user-invocable: true
-metadata: {"requires":{"bins":["archery-cli"],"min_version":"1.0.9"}}
+metadata: {"requires":{"bins":["archery-cli"],"min_version":"1.0.10"}}
 ---
 
 # archery-cli

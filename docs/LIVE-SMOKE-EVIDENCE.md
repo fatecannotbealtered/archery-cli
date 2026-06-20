@@ -432,6 +432,38 @@ leave the container clean.
   is fully green, and `golangci-lint run` reports 0 issues.
 - **2FA is mock-verified only** for the reason above.
 
+## 2026-06-20 — 1.0.10 `instance list` REST/JWT pagination (issue #12)
+
+Live verification of the `instance list` pagination fix against the running
+`tools-e2e-archery` (`hhyo/archery:v1.8.5`) on `localhost:9123`, **`--mode jwt`**,
+superuser `cli_verify` (added to the `api_user_whitelist` SysConfig). The fleet
+was seeded to **8 instances** so it spans more than one REST page (upstream
+`PAGE_SIZE` 5 → 2 pages), then cleaned back down afterward.
+
+### Result by scenario
+
+| Scenario | Command | Status | Result |
+|---|---|---|---|
+| Full enumeration | `instance list --limit 20` | **live PASS** | all 8 returned (`count:8, total:8, has_more:false`); pre-fix returned only 5 |
+| Client-side window | `instance list --limit 3 --offset 2` | **live PASS** | ids 3,4,5; `total:8`; `has_more:true` |
+| Cross-page search | `instance list --search page-test` | **live PASS** | 6 matches (ids 3–8 span both pages); `total:6` |
+| Exact search | `instance list --search page-test-mysql-5` | **live PASS** | exactly id 7; `total:1` |
+| Server-side filter | `instance list --db-type redis` | **live PASS** | id 2 only; `--db-type` still filtered upstream |
+
+Raw `GET /api/v1/instance/?page=1` confirmed the contract: `PageNumberPagination`
+envelope `{count:8, next:"…?page=2", previous:null, results:[…]}` with `id` as a
+bare JSON number (coerced to string by `instanceResult.UnmarshalJSON`).
+
+### Honesty notes
+
+- **Race detector not run on this host:** `go test -race` needs cgo + gcc, which
+  are unavailable on the verifier machine. The non-race suite (`go test ./...`)
+  is fully green, `go vet ./...` is clean, and `golangci-lint run` reports 0
+  issues. CI runs `-race` on Linux.
+- The new mock-contract test (`TestListInstancesREST_PageNumberPagination`)
+  encodes the real `PageNumberPagination` semantics observed above (page walk,
+  null `next` terminator, numeric `id`, no server-side search/limit/offset).
+
 ## Reproduce
 
 ```bash

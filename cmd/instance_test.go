@@ -1,9 +1,12 @@
 package cmd
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/fatecannotbealtered/archery-cli/internal/api"
@@ -64,6 +67,173 @@ func TestListInstancesSession_ForbiddenFallsBackToUserInstances(t *testing.T) {
 	if !strings.Contains(got.InstanceName, "pangu") {
 		t.Errorf("search filter failed: %q", got.InstanceName)
 	}
+}
+
+// TestListInstancesREST_PageNumberPagination pins the REST (--mode jwt) instance
+// list against Archery's real contract: the DRF API uses PageNumberPagination
+// (param `page`, small PAGE_SIZE) with DjangoFilterBackend only — no LimitOffset
+// paginator and no SearchFilter. A naive single GET therefore returns only page 1
+// and ignores limit/offset/search, so the client must walk pages via `page`
+// (stopping when `next` is null), filter --search client-side, and apply
+// --limit/--offset client-side. The mock returns `id` as a bare JSON number, like
+// real Archery (hhyo/archery:v1.8.5), exercising the json.Number coercion.
+// Regression guard for issue #12 (verified live against the container).
+func TestListInstancesREST_PageNumberPagination(t *testing.T) {
+	type inst struct {
+		id     int
+		name   string
+		dbType string
+	}
+	all := []inst{
+		{1, "prod-mysql-a", "mysql"},
+		{2, "prod-mysql-b", "mysql"},
+		{3, "staging-pg", "pgsql"},
+		{4, "prod-redis", "redis"},
+		{5, "dev-mysql", "mysql"},
+	}
+	const pageSize = 2 // small page size forces multi-page enumeration
+
+	var mu sync.Mutex
+	sawLimitOffsetSearch := false
+
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/instance/" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		q := r.URL.Query()
+		mu.Lock()
+		if q.Get("limit") != "" || q.Get("offset") != "" || q.Get("search") != "" {
+			sawLimitOffsetSearch = true
+		}
+		mu.Unlock()
+
+		// DjangoFilterBackend: honor db_type (exact match) only.
+		rows := make([]inst, 0, len(all))
+		for _, in := range all {
+			if dt := q.Get("db_type"); dt == "" || in.dbType == dt {
+				rows = append(rows, in)
+			}
+		}
+
+		page, _ := strconv.Atoi(q.Get("page"))
+		if page < 1 {
+			page = 1
+		}
+		start := (page - 1) * pageSize
+		if start > len(rows) {
+			start = len(rows)
+		}
+		end := start + pageSize
+		if end > len(rows) {
+			end = len(rows)
+		}
+		results := make([]map[string]any, 0, pageSize)
+		for _, in := range rows[start:end] {
+			results = append(results, map[string]any{
+				"id":            in.id, // bare number, like real Archery
+				"instance_name": in.name,
+				"db_type":       in.dbType,
+				"type":          "master",
+			})
+		}
+		var next any
+		if end < len(rows) {
+			next = srv.URL + "/api/v1/instance/?page=" + strconv.Itoa(page+1)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"count":    len(rows),
+			"next":     next,
+			"previous": nil,
+			"results":  results,
+		})
+	}))
+	defer srv.Close()
+
+	c := api.NewClient(srv.URL)
+	c.SetMode(api.ModeJWT)
+	c.SetTokens("test-access", "test-refresh")
+
+	ids := func(rows []instanceResult) []string {
+		out := make([]string, len(rows))
+		for i, r := range rows {
+			out[i] = r.ID
+		}
+		return out
+	}
+	eq := func(t *testing.T, got, want []string) {
+		t.Helper()
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("ids = %v, want %v", got, want)
+		}
+	}
+
+	t.Run("full enumeration across pages", func(t *testing.T) {
+		rows, total, hasMore, err := listInstancesREST(c, "", "", "", 20, 0)
+		if err != nil {
+			t.Fatalf("listInstancesREST: %v", err)
+		}
+		// The bug returned only the first page (pageSize rows); the fix walks all.
+		if len(rows) != 5 {
+			t.Fatalf("got %d rows, want 5 (a page-1-only regression yields %d)", len(rows), pageSize)
+		}
+		if total != 5 {
+			t.Errorf("total = %d, want 5", total)
+		}
+		if hasMore {
+			t.Errorf("has_more = true, want false (all rows returned)")
+		}
+		eq(t, ids(rows), []string{"1", "2", "3", "4", "5"})
+	})
+
+	t.Run("client-side limit/offset window", func(t *testing.T) {
+		rows, total, hasMore, err := listInstancesREST(c, "", "", "", 2, 2)
+		if err != nil {
+			t.Fatalf("listInstancesREST: %v", err)
+		}
+		eq(t, ids(rows), []string{"3", "4"})
+		if total != 5 {
+			t.Errorf("total = %d, want 5 (server count, not the windowed slice)", total)
+		}
+		if !hasMore {
+			t.Errorf("has_more = false, want true (offset+limit < total)")
+		}
+	})
+
+	t.Run("client-side search filters across pages", func(t *testing.T) {
+		// "prod" matches ids 1,2 (page 1) and 4 (page 2) — proving the filter spans pages.
+		rows, total, hasMore, err := listInstancesREST(c, "", "", "prod", 20, 0)
+		if err != nil {
+			t.Fatalf("listInstancesREST: %v", err)
+		}
+		eq(t, ids(rows), []string{"1", "2", "4"})
+		if total != 3 {
+			t.Errorf("total = %d, want 3 (matched count, not server count)", total)
+		}
+		if hasMore {
+			t.Errorf("has_more = true, want false")
+		}
+	})
+
+	t.Run("server-side db_type filter passthrough", func(t *testing.T) {
+		rows, total, _, err := listInstancesREST(c, "", "mysql", "", 20, 0)
+		if err != nil {
+			t.Fatalf("listInstancesREST: %v", err)
+		}
+		eq(t, ids(rows), []string{"1", "2", "5"})
+		if total != 3 {
+			t.Errorf("total = %d, want 3", total)
+		}
+	})
+
+	t.Run("never sends limit/offset/search to the server", func(t *testing.T) {
+		mu.Lock()
+		defer mu.Unlock()
+		if sawLimitOffsetSearch {
+			t.Errorf("client sent limit/offset/search params; REST must page via `page` and filter client-side")
+		}
+	})
 }
 
 func TestInstanceListFlags(t *testing.T) {

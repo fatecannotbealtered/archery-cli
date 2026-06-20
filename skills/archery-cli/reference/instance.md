@@ -224,3 +224,4 @@ archery-cli instance describe --instance prod-mysql --db mydb --table orders
 - `instance users` lists database-level users, not Archery platform users
 - `instance table-instances` searches across all registered instances for a given table name
 - JSON output IDs are strings per the CLI contract, even when input flags accept numeric IDs; all instance names are strings
+- `instance list` behaves the same in both transports. In `--mode jwt` the REST API paginates server-side in small pages (Archery's `PageNumberPagination`) and has no name search, so the CLI walks all pages and applies `--search` / `--limit` / `--offset` client-side; `--db-type` is filtered server-side. For a very large fleet, prefer `--db-type` (and `--search`) to narrow results.
