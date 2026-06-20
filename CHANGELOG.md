@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.11] - 2026-06-20
+
+### Fixed
+
+- **`instance resource` now works in `--mode jwt` instead of returning `data: null`.** The REST endpoint `POST /api/v1/instance/resource/` returns its rows as `{"count": N, "result": [...]}` (singular `result`), but `extractResourceItems` only recognised the DRF-plural `results` (and an internal `data.rows`), so the list fell through to `nil` and the command emitted an `ok: true` envelope with `data: null` — listing no databases/schemas/tables/columns at all on JWT-only deployments. The parser now handles the singular `result` key; flat scalar rows normalize to `{"name": …}` exactly as the session path does. Reproduced and verified live against `hhyo/archery:v1.8.5` in `--mode jwt` (database/table/column all return rows). Fixes #13.
+
+### Notes
+
+- **`query run` and `instance describe` are session-only by Archery's design.** Ad-hoc query execution (`/query/`) and describe-table (`/instance/describetable/`) have no REST/JWT equivalent in Archery's API (the `/api/v1` surface is user/instance/workflow only), so these commands require username + password and cannot run on a deployment reachable only via JWT. This is now called out in the `query` and `instance` Skill references; the transport is selected per region, and each command uses REST where Archery exposes it.
+
 ## [1.0.10] - 2026-06-20
 
 ### Fixed

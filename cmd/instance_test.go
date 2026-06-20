@@ -236,6 +236,56 @@ func TestListInstancesREST_PageNumberPagination(t *testing.T) {
 	})
 }
 
+// TestResourceREST_CountResultEnvelope pins the REST (--mode jwt) instance
+// resource parsing against Archery's real contract. POST /api/v1/instance/resource/
+// returns {"count": N, "result": [...]} — note the SINGULAR `result` — with the
+// rows as flat scalar names (database/schema/table/column all alike on v1.8.5).
+// extractResourceItems previously handled only the plural `results`, so the REST
+// path fell through to nil and `instance resource` returned `data: null` in jwt
+// mode. Regression guard for issue #13 (verified live against the container).
+func TestResourceREST_CountResultEnvelope(t *testing.T) {
+	var gotMethod, gotPath string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		// Real v1.8.5 shape: singular `result`, flat scalar names.
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"count":  3,
+			"result": []any{"archery", "mysql", "sys"},
+		})
+	}))
+	defer srv.Close()
+
+	c := api.NewClient(srv.URL)
+	c.SetMode(api.ModeJWT)
+	c.SetTokens("test-access", "test-refresh")
+
+	items, err := resourceREST(c, 1, "database", "", "", "")
+	if err != nil {
+		t.Fatalf("resourceREST: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %s, want POST", gotMethod)
+	}
+	if gotPath != "/api/v1/instance/resource/" {
+		t.Errorf("path = %s, want /api/v1/instance/resource/", gotPath)
+	}
+	if gotBody["resource_type"] != "database" {
+		t.Errorf("payload resource_type = %v, want database", gotBody["resource_type"])
+	}
+	want := []string{"archery", "mysql", "sys"}
+	if len(items) != len(want) {
+		t.Fatalf("got %d items, want %d (a `result`-key regression yields 0 → data:null)", len(items), len(want))
+	}
+	for i, w := range want {
+		if items[i]["name"] != w {
+			t.Errorf("items[%d].name = %v, want %q", i, items[i]["name"], w)
+		}
+	}
+}
+
 func TestInstanceListFlags(t *testing.T) {
 	cmd := instanceListCmd
 

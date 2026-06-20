@@ -1645,6 +1645,13 @@ func extractResourceItems(raw any) []map[string]any {
 	}
 	// Try DRF paginated
 	if m, ok := raw.(map[string]any); ok {
+		// Archery's REST instance-resource endpoint (POST /api/v1/instance/resource/)
+		// wraps the rows as {"count": N, "result": [...]} — note the singular
+		// `result`. Without this the whole list fell through to nil, so `instance
+		// resource` returned `data: null` in --mode jwt.
+		if result, ok := m["result"]; ok {
+			return extractResourceItems(result)
+		}
 		if results, ok := m["results"]; ok {
 			return extractResourceItems(results)
 		}

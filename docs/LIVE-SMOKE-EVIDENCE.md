@@ -464,6 +464,41 @@ bare JSON number (coerced to string by `instanceResult.UnmarshalJSON`).
   encodes the real `PageNumberPagination` semantics observed above (page walk,
   null `next` terminator, numeric `id`, no server-side search/limit/offset).
 
+## 2026-06-21 — 1.0.11 `instance resource` REST/JWT parsing (issue #13)
+
+Live verification of the `instance resource` REST fix against the running
+`tools-e2e-archery` (`hhyo/archery:v1.8.5`) on `localhost:9123`, **`--mode jwt`**,
+superuser `cli_verify`.
+
+The raw `POST /api/v1/instance/resource/` envelope was captured first:
+`{"count":1,"result":["archery"]}` (database), `{"count":46,"result":[…]}`
+(table), `{"count":5,"result":["id","username",…]}` (column) — singular `result`,
+flat scalar names. Pre-fix the CLI parsed only the plural `results`, so all three
+returned `data: null`.
+
+### Result by scenario
+
+| Scenario | Command | Status | Result |
+|---|---|---|---|
+| Databases | `instance resource --instance 1 --type database` | **live PASS** | `[{"name":"archery"}]` (was `data:null`) |
+| Tables | `instance resource --instance 1 --type table --db archery` | **live PASS** | 46 tables as `{"name":…}` |
+| Columns | `instance resource --instance 1 --type column --db archery --table 2fa_config` | **live PASS** | `id, username, auth_type, secret_key, user_id` |
+
+### Confirmed server limitation (documented, not fixed)
+
+- `query run` (`/query/`) and `instance describe` (`/instance/describetable/`)
+  have no REST/JWT route in Archery's `sql_api/urls.py` (the `/api/v1` surface is
+  user/instance/workflow only). They stay session-only and return `E_AUTH` under
+  `--mode jwt`; this is now documented in the `query`/`instance` Skill references.
+
+### Honesty notes
+
+- **Race detector not run on this host:** `go test -race` needs cgo + gcc,
+  unavailable here. Non-race suite green, `go vet` clean, `golangci-lint` 0
+  issues; CI runs `-race` on Linux.
+- New mock-contract test `TestResourceREST_CountResultEnvelope` encodes the real
+  `{count, result}` envelope (singular `result`, scalar rows, POST verb/path).
+
 ## Reproduce
 
 ```bash
