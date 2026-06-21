@@ -15,7 +15,7 @@ func main() {
 	// emit the terminal JSON envelope on stdout instead of dying as a bare
 	// killed process (CLI-SPEC §14).
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	_ = cmd.ExecuteContext(ctx)
+	stop() // release the signal handler explicitly; os.Exit below skips defers
 	os.Exit(cmd.LastExitCode())
 }
