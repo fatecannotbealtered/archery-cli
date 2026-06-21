@@ -43,6 +43,10 @@ func exitForErrorCode(code output.ErrorCode) int {
 		return ExitTimeout
 	case output.E_2FA_REQUIRED:
 		return ExitHumanRequired
+	case output.E_INTEGRITY, output.E_IO:
+		return ExitError
+	case output.E_INTERRUPTED:
+		return ExitInterrupted
 	default:
 		return ExitBadArgs
 	}

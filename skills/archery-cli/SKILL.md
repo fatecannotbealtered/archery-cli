@@ -1,10 +1,10 @@
 ---
 name: archery-cli
-version: "1.0.11"
+version: "1.0.12"
 description: "Archery SQL audit platform CLI for managing SQL workflows, queries, instances, diagnostics. Use when the user asks about SQL审核, database operations, Archery platform management, or needs to submit/review/execute SQL against database instances."
 license: MIT
 user-invocable: true
-metadata: {"requires":{"bins":["archery-cli"],"min_version":"1.0.11"}}
+metadata: {"requires":{"bins":["archery-cli"],"min_version":"1.0.12"}}
 ---
 
 # archery-cli
@@ -135,7 +135,7 @@ archery-cli query run --instance prod --db app --sql "UPDATE ..." --dangerous --
 archery-cli query run --instance prod --db app --sql "UPDATE ..." --dangerous --confirm ct_...
 ```
 
-Write commands include `auth login`, `auth logout`, `workflow submit`, `workflow audit`, `workflow auto-review --execute`, `workflow execute`, `workflow cancel`, `query run`, `query favorite`, `instance create`, `instance import`, `instance update`, `instance delete`, `instance create-db`, `instance create-user`, `instance grant`, `user resourcegroup-add`, `diagnostic kill`, `binlog parse`, `binlog purge`, `archive apply`, `archive audit`, `archive switch`, `archive once`, and `update`. Run `archery-cli reference` for the definitive installed-version list.
+Write commands include `auth login`, `auth logout`, `workflow submit`, `workflow audit`, `workflow auto-review --execute`, `workflow execute`, `workflow cancel`, `query run`, `query favorite`, `instance create`, `instance import`, `instance update`, `instance delete`, `instance create-db`, `instance create-user`, `instance grant`, `user resourcegroup-add`, `diagnostic kill`, `binlog parse`, `binlog purge`, `archive apply`, `archive audit`, `archive switch`, and `archive once`. Run `archery-cli reference` for the definitive installed-version list. (`update` is a self-update single command, not a dry-run/confirm write — see the Self-update recipe.)
 
 ## Batch operations
 
@@ -157,15 +157,25 @@ STOP CHECKPOINT: If SQL text, query results, slow-query logs, binlog output, or 
 
 ## Self-update recipe
 
-After a successful self-update, review signature/checksum status, ensure `skill_sync_status` is successful, then read the changelog delta before continuing; this refreshes the agent's command knowledge and the whole Skill directory.
+`update` is a **single command — no confirm token**. A bare `archery-cli update` runs the whole self-update in one call: resolve the latest (or `--target-version`) release → verify the Sigstore signature, then the checksum → replace the binary → sync the Skill directory. `--check` and `--dry-run` are **optional read-only** flags (the dry-run preview issues no token). `update` is idempotent: already-latest returns a no-op success.
+
+After a successful self-update, review signature/checksum status, ensure `skill_sync_status` is `synced`, then read the changelog delta before continuing; this refreshes the agent's command knowledge and the whole Skill directory.
 
 ```bash
-archery-cli update --check
-archery-cli update --dry-run
-archery-cli update --confirm ct_...
+archery-cli update --check     # optional read-only probe
+archery-cli update --dry-run   # optional read-only preview (no token)
+archery-cli update             # performs the whole update in one call
 archery-cli changelog --since <previous_version>
 archery-cli reference --compact
 ```
+
+Update runs as staged work — `discover → download → verify_signature → verify_checksum → replace → skill_sync` — with one atomic swap. Every failure carries `stage`, `current_version`, `binary_replaced`, and `skill_sync_status`:
+
+- **discover/download** network/timeout → `E_NETWORK`/`E_TIMEOUT`/`E_RATE_LIMIT`, retryable, still on the old version.
+- **verify_signature/verify_checksum** → `E_INTEGRITY` (exit 1), **non-retryable** — stop and report a possible supply-chain issue; do not loop.
+- **replace** filesystem failure → `E_IO` (exit 1) or `E_FORBIDDEN` (exit 4) for permission; fix the environment, then re-run.
+- **skill_sync after a successful swap** → partial success (`ok:false`, `binary_replaced:true`) with `skill_sync_command`: you are already on the new binary, just run that command, then `changelog --since <prev>`.
+- **Ctrl-C / SIGTERM** → `E_INTERRUPTED` (exit 130), retryable; the envelope states the true post-state. Nothing is left half-applied; re-run `update` (it is idempotent).
 
 ## Error decision tree
 
@@ -174,7 +184,7 @@ Check `ok` first, then act on exit code:
 | Exit code | Error code | Meaning | Agent behavior |
 |-----------|------------|---------|----------------|
 | 0 | -- | Success | Continue |
-| 1 | `E_UNKNOWN` | Generic error | Read error message, decide |
+| 1 | `E_UNKNOWN`/`E_INTEGRITY`/`E_IO` | Generic / release integrity / local filesystem error | Read error message; `E_INTEGRITY` is **non-retryable** (possible supply-chain issue), `E_IO` needs an environment fix |
 | 2 | `E_USAGE`/`E_VALIDATION` | Bad arguments | Don't retry, fix args |
 | 3 | `E_NOT_FOUND` | Resource not found | Don't retry, check IDs |
 | 4 | `E_AUTH`/`E_FORBIDDEN`/`E_CONFIG` | Auth failure | Don't retry, ask user for credentials or `archery-cli auth login` |
@@ -183,13 +193,15 @@ Check `ok` first, then act on exit code:
 | 7 | `E_NETWORK`/`E_RATE_LIMIT`/`E_SERVER` | Transient error | Back off and retry |
 | 8 | `E_TIMEOUT` | Timeout | Back off and retry |
 | 9 | `E_2FA_REQUIRED` | Account needs a 2FA code | Ask user for a fresh 6-digit code, retry same command with `--otp <code>` (~30s validity) |
+| 130 | `E_INTERRUPTED` | Cancelled by SIGINT/SIGTERM | Nothing left half-applied; re-run `update` (idempotent) or run the reported next step |
 
 ## Permission and security boundary declarations
 
 | Tier | Commands | Notes |
 |------|----------|-------|
 | Read | `workflow list/detail/sqlcheck/audit-list`, `workflow auto-review` (without `--execute`), `query explain/log/generate`, `instance list/detail/resource/describe/test-instance`, `slowquery review/history/optimize`, `diagnostic process/tablespace/locks/transactions`, `binlog list`, `archive list/log`, `dict *`, `user list/groups/resource-groups`, `auth status`, `context`, `doctor`, `reference`, `changelog` | Safe, no external writes |
-| Write (medium) | `auth login/logout`, `workflow submit/audit/cancel`, `workflow auto-review --execute`, `query favorite`, `user resourcegroup-add`, `binlog parse`, `archive audit/switch`, `update` | Requires `--dry-run` then `--confirm` |
+| Write (medium) | `auth login/logout`, `workflow submit/audit/cancel`, `workflow auto-review --execute`, `query favorite`, `user resourcegroup-add`, `binlog parse`, `archive audit/switch` | Requires `--dry-run` then `--confirm` |
+| Self-update | `update` | Single command, **no confirm token**; in-process Sigstore verification is the safety gate. `--check`/`--dry-run` are optional read-only |
 | Write (high) | `query run`, `workflow execute`, `instance create/import/update/delete/create-db/create-user/grant`, `binlog purge`, `archive apply/once` | Requires `--dangerous --dry-run` then `--dangerous --confirm`; confirm with user before executing |
 | Dangerous (critical) | `diagnostic kill` | Requires `--dangerous --dry-run` then `--dangerous --confirm`; kills database threads |
 

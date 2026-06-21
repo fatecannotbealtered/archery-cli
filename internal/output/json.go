@@ -109,6 +109,8 @@ const (
 	E_NETWORK               ErrorCode = "E_NETWORK"
 	E_TIMEOUT               ErrorCode = "E_TIMEOUT"
 	E_INTEGRITY             ErrorCode = "E_INTEGRITY"
+	E_IO                    ErrorCode = "E_IO"
+	E_INTERRUPTED           ErrorCode = "E_INTERRUPTED"
 	E_UNKNOWN               ErrorCode = "E_UNKNOWN"
 )
 
@@ -125,6 +127,11 @@ const (
 	// ExitHumanRequired marks operations that cannot proceed without a human
 	// action the agent cannot supply non-interactively (e.g. a fresh 2FA code).
 	ExitHumanRequired = 9
+	// ExitIO marks a local filesystem failure (disk full, file locked, partial
+	// write) during a self-update replace; needs an environment fix, not a retry.
+	ExitIO = 1
+	// ExitInterrupted marks an operation cancelled by SIGINT/SIGTERM (128+2).
+	ExitInterrupted = 130
 )
 
 // ErrorCodeFromStatus maps HTTP status codes to error codes.
@@ -182,6 +189,10 @@ func HintForErrorCode(code ErrorCode) string {
 		return "The operation timed out; retry with backoff"
 	case E_INTEGRITY:
 		return "Release integrity verification failed (signature or checksum); do not retry. Re-run update to fetch the current release, or report a possible supply-chain issue"
+	case E_IO:
+		return "Local filesystem failure during install (permission, disk space, or a locked file); fix the environment, then re-run update"
+	case E_INTERRUPTED:
+		return "Operation cancelled; nothing was left half-applied. Re-run update (it is idempotent) or run the reported next step"
 	default:
 		return ""
 	}
@@ -190,7 +201,7 @@ func HintForErrorCode(code ErrorCode) string {
 // RetryableErrorCode reports whether the error code represents a transient failure.
 func RetryableErrorCode(code ErrorCode) bool {
 	switch code {
-	case E_RATE_LIMIT, E_SERVER, E_NETWORK, E_TIMEOUT:
+	case E_RATE_LIMIT, E_SERVER, E_NETWORK, E_TIMEOUT, E_INTERRUPTED:
 		return true
 	default:
 		return false
@@ -231,6 +242,26 @@ func PrintErrorJSON(msg string, statusCode int) {
 // The exitCode parameter is for the caller's use; it is not emitted in the JSON.
 func PrintErrorJSONWithCode(msg string, exitCode int, code ErrorCode) {
 	emitErrorPayload(msg, exitCode, code)
+}
+
+// PrintErrorJSONWithDetails outputs an error envelope with an explicit error
+// code and extra structured details (merged into error.details) to stdout. Used
+// by self-update so every failure carries stage/current_version/binary_replaced/
+// skill_sync_status (CLI-SPEC §14).
+func PrintErrorJSONWithDetails(msg string, code ErrorCode, extra map[string]any) {
+	payload := NewErrorEnvelope(msg, 0, code)
+	for k, v := range extra {
+		payload.Error.Details[k] = v
+	}
+	if hint := HintForErrorCode(code); hint != "" {
+		payload.Error.Details["hint"] = hint
+	}
+	data, err := emitJSONMarshal(payload)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stdout, `{"ok":false,"schema_version":%q,"error":{"code":%q,"message":%q,"details":{},"retryable":false}}`+"\n", SchemaVersion, code, msg)
+		return
+	}
+	fmt.Println(string(data))
 }
 
 func emitErrorPayload(msg string, statusCode int, code ErrorCode) {

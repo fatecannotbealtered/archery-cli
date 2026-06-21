@@ -20,6 +20,7 @@ import (
 const (
 	ExitOK        = 0
 	ExitError     = 1
+	ExitIO        = 1
 	ExitBadArgs   = 2
 	ExitNotFound  = 3
 	ExitAuth      = 4
@@ -33,6 +34,8 @@ const (
 	// ExitHumanRequired marks an operation blocked on a human-only action the
 	// agent cannot supply non-interactively, e.g. a fresh 2FA code.
 	ExitHumanRequired = 9
+	// ExitInterrupted marks an operation cancelled by SIGINT/SIGTERM (128+2).
+	ExitInterrupted = 130
 )
 
 // ErrSilent indicates the error has been printed; cobra should not print again.

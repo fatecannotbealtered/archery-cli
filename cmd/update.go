@@ -38,18 +38,43 @@ const (
 var updateCmd = &cobra.Command{
 	Use:   "update",
 	Short: "Update archery-cli to the latest release",
-	Long: `Check GitHub Releases for a newer archery-cli binary and install it.
+	Long: `Update archery-cli to the latest release in a single command.
 
-The update flow downloads the platform archive and checksums.txt, verifies the
-Sigstore signature on checksums.txt in-process against this repo's tagged
-release workflow identity, verifies the archive SHA256, extracts the archery-cli
-binary, and replaces the current binary. An unsigned or unverifiable release is
-refused; there is no skip path.
+A bare 'archery-cli update' performs the whole self-update in one call: resolve
+the latest (or --target-version) release, download the platform archive and
+checksums.txt, verify the Sigstore signature on checksums.txt in-process against
+this repo's tagged release workflow identity, verify the archive SHA256, replace
+the current binary, then sync the bundled Agent Skill directory. An unsigned or
+unverifiable release is refused; there is no skip path. There is no confirm
+token — self-update is exempt from the dry-run/confirm write gate.
 
-Use --check to inspect availability without installing. Writes require
---dry-run first, then --confirm <confirm_token> in non-interactive agent runs.`,
+Use --check for a read-only availability probe and --dry-run for a read-only
+preview of the plan; neither changes anything and neither issues a token.`,
 	Args: cobra.NoArgs,
 	RunE: runUpdate,
+}
+
+// updateStage names the staged-work phases of a self-update so every failure or
+// interruption envelope can report exactly where the tool stopped (CLI-SPEC §14).
+const (
+	stageDiscover        = "discover"
+	stageDownload        = "download"
+	stageVerifySignature = "verify_signature"
+	stageVerifyChecksum  = "verify_checksum"
+	stageReplace         = "replace"
+	stageSkillSync       = "skill_sync"
+)
+
+// updateFailDetails builds the failure envelope details shared by every update
+// failure: stage, the version the tool is actually running NOW, whether the
+// binary was already swapped, and the Skill sync state.
+func updateFailDetails(stage, currentVersion string, binaryReplaced bool, skillSyncStatus string) map[string]any {
+	return map[string]any{
+		"stage":             stage,
+		"current_version":   currentVersion,
+		"binary_replaced":   binaryReplaced,
+		"skill_sync_status": skillSyncStatus,
+	}
 }
 
 type updateReleaseAsset struct {
@@ -92,6 +117,11 @@ var (
 	updateExecutable = os.Executable
 	updateApply      = applyUpdateBinary
 	updateSkillSync  = runUpdateSkillSync
+	// Stage seams, overridable in tests so the staged-work failure contract can
+	// be exercised without building real signed archives.
+	updateDownloadHook = downloadUpdateFile
+	updateChecksumHook = verifyUpdateChecksum
+	updateExtractHook  = extractUpdateArchive
 )
 
 func init() {
@@ -100,8 +130,6 @@ func init() {
 	updateCmd.Flags().String("target-version", "", "Install a specific version (for example 1.2.3 or v1.2.3)")
 	updateCmd.Flags().Bool("reinstall", false, "Install even when the target version matches the current version")
 	updateCmd.Flags().String("channel", updateChannelStable, "Release channel: stable or canary")
-	markWrite(updateCmd)
-	markConfirm(updateCmd)
 	markRiskLevel(updateCmd, "medium")
 }
 
@@ -114,12 +142,19 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 		return failArg("invalid channel: must be 'stable' or 'canary'")
 	}
 
+	ctx := cmd.Context()
 	exePath, _ := updateExecutable()
 	installMethod := detectInstallMethod(exePath)
 
-	release, err := fetchUpdateRelease(cmd.Context(), targetVersion)
+	// discover: resolve the target release. Before the swap the installed binary
+	// is untouched, so any failure here reports current_version unchanged.
+	release, err := fetchUpdateRelease(ctx, targetVersion)
 	if err != nil {
-		return failWithCode("checking release: "+err.Error(), ExitNetwork, output.E_NETWORK)
+		if interrupted := updateInterrupted(ctx, err); interrupted != nil {
+			return interrupted(stageDiscover, version, false, "not_run", "cancelled before any change; still on "+version)
+		}
+		return failWithDetails("checking release: "+err.Error(), ExitNetwork, output.E_NETWORK,
+			updateFailDetails(stageDiscover, version, false, "not_run"))
 	}
 
 	plan, err := buildUpdatePlan(release, version)
@@ -145,6 +180,7 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
+	// Idempotent: already on the latest (or requested) version is a no-op success.
 	installNeeded := reinstall || plan.UpdateAvailable || targetVersionDiffers(plan, targetVersion)
 	if !installNeeded {
 		printUpdateResult(result)
@@ -152,42 +188,32 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	}
 
 	if installMethod == "npm" || installMethod == "pip" {
-		cmd := updateInstallCommand(installMethod, plan.TargetVersion)
+		command := updateInstallCommand(installMethod, plan.TargetVersion)
 		result["status"] = "package_manager_required"
-		result["command"] = cmd
+		result["command"] = command
 		printUpdateResult(result)
 		return nil
 	}
 
-	confirmPayload := map[string]any{
-		"currentVersion":     plan.CurrentVersion,
-		"targetVersion":      plan.TargetVersion,
-		"assetName":          plan.AssetName,
-		"assetURL":           plan.AssetURL,
-		"checksumURL":        plan.ChecksumURL,
-		"signatureBundleURL": plan.SignatureBundleURL,
-		"reinstall":          reinstall,
-		"channel":            channel,
-		"skillSyncCommand":   plan.SkillSyncCommand,
-	}
+	// --dry-run is an OPTIONAL read-only preview: it issues NO confirm_token and
+	// NO expires_at — self-update is not a dry-run/confirm write gate (CLI-SPEC §14).
 	if dryRun {
-		confirmToken, expires := newConfirmToken(cmd.CommandPath(), "", confirmPayload)
 		result["status"] = "dry_run"
 		result["preview"] = map[string]any{
 			"action": "update archery-cli",
 			"changes": []map[string]any{
-				confirmPayload,
+				{
+					"action":         "replace binary",
+					"currentVersion": plan.CurrentVersion,
+					"targetVersion":  plan.TargetVersion,
+					"asset":          plan.AssetName,
+				},
 				{"action": "sync skill directory", "command": plan.SkillSyncCommand},
 			},
+			"verification": []string{"verify_signature", "verify_checksum"},
 		}
-		result["confirm_token"] = confirmToken
-		result["expires_at"] = expires.Format(time.RFC3339)
 		printUpdateResult(result)
 		return nil
-	}
-
-	if err := requireConfirm(cmd, cmd.CommandPath(), "", confirmPayload); err != nil {
-		return err
 	}
 
 	if err := ensureExecutable(exePath); err != nil {
@@ -196,46 +222,86 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 
 	tmpDir, err := os.MkdirTemp("", "archery-cli-update-*")
 	if err != nil {
-		return failWithCode("creating temp dir: "+err.Error(), ExitNetwork, output.E_NETWORK)
+		// Local filesystem failure creating the staging dir, not a network blip.
+		return failWithDetails("creating temp dir: "+err.Error(), ExitIO, output.E_IO,
+			updateFailDetails(stageReplace, plan.CurrentVersion, false, "not_run"))
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
+	// download: still touches only the temp dir; failure leaves the binary intact.
 	archivePath := filepath.Join(tmpDir, plan.AssetName)
-	if err := downloadUpdateFile(cmd.Context(), plan.AssetURL, archivePath); err != nil {
-		return failWithCode("downloading archive: "+err.Error(), ExitNetwork, output.E_NETWORK)
+	if err := updateDownloadHook(ctx, plan.AssetURL, archivePath); err != nil {
+		if interrupted := updateInterrupted(ctx, err); interrupted != nil {
+			return interrupted(stageDownload, plan.CurrentVersion, false, "not_run", "cancelled during download; no change, still on "+plan.CurrentVersion)
+		}
+		return failWithDetails("downloading archive: "+err.Error(), ExitNetwork, output.E_NETWORK,
+			updateFailDetails(stageDownload, plan.CurrentVersion, false, "not_run"))
 	}
 
 	checksumPath := filepath.Join(tmpDir, "checksums.txt")
-	if err := downloadUpdateFile(cmd.Context(), plan.ChecksumURL, checksumPath); err != nil {
-		return failWithCode("downloading checksums: "+err.Error(), ExitNetwork, output.E_NETWORK)
-	}
-	signatureStatus, err := verifyUpdateChecksumSignature(cmd.Context(), checksumPath, plan.SignatureBundleURL, tmpDir)
-	if err != nil {
-		// Integrity failure is non-retryable: a missing or invalid signature is
-		// a supply-chain red flag, not a transient blip an agent should retry.
-		return failWithCode("verifying release signature: "+err.Error(), ExitError, output.E_INTEGRITY)
-	}
-	if err := verifyUpdateChecksum(archivePath, checksumPath, plan.AssetName); err != nil {
-		return failWithCode("verifying archive: "+err.Error(), ExitError, output.E_INTEGRITY)
+	if err := updateDownloadHook(ctx, plan.ChecksumURL, checksumPath); err != nil {
+		if interrupted := updateInterrupted(ctx, err); interrupted != nil {
+			return interrupted(stageDownload, plan.CurrentVersion, false, "not_run", "cancelled during download; no change, still on "+plan.CurrentVersion)
+		}
+		return failWithDetails("downloading checksums: "+err.Error(), ExitNetwork, output.E_NETWORK,
+			updateFailDetails(stageDownload, plan.CurrentVersion, false, "not_run"))
 	}
 
-	binPath, err := extractUpdateArchive(archivePath, plan.AssetName, tmpDir)
+	// verify_signature -> verify_checksum: signature is verified FIRST, then the
+	// archive checksum. Both fail closed and non-retryable: a forged or corrupt
+	// release is not a transient blip an agent should loop on.
+	signatureStatus, err := verifyUpdateChecksumSignature(ctx, checksumPath, plan.SignatureBundleURL, tmpDir)
 	if err != nil {
-		return failWithCode("extracting archive: "+err.Error(), ExitNetwork, output.E_NETWORK)
+		return failWithDetails("verifying release signature: "+err.Error(), ExitError, output.E_INTEGRITY,
+			updateFailDetails(stageVerifySignature, plan.CurrentVersion, false, "not_run"))
+	}
+	if err := updateChecksumHook(archivePath, checksumPath, plan.AssetName); err != nil {
+		return failWithDetails("verifying archive: "+err.Error(), ExitError, output.E_INTEGRITY,
+			updateFailDetails(stageVerifyChecksum, plan.CurrentVersion, false, "not_run"))
+	}
+
+	// replace: local extract + atomic swap. Failures here are filesystem/permission
+	// problems (MISCLASSIFIED as network before this change), not transient.
+	binPath, err := updateExtractHook(archivePath, plan.AssetName, tmpDir)
+	if err != nil {
+		return failWithDetails("extracting archive: "+err.Error(), ExitIO, output.E_IO,
+			updateFailDetails(stageReplace, plan.CurrentVersion, false, "not_run"))
 	}
 
 	applied, err := updateApply(binPath, exePath)
 	if err != nil {
-		return failWithCode("installing update: "+err.Error(), ExitNetwork, output.E_NETWORK)
+		code, exit := updateReplaceFailureClass(err)
+		return failWithDetails("installing update: "+err.Error(), exit, code,
+			updateFailDetails(stageReplace, plan.CurrentVersion, false, "not_run"))
 	}
-	if err := updateSkillSync(cmd.Context(), updateSkillRepo); err != nil {
-		return failWithCode("syncing skill directory: "+err.Error(), ExitNetwork, output.E_NETWORK)
+
+	// skill_sync runs AFTER the atomic swap. A failure here is PARTIAL SUCCESS:
+	// the binary is on the new version, only the Skill is stale. Report that
+	// truthfully (ok:false, binary_replaced:true) with the replay command, not a
+	// hard network error that hides the successful swap.
+	if err := updateSkillSync(ctx, updateSkillRepo); err != nil {
+		details := updateFailDetails(stageSkillSync, plan.TargetVersion, true, "failed")
+		details["binary_replaced"] = true
+		details["skill_sync_command"] = plan.SkillSyncCommand
+		details["previous_version"] = plan.CurrentVersion
+		details["signature_status"] = signatureStatus
+		details["status"] = applied.Status
+		if applied.PendingPath != "" {
+			details["pending_path"] = applied.PendingPath
+		}
+		details["hint"] = fmt.Sprintf("binary now at %s; run %q to sync the Skill, then \"archery-cli changelog --since %s\"", plan.TargetVersion, plan.SkillSyncCommand, plan.CurrentVersion)
+		code := output.E_NETWORK
+		if interrupted := updateInterrupted(ctx, err); interrupted != nil {
+			code = output.E_INTERRUPTED
+		}
+		return failWithDetails("syncing skill directory: "+err.Error(), ExitNetwork, code, details)
 	}
 
 	result = updateResultMap(plan, applied.Status)
 	result["path"] = applied.Path
 	result["previous_version"] = plan.CurrentVersion
 	result["current_version"] = plan.TargetVersion
+	result["binary_replaced"] = true
 	result["checksum_verified"] = true
 	result["signature_status"] = signatureStatus
 	if signatureStatus == "verified" {
@@ -248,6 +314,35 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	}
 	printUpdateResult(result)
 	return nil
+}
+
+// updateReplaceFailureClass classifies a binary-replace failure by the agent's
+// next action: a permission error needs an environment fix (E_FORBIDDEN, exit 4),
+// any other filesystem/disk failure is E_IO (exit 1). Neither is retryable, and
+// neither is the old misclassified E_NETWORK.
+func updateReplaceFailureClass(err error) (output.ErrorCode, int) {
+	if errors.Is(err, os.ErrPermission) {
+		return output.E_FORBIDDEN, ExitForbidden
+	}
+	return output.E_IO, ExitIO
+}
+
+// updateInterrupted returns a terminal-envelope emitter when ctx was cancelled by
+// a trapped signal (SIGINT/SIGTERM). The returned closure emits E_INTERRUPTED
+// (exit 130) with the stage invariant message, so an interrupted agent still
+// receives a parseable terminal state instead of a bare killed process.
+func updateInterrupted(ctx context.Context, err error) func(stage, currentVersion string, binaryReplaced bool, skillSyncStatus, message string) error {
+	if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		return nil
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
+		// A timeout is a transient network condition, not a user/signal interrupt.
+		return nil
+	}
+	return func(stage, currentVersion string, binaryReplaced bool, skillSyncStatus, message string) error {
+		details := updateFailDetails(stage, currentVersion, binaryReplaced, skillSyncStatus)
+		return failWithDetails("update cancelled: "+message, ExitInterrupted, output.E_INTERRUPTED, details)
+	}
 }
 
 func updateSkillSyncCommand() string {
@@ -491,7 +586,7 @@ func verifyUpdateChecksumSignature(ctx context.Context, checksumPath, bundleURL,
 		return "missing", errors.New("release does not include checksums.txt.sigstore.json; refusing to install an unsigned release")
 	}
 	bundlePath := filepath.Join(tmpDir, "checksums.txt.sigstore.json")
-	if err := downloadUpdateFile(ctx, bundleURL, bundlePath); err != nil {
+	if err := updateDownloadHook(ctx, bundleURL, bundlePath); err != nil {
 		return "download_failed", fmt.Errorf("downloading checksum signature bundle: %w", err)
 	}
 	if err := updateVerifySignature(checksumPath, bundlePath, updateSignerIdentityRegexp()); err != nil {
@@ -713,7 +808,8 @@ func printUpdateResult(result map[string]any) {
 
 func ensureExecutable(path string) error {
 	if path == "" {
-		return failWithCode("could not determine current executable path", ExitNetwork, output.E_NETWORK)
+		return failWithDetails("could not determine current executable path", ExitIO, output.E_IO,
+			updateFailDetails(stageReplace, version, false, "not_run"))
 	}
 	return nil
 }

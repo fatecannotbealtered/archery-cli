@@ -110,7 +110,7 @@ var referenceLeafSchemas = map[string]referenceLeaf{
 	"doctor":    {schema: "doctor", examples: []string{"archery-cli doctor --compact"}},
 	"reference": {schema: "reference", examples: []string{"archery-cli reference --compact"}},
 	"changelog": {schema: "changelog", examples: []string{"archery-cli changelog --since 1.0.0 --compact"}},
-	"update":    {schema: "update_report", examples: []string{"archery-cli update --check --compact", "archery-cli update --dry-run --compact", "archery-cli update --confirm <confirm_token> --compact"}},
+	"update":    {schema: "update_report", examples: []string{"archery-cli update --compact", "archery-cli update --check --compact", "archery-cli update --dry-run --compact"}},
 }
 
 // listEnvelopeFields are the standard NewListEnvelope meta keys wrapping `items`.
@@ -211,6 +211,6 @@ func referenceSchemas() map[string]refDataSchema {
 		"doctor":        {Shape: "object", Fields: []string{"version", "notices", "checks", "configExists", "authValid", "latencyMs", "region", "url", "username", "credentialStore", "error"}},
 		"reference":     {Shape: "object", Fields: []string{"tool", "version", "security_tier", "release_readiness", "globalFlags", "global_flags", "exitCodes", "exit_codes", "errorCodes", "error_codes", "commands", "schemas"}},
 		"changelog":     {Shape: "object", Fields: []string{"current_version", "since", "entries"}},
-		"update_report": {Shape: "object", Fields: []string{"status", "asset", "channel", "current_version", "target_version", "update_available", "release_url", "install_method", "signature_status", "skill_sync_command", "skill_sync_status", "previous_version", "command", "preview", "confirm_token", "expires_at", "checksum_verified", "signature_verified", "path", "pending_path", "hint", "notices", "downgrade"}},
+		"update_report": {Shape: "object", Fields: []string{"status", "asset", "channel", "current_version", "target_version", "update_available", "release_url", "install_method", "signature_status", "skill_sync_command", "skill_sync_status", "previous_version", "binary_replaced", "command", "preview", "checksum_verified", "signature_verified", "path", "pending_path", "hint", "notices", "downgrade"}},
 	}
 }

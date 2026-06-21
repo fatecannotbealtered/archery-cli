@@ -95,16 +95,17 @@ var positionalArgRe = regexp.MustCompile(`<([^>]+)>`)
 
 func buildReferenceTree(root *cobra.Command) refTree {
 	exitCodes := map[int]string{
-		0: "success",
-		1: "error",
-		2: "bad_args",
-		3: "not_found",
-		4: "auth_or_permission",
-		5: "confirm_required",
-		6: "conflict",
-		7: "retryable",
-		8: "timeout",
-		9: "human_required",
+		0:   "success",
+		1:   "error",
+		2:   "bad_args",
+		3:   "not_found",
+		4:   "auth_or_permission",
+		5:   "confirm_required",
+		6:   "conflict",
+		7:   "retryable",
+		8:   "timeout",
+		9:   "human_required",
+		130: "interrupted",
 	}
 	globalFlags := collectPersistentRefFlags(root)
 	errorCodes := referenceErrorCodes()
@@ -218,6 +219,9 @@ func referenceErrorCodes() map[string]refErrorCode {
 		{output.E_SERVER, ExitNetwork},
 		{output.E_NETWORK, ExitNetwork},
 		{output.E_TIMEOUT, ExitTimeout},
+		{output.E_INTEGRITY, ExitError},
+		{output.E_IO, ExitIO},
+		{output.E_INTERRUPTED, ExitInterrupted},
 		{output.E_UNKNOWN, ExitError},
 	}
 	out := make(map[string]refErrorCode, len(codes))

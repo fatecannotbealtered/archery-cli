@@ -29,6 +29,18 @@ func failWithCode(msg string, exit int, code output.ErrorCode) error {
 	return ErrSilent
 }
 
+// failWithDetails reports an error carrying extra structured details (e.g. the
+// self-update stage envelope) and a custom exit code.
+func failWithDetails(msg string, exit int, code output.ErrorCode, details map[string]any) error {
+	if jsonMode {
+		output.PrintErrorJSONWithDetails(msg, code, details)
+	} else {
+		output.Error(msg)
+	}
+	setExitCode(exit)
+	return ErrSilent
+}
+
 func emitError(msg string, exit int, code output.ErrorCode) {
 	if jsonMode {
 		output.PrintErrorJSONWithCode(msg, 0, code)

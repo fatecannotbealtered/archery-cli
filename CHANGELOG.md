@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.12] - 2026-06-21
+
+### Changed
+
+- **`update` is now a single command with no confirm token.** A bare `archery-cli update` performs the whole self-update in one call — resolve the latest (or `--target-version`) release → verify the Sigstore signature → verify the checksum → replace the binary → sync the Skill directory. The old dry-run→confirm-token write gate has been removed from `update` only (other write commands are unchanged). `--check` and `--dry-run` stay as optional read-only flags, and `update --dry-run` now issues no `confirm_token`/`expires_at`. `update` is idempotent: already-latest returns a no-op success. The in-process Sigstore verification (signature then checksum, fail-closed, non-retryable) is unchanged and remains the safety gate.
+
+### Added
+
+- **Staged failure and interruption envelope for `update`.** Every update failure carries `stage` (`discover|download|verify_signature|verify_checksum|replace|skill_sync`), `current_version`, `binary_replaced`, and `skill_sync_status`. A skill-sync failure after a successful binary swap is now **partial success** (`ok:false`, `binary_replaced:true`, with `skill_sync_command`) instead of a hard error that hid the completed swap. SIGINT/SIGTERM is trapped: the temp dir is cleaned and a terminal JSON envelope is still emitted (`E_INTERRUPTED`, exit 130) instead of dying as a bare killed process.
+- **New error codes `E_IO` (exit 1) and `E_INTERRUPTED` (exit 130).** Added to the output package and the status→code→exit mapping.
+
+### Fixed
+
+- **`update` replace-stage failures are no longer misclassified as `E_NETWORK`.** Local filesystem failures during extract/replace now surface as `E_IO` (exit 1), and permission failures as `E_FORBIDDEN` (exit 4) — non-retryable, with the concrete fix — instead of looking like a transient network blip.
+
 ## [1.0.11] - 2026-06-20
 
 ### Fixed
