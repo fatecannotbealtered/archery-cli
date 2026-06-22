@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.13] - 2026-06-22
+
+### Added
+
+- **The update-available notice now also rides on every command's `meta.notices`.** When the local update-check cache holds an available-update notice, it is attached read-only to `meta.notices` on every command's envelope (success and error), in addition to the existing fresh `data.notices` on `context`/`doctor`/`update`. This path does zero network I/O — it is a single local cache read, TTL-bounded — so business commands surface a pending update without ever phoning home. The field is `omitempty`: absent when the cache is empty or expired.
+- **Update notices are now severity-graded** instead of a hardcoded `info`. Severity is computed at check time from the embedded CHANGELOG delta between the running version and the latest: `warning` when the delta contains a `security` entry OR the latest crosses a major version (likely security-relevant or breaking), otherwise `info`. The graded severity is stored in the cache, so the cached `meta.notices` carries the right level. (`critical` stays reserved for known-yanked/known-vulnerable versions.)
+
 ## [1.0.12] - 2026-06-21
 
 ### Changed

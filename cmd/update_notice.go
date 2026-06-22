@@ -85,7 +85,7 @@ func updateNoticesFromPlan(plan updatePlan, source string) []updateNotice {
 	command := updateNoticeRecommendedCommand(plan.InstallMethod, latest)
 	notice := updateNotice{
 		Type:               "update_available",
-		Severity:           "info",
+		Severity:           updateNoticeSeverity(current, latest),
 		CurrentVersion:     current,
 		LatestVersion:      latest,
 		UpdateAvailable:    true,
@@ -103,6 +103,26 @@ func updateNoticesFromPlan(plan updatePlan, source string) []updateNotice {
 	}
 	notice.Message = fmt.Sprintf("archery-cli %s is available (current %s)", latest, current)
 	return []updateNotice{notice}
+}
+
+// updateNoticeSeverity grades the update notice from the embedded CHANGELOG
+// delta between the running version (current) and the latest. It returns
+// "warning" when any version in the delta carries a non-empty `security`
+// category, OR when latest crosses a major version; otherwise "info".
+// `critical` is reserved and never emitted here (CLI-SPEC §14).
+func updateNoticeSeverity(current, latest string) string {
+	if cur, curOK := parseSemver(current); curOK {
+		if lat, latOK := parseSemver(latest); latOK && lat.nums[0] > cur.nums[0] {
+			return "warning"
+		}
+	}
+	entries := filterEntriesSince(parseChangelogEntries(changelogContent), current)
+	for _, e := range entries {
+		if len(e.Changes["security"]) > 0 {
+			return "warning"
+		}
+	}
+	return "info"
 }
 
 func updateNoticeRecommendedCommand(installMethod, latest string) string {
@@ -185,8 +205,30 @@ func updateNoticeDisabled() bool {
 	return value == "1" || value == "true" || value == "yes"
 }
 
+// updateNoticeTestModeDisabled reports whether the process is a test binary, in
+// which case the auto update-notice cache I/O is disabled. Overridable so cache
+// tests can exercise the read/write path under `go test`.
+var updateNoticeTestModeDisabled = func() bool {
+	return strings.HasSuffix(os.Args[0], ".test")
+}
+
 func updateNoticeAutoDisabled() bool {
-	return updateNoticeDisabled() || strings.HasSuffix(os.Args[0], ".test")
+	return updateNoticeDisabled() || updateNoticeTestModeDisabled()
+}
+
+// cachedUpdateNoticesAsAny reads the local update-notice cache and returns the
+// notices as a []any for output.Meta.Notices. Read-only and TTL-bounded; never
+// performs network I/O. Returns nil when the cache has nothing to report.
+func cachedUpdateNoticesAsAny() []any {
+	notices := readCachedUpdateNotices()
+	if len(notices) == 0 {
+		return nil
+	}
+	out := make([]any, len(notices))
+	for i := range notices {
+		out[i] = notices[i]
+	}
+	return out
 }
 
 func printUpdateNoticeHint(w io.Writer, notices []updateNotice) {

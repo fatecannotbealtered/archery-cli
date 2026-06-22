@@ -127,6 +127,9 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&otpFlag, "otp", "", "6-digit 2FA code for accounts with two-factor auth (or set ARCHERY_CLI_OTP); ~30s validity")
 	initConfirmFlag()
 	installUpdateNoticeHelp(rootCmd)
+	// Attach the cached update notice to every command's meta.notices, read-only
+	// from the local cache (no network); absent when the cache is empty/expired.
+	output.UpdateNoticesProvider = cachedUpdateNoticesAsAny
 
 	cobra.OnInitialize(func() {
 		output.Quiet = quietMode

@@ -15,6 +15,12 @@ var Compact bool
 // The cmd package sets this hook; package-level tests and helpers default to 0.
 var DurationMS func() int64
 
+// UpdateNoticesProvider returns the cached update notices to attach to
+// meta.notices on every response. The cmd package wires this to a read-only,
+// TTL-bounded local cache reader (no network). Nil (or an empty result) leaves
+// meta.notices absent. Kept as a hook to avoid an output->cmd import cycle.
+var UpdateNoticesProvider func() []any
+
 // marshalJSON encodes v according to the global Compact setting.
 func marshalJSON(v any) ([]byte, error) {
 	if Compact {
@@ -45,6 +51,10 @@ type ErrorEnvelope struct {
 // Meta holds command execution metadata.
 type Meta struct {
 	DurationMS int64 `json:"duration_ms"`
+	// Notices carries ambient operational notices (currently the cached
+	// update-available notice) read-only from the local cache. Omitted when the
+	// cache has nothing to report (CLI-SPEC §3, §14).
+	Notices []any `json:"notices,omitempty"`
 }
 
 // EnvelopeError holds structured error details.
@@ -62,13 +72,25 @@ func commandDurationMS() int64 {
 	return DurationMS()
 }
 
+// newMeta builds the meta block, attaching cached update notices (if any) from
+// the provider hook. The provider must read only the local cache (no network).
+func newMeta() Meta {
+	meta := Meta{DurationMS: commandDurationMS()}
+	if UpdateNoticesProvider != nil {
+		if notices := UpdateNoticesProvider(); len(notices) > 0 {
+			meta.Notices = notices
+		}
+	}
+	return meta
+}
+
 // NewSuccessEnvelope builds a success envelope for the given data.
 func NewSuccessEnvelope(v any) SuccessEnvelope {
 	return SuccessEnvelope{
 		OK:            true,
 		SchemaVersion: SchemaVersion,
 		Data:          v,
-		Meta:          Meta{DurationMS: commandDurationMS()},
+		Meta:          newMeta(),
 	}
 }
 
@@ -87,7 +109,7 @@ func NewErrorEnvelope(msg string, statusCode int, code ErrorCode) ErrorEnvelope 
 			Details:   details,
 			Retryable: RetryableErrorCode(code),
 		},
-		Meta: Meta{DurationMS: commandDurationMS()},
+		Meta: newMeta(),
 	}
 }
 
