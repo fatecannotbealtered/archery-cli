@@ -158,7 +158,7 @@ var queryRunCmd = &cobra.Command{
 
 		out, errMsg, code := runQueryOnInstance(client, single, db, sql, limit, table, schema)
 		if errMsg != "" {
-			return failWithCode(errMsg, exitForErrorCode(code), code)
+			return failWithCode(errMsg, code)
 		}
 
 		if jsonMode {
@@ -717,6 +717,6 @@ var queryGenerateCmd = &cobra.Command{
 		// instead of issuing a request that would 404 and read as a transport bug.
 		return failWithCode(
 			"query generate is not available on this Archery server (no /query/generate_sql/ route in v1.8.5); upgrade Archery to a version that ships NL→SQL generation",
-			ExitNotFound, output.E_NOT_FOUND)
+			output.E_NOT_FOUND)
 	},
 }

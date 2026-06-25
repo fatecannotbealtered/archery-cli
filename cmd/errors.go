@@ -23,21 +23,25 @@ func failConfirmRequired(msg string) error {
 	return ErrSilent
 }
 
-// failWithCode reports an error with a custom exit code and error code.
-func failWithCode(msg string, exit int, code output.ErrorCode) error {
-	emitError(msg, exit, code)
+// failWithCode reports an error with the given error code. The exit code is
+// derived from the error code through the single status->code->exit mapping
+// (exitForErrorCode) so the two can never drift apart.
+func failWithCode(msg string, code output.ErrorCode) error {
+	emitError(msg, exitForErrorCode(code), code)
 	return ErrSilent
 }
 
 // failWithDetails reports an error carrying extra structured details (e.g. the
-// self-update stage envelope) and a custom exit code.
-func failWithDetails(msg string, exit int, code output.ErrorCode, details map[string]any) error {
+// self-update stage envelope). The process exit code is derived from the error
+// code through the single status->code->exit mapping (exitForErrorCode), so the
+// exit can never drift from the code a caller hand-picks.
+func failWithDetails(msg string, code output.ErrorCode, details map[string]any) error {
 	if jsonMode {
 		output.PrintErrorJSONWithDetails(msg, code, details)
 	} else {
 		output.Error(msg)
 	}
-	setExitCode(exit)
+	setExitCode(exitForErrorCode(code))
 	return ErrSilent
 }
 

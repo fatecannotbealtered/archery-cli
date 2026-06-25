@@ -308,7 +308,7 @@ type dictEnvelope struct {
 func decodeDictEnvelope(data []byte) (dictEnvelope, error) {
 	var env dictEnvelope
 	if err := json.Unmarshal(data, &env); err != nil {
-		return env, failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
+		return env, failWithCode("parsing response: "+err.Error(), output.E_SERVER)
 	}
 	if env.Status != 0 {
 		msg := env.Msg
@@ -335,7 +335,7 @@ func parseDictTableList(data []byte) ([]map[string]any, error) {
 
 	var grouped map[string][][]any
 	if err := json.Unmarshal(env.Data, &grouped); err != nil {
-		return nil, failWithCode("parsing table list: "+err.Error(), ExitNetwork, output.E_SERVER)
+		return nil, failWithCode("parsing table list: "+err.Error(), output.E_SERVER)
 	}
 
 	items := make([]map[string]any, 0)
@@ -372,7 +372,7 @@ func parseDictTableInfo(data []byte) (map[string]any, error) {
 		return info, nil
 	}
 	if err := json.Unmarshal(env.Data, &info); err != nil {
-		return nil, failWithCode("parsing table info: "+err.Error(), ExitNetwork, output.E_SERVER)
+		return nil, failWithCode("parsing table info: "+err.Error(), output.E_SERVER)
 	}
 	return info, nil
 }
@@ -391,7 +391,7 @@ func dictUnavailable(cmd *cobra.Command, entity, route string) error {
 	}
 	return failWithCode(
 		fmt.Sprintf("dict %s is not available on this Archery server (no /data_dictionary/%s/ route in v1.8.5); upgrade Archery to a version that ships it", entity, route),
-		ExitNotFound, output.E_NOT_FOUND)
+		output.E_NOT_FOUND)
 }
 
 // printDictColumnTable renders a {column_list, rows} table from table_info under

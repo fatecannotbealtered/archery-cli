@@ -47,21 +47,21 @@ func validateConfirmToken(token, action, region string, payload any) error {
 	}
 	parts := strings.Split(token, "_")
 	if len(parts) != 3 || parts[0] != "ct" {
-		return failWithCode("confirmation token is invalid; re-run with --dry-run", ExitConflict, output.E_CONFLICT)
+		return failWithCode("confirmation token is invalid; re-run with --dry-run", output.E_CONFLICT)
 	}
 	expiresUnix, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil {
-		return failWithCode("confirmation token is invalid; re-run with --dry-run", ExitConflict, output.E_CONFLICT)
+		return failWithCode("confirmation token is invalid; re-run with --dry-run", output.E_CONFLICT)
 	}
 	expires := time.Unix(expiresUnix, 0).UTC()
 	if !confirmNow().UTC().Before(expires) {
-		return failWithCode("confirmation token expired; re-run with --dry-run", ExitConflict, output.E_CONFLICT)
+		return failWithCode("confirmation token expired; re-run with --dry-run", output.E_CONFLICT)
 	}
 	expected := buildConfirmToken(action, region, payload, expires)
 	if subtle.ConstantTimeCompare([]byte(token), []byte(expected)) == 1 {
 		return nil
 	}
-	return failWithCode("confirmation token does not match this operation; re-run with --dry-run", ExitConflict, output.E_CONFLICT)
+	return failWithCode("confirmation token does not match this operation; re-run with --dry-run", output.E_CONFLICT)
 }
 
 // requireConfirm enforces non-interactive confirmation for destructive or high-impact writes.
@@ -78,7 +78,7 @@ func requireConfirm(cmd *cobra.Command, action, region string, payload any) erro
 	// mechanism here.
 	now := confirmNow().UTC()
 	if isConfirmTokenConsumed(token, now) {
-		return failWithCode("confirm token already used; the operation may have completed — re-run --dry-run to see current state", ExitConflict, output.E_CONFLICT)
+		return failWithCode("confirm token already used; the operation may have completed — re-run --dry-run to see current state", output.E_CONFLICT)
 	}
 	// Mark consumed BEFORE the write runs so a crash mid-write still blocks replay.
 	markConfirmTokenConsumed(token, confirmTokenExpiryUnix(token), now)

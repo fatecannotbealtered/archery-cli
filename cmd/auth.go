@@ -85,7 +85,7 @@ func runAuthLogin(_ *cobra.Command, _ []string) error {
 	// Determine region name
 	cfg, err := config.Load()
 	if err != nil {
-		return failWithCode("reading config: "+err.Error(), ExitAuth, output.E_CONFIG)
+		return failWithCode("reading config: "+err.Error(), output.E_CONFIG)
 	}
 	regionName := authLoginRegionFlag
 	if regionName == "" {
@@ -158,7 +158,7 @@ func runAuthLogin(_ *cobra.Command, _ []string) error {
 			passwordBytes, err = readPasswordForAuth()
 			fmt.Println()
 			if err != nil {
-				return failWithCode("failed to read password: "+err.Error(), ExitNetwork, output.E_NETWORK)
+				return failWithCode("failed to read password: "+err.Error(), output.E_NETWORK)
 			}
 		} else {
 			line, _ := reader.ReadString('\n')
@@ -206,7 +206,7 @@ func doAuthLogin(cfg *config.Config, regionName, regionURL, username, password s
 		return nil
 	}
 	if !config.KeyringAvailable() {
-		return failWithCode("OS credential store unavailable; cannot persist credentials securely. Enable the OS keyring or use ARCHERY_CLI_URL, ARCHERY_CLI_USERNAME, and ARCHERY_CLI_PASSWORD for one-shot commands.", ExitAuth, output.E_CONFIG)
+		return failWithCode("OS credential store unavailable; cannot persist credentials securely. Enable the OS keyring or use ARCHERY_CLI_URL, ARCHERY_CLI_USERNAME, and ARCHERY_CLI_PASSWORD for one-shot commands.", output.E_CONFIG)
 	}
 
 	if !jsonMode {
@@ -249,7 +249,7 @@ func doAuthLogin(cfg *config.Config, regionName, regionURL, username, password s
 		cfg.DefaultRegion = regionName
 	}
 	if err := config.Save(cfg); err != nil {
-		return failWithCode("failed to save credentials: "+err.Error(), ExitNetwork, output.E_NETWORK)
+		return failWithCode("failed to save credentials: "+err.Error(), output.E_NETWORK)
 	}
 
 	cachedLabel := "session cookie cached"
@@ -284,7 +284,7 @@ func doAuthLogin(cfg *config.Config, regionName, regionURL, username, password s
 func runAuthLogout(_ *cobra.Command, _ []string) error {
 	cfg, err := config.Load()
 	if err != nil {
-		return failWithCode("reading config: "+err.Error(), ExitNetwork, output.E_NETWORK)
+		return failWithCode("reading config: "+err.Error(), output.E_NETWORK)
 	}
 
 	regionName := activeRegionName(cfg)
@@ -310,7 +310,7 @@ func runAuthLogout(_ *cobra.Command, _ []string) error {
 	cfg.Regions[regionName] = region
 
 	if err := config.Save(cfg); err != nil {
-		return failWithCode("failed to save config: "+err.Error(), ExitNetwork, output.E_NETWORK)
+		return failWithCode("failed to save config: "+err.Error(), output.E_NETWORK)
 	}
 
 	if jsonMode {
@@ -328,7 +328,7 @@ func runAuthLogout(_ *cobra.Command, _ []string) error {
 func runAuthStatus(_ *cobra.Command, _ []string) error {
 	cfg, err := config.Load()
 	if err != nil {
-		return failWithCode("reading config: "+err.Error(), ExitNetwork, output.E_NETWORK)
+		return failWithCode("reading config: "+err.Error(), output.E_NETWORK)
 	}
 
 	regionName := activeRegionName(cfg)

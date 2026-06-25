@@ -830,7 +830,7 @@ var instanceCreateCmd = &cobra.Command{
 
 		inst, errMsg, code := createInstance(client, payload)
 		if errMsg != "" {
-			return failWithCode(errMsg, exitForErrorCode(code), code)
+			return failWithCode(errMsg, code)
 		}
 
 		if jsonMode {
@@ -992,7 +992,7 @@ var instanceUpdateCmd = &cobra.Command{
 
 		var inst instanceResult
 		if err := json.Unmarshal(data, &inst); err != nil {
-			return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
+			return failWithCode("parsing response: "+err.Error(), output.E_SERVER)
 		}
 
 		if jsonMode {
@@ -1071,7 +1071,7 @@ var instanceTestCmd = &cobra.Command{
 			Msg    string `json:"msg"`
 		}
 		if err := json.Unmarshal(data, &resp); err != nil {
-			return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
+			return failWithCode("parsing response: "+err.Error(), output.E_SERVER)
 		}
 
 		reachable := resp.Status == 0
@@ -1134,10 +1134,10 @@ var instanceUsersCmd = &cobra.Command{
 			Rows   []map[string]any `json:"rows"`
 		}
 		if err := json.Unmarshal(data, &resp); err != nil {
-			return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
+			return failWithCode("parsing response: "+err.Error(), output.E_SERVER)
 		}
 		if resp.Status != 0 {
-			return failWithCode(resp.Msg, exitForErrorCode(output.E_VALIDATION), output.E_VALIDATION)
+			return failWithCode(resp.Msg, output.E_VALIDATION)
 		}
 
 		if jsonMode {
@@ -1428,10 +1428,10 @@ var instanceGrantCmd = &cobra.Command{
 			Data   any    `json:"data"`
 		}
 		if err := json.Unmarshal(data, &resp); err != nil {
-			return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
+			return failWithCode("parsing response: "+err.Error(), output.E_SERVER)
 		}
 		if resp.Status != 0 {
-			return failWithCode(resp.Msg, exitForErrorCode(output.E_VALIDATION), output.E_VALIDATION)
+			return failWithCode(resp.Msg, output.E_VALIDATION)
 		}
 
 		// data is the executed GRANT/REVOKE SQL (external content).

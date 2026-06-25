@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -9,6 +10,13 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/verify"
 )
+
+// errTrustRootUnavailable marks a failure to obtain the Sigstore trust root.
+// The trust ANCHOR ships embedded (sigstore-go's `root.json`), but refreshing
+// the TUF metadata is a network step, so its failure is a retryable network
+// condition — NOT a forged-release verdict. The caller classifies it as a
+// network class rather than E_INTEGRITY (CLI-SPEC §14).
+var errTrustRootUnavailable = errors.New("sigstore trust root unavailable")
 
 // updateOIDCIssuer is the GitHub Actions OIDC issuer. The release workflow's
 // Sigstore certificate must be issued for this exact issuer.
@@ -44,7 +52,9 @@ func verifySigstoreBundle(artifactPath, bundlePath, sanRegex string) error {
 
 	trustedRoot, err := root.FetchTrustedRoot()
 	if err != nil {
-		return fmt.Errorf("loading sigstore trust root: %w", err)
+		// Refreshing the TUF trust metadata is a network step; mark it so the
+		// caller treats it as a retryable network failure, not an integrity verdict.
+		return fmt.Errorf("%w: %w", errTrustRootUnavailable, err)
 	}
 
 	sev, err := verify.NewVerifier(trustedRoot,

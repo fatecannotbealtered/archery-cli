@@ -89,7 +89,7 @@ var diagnosticProcessCmd = &cobra.Command{
 			fields := getFieldsFlag(cmd)
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), output.E_SERVER)
 			}
 			items := extractDiagnosticRows(raw)
 			for _, m := range items {
@@ -242,7 +242,7 @@ var diagnosticTablespaceCmd = &cobra.Command{
 			fields := getFieldsFlag(cmd)
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), output.E_SERVER)
 			}
 			items := extractDiagnosticRows(raw)
 			if len(fields) > 0 && len(items) > 0 {
@@ -300,7 +300,7 @@ var diagnosticLocksCmd = &cobra.Command{
 			fields := getFieldsFlag(cmd)
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), output.E_SERVER)
 			}
 			items := extractDiagnosticRows(raw)
 			if len(fields) > 0 && len(items) > 0 {
@@ -358,7 +358,7 @@ var diagnosticTransactionsCmd = &cobra.Command{
 			fields := getFieldsFlag(cmd)
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), output.E_SERVER)
 			}
 			items := extractDiagnosticRows(raw)
 			if len(fields) > 0 && len(items) > 0 {
@@ -402,14 +402,14 @@ type diagnosticEnvelope struct {
 func checkDiagnosticStatus(data []byte) error {
 	var env diagnosticEnvelope
 	if err := json.Unmarshal(data, &env); err != nil {
-		return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
+		return failWithCode("parsing response: "+err.Error(), output.E_SERVER)
 	}
 	if env.Status != 0 {
 		msg := strings.TrimSpace(env.Msg)
 		if msg == "" {
 			msg = "diagnostic request failed"
 		}
-		return failWithCode(msg, ExitBadArgs, output.E_VALIDATION)
+		return failWithCode(msg, output.E_VALIDATION)
 	}
 	return nil
 }

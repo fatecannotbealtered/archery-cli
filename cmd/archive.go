@@ -131,7 +131,7 @@ var archiveListCmd = &cobra.Command{
 			fields := getFieldsFlag(cmd)
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), output.E_SERVER)
 			}
 			items := extractArchiveItems(raw)
 			total := extractArchiveTotal(raw)
@@ -291,7 +291,7 @@ var archiveApplyCmd = &cobra.Command{
 		if jsonMode {
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), output.E_SERVER)
 			}
 			output.PrintJSON(normalizeAgentValue(raw))
 			return nil
@@ -426,7 +426,7 @@ var archiveSwitchCmd = &cobra.Command{
 		if jsonMode {
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), output.E_SERVER)
 			}
 			output.PrintJSON(normalizeAgentValue(raw))
 			return nil
@@ -482,7 +482,7 @@ var archiveOnceCmd = &cobra.Command{
 			fields := getFieldsFlag(cmd)
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), output.E_SERVER)
 			}
 			if m, ok := raw.(map[string]any); ok && len(fields) > 0 {
 				output.PrintJSON(output.FilterMap(normalizeAgentMap(m), fields))
@@ -549,7 +549,7 @@ var archiveLogCmd = &cobra.Command{
 			fields := getFieldsFlag(cmd)
 			var raw any
 			if err := json.Unmarshal(data, &raw); err != nil {
-				return failWithCode("parsing response: "+err.Error(), ExitNetwork, output.E_SERVER)
+				return failWithCode("parsing response: "+err.Error(), output.E_SERVER)
 			}
 			items := extractArchiveLogItems(raw)
 			total := extractArchiveTotal(raw)

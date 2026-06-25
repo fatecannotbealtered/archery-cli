@@ -149,7 +149,7 @@ var userGroupsCmd = &cobra.Command{
 		if client.Mode() != api.ModeJWT {
 			return failWithCode(
 				"permission group listing has no session endpoint in Archery v1.8.5; rerun with --mode jwt",
-				ExitNotFound, output.E_NOT_FOUND)
+				output.E_NOT_FOUND)
 		}
 
 		rows, total, err := client.Users.ListGroups(apiCtx(), limit, offset)

@@ -108,8 +108,8 @@ func updateNoticesFromPlan(plan updatePlan, source string) []updateNotice {
 // updateNoticeSeverity grades the update notice from the embedded CHANGELOG
 // delta between the running version (current) and the latest. It returns
 // "warning" when any version in the delta carries a non-empty `security`
-// category, OR when latest crosses a major version; otherwise "info".
-// `critical` is reserved and never emitted here (CLI-SPEC §14).
+// category, OR when latest crosses a major version; otherwise "info"
+// (CLI-SPEC §14).
 func updateNoticeSeverity(current, latest string) string {
 	if cur, curOK := parseSemver(current); curOK {
 		if lat, latOK := parseSemver(latest); latOK && lat.nums[0] > cur.nums[0] {

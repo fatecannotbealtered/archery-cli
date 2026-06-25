@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.14] - 2026-06-25
+
+### Removed
+
+- **Dropped the dead `update --channel` (`stable`/`canary`) flag.** It was read, validated, stored on the plan, and emitted as `update_report.channel`, but never affected release resolution — both values resolved the same `/releases/latest` (or `/tags/v*`) URL. The flag, its `stable`/`canary` constants, the `channel` plan field, and the `channel` output key are gone, aligning `update` with the rest of the fleet (no channel concept).
+
+### Changed
+
+- **Windows self-update now replaces the binary in place atomically**, matching Unix. The previous flow staged a `.new` file and spawned a `.cmd` script to `move` it over the target after the process exited (status `scheduled`, `pending_path`). It now uses the same rename trick on every platform: write `.<base>.new` → rename the in-use binary to `.<base>.old` (Windows permits renaming a running executable) → rename `.new` into place → restore from `.old` on failure → remove `.old` on success (ignored if Windows still has it locked). `update` therefore returns `status: "installed"` / `binary_replaced: true` with no restart required on Windows; the `scheduled` status and `pending_path` field are gone.
+
+### Fixed
+
+- **`update` failures are now classified onto the error taxonomy instead of collapsing into `E_NETWORK`/hardcoded exits.** Concretely:
+  - The error code → exit code mapping is now derived from a single function (`exitForErrorCode`); `update`'s failure helpers no longer hand-pass an exit code alongside the error code, so the two can never drift. As a result a SIGINT during the post-swap `skill_sync` stage now exits `130` (`E_INTERRUPTED`) instead of the hardcoded `7`.
+  - `discover`/`download` HTTP failures are split by upstream status — `403 → E_FORBIDDEN`, `404 → E_NOT_FOUND` (non-retryable), `408 → E_TIMEOUT`, `429 → E_RATE_LIMIT`, `5xx → E_SERVER` — instead of every transport failure looking like a transient `E_NETWORK`.
+  - In `verify_signature`, only an actual signature/checksum verdict is `E_INTEGRITY` (non-retryable). Fetching the signature bundle is a network step whose failure is now a retryable network class, and a SIGINT mid-verify surfaces `E_INTERRUPTED` (exit 130) — never a forged-release verdict an agent must stop and report. A `ctx` cancellation check was added before `verify_checksum` as well.
+- **`internal/output.ErrorCodeFromStatus` now maps `408` to `E_TIMEOUT` (retryable).** It previously fell through the default `4xx` branch to `E_USAGE` (non-retryable, exit 2) — the opposite of the contract.
+- **`update --dry-run` is reachable for package-manager (npm/pip) installs.** The read-only preview is now decided before the `package_manager_required` short-circuit, so a managed install still gets a preview (with the package-manager command) instead of being routed straight to `package_manager_required`.
+
 ## [1.0.13] - 2026-06-22
 
 ### Added

@@ -92,6 +92,9 @@ func TestErrorCodeFromStatus(t *testing.T) {
 		401: E_AUTH,
 		403: E_FORBIDDEN,
 		404: E_NOT_FOUND,
+		// 408 (request timeout) must map to E_TIMEOUT (retryable), NOT fall
+		// through the default 4xx branch to E_USAGE (CLI-SPEC §6).
+		408: E_TIMEOUT,
 		409: E_CONFLICT,
 		429: E_RATE_LIMIT,
 		500: E_SERVER,
@@ -111,6 +114,9 @@ func TestErrorCodeFromStatus(t *testing.T) {
 				t.Errorf("ErrorCodeFromStatus(%d) = %v, want %v", status, got, want)
 			}
 		}
+	}
+	if !RetryableErrorCode(ErrorCodeFromStatus(408)) {
+		t.Error("408 -> E_TIMEOUT must be retryable")
 	}
 }
 

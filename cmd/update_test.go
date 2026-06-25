@@ -69,7 +69,6 @@ func runUpdateCapture(t *testing.T, args ...string) (map[string]any, int) {
 	_ = updateCmd.Flags().Set("check", "false")
 	_ = updateCmd.Flags().Set("reinstall", "false")
 	_ = updateCmd.Flags().Set("target-version", "")
-	_ = updateCmd.Flags().Set("channel", updateChannelStable)
 
 	rootCmd.SetArgs(append([]string{"update", "--format", "json"}, args...))
 	_ = rootCmd.Execute()
@@ -346,6 +345,221 @@ func TestUpdate_ReplaceFailureIsIO(t *testing.T) {
 	}
 	if br, _ := details["binary_replaced"].(bool); br {
 		t.Fatal("binary_replaced must be false when the swap fails")
+	}
+}
+
+// TestUpdate_DiscoverNotFoundClassified proves a discover-stage HTTP failure is
+// classified by status (a 404 from the release endpoint -> E_NOT_FOUND, exit 3,
+// non-retryable) instead of collapsing every transport failure into E_NETWORK.
+func TestUpdate_DiscoverNotFoundClassified(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+	}))
+	defer srv.Close()
+	origAPI := updateGitHubAPI
+	t.Cleanup(func() { updateGitHubAPI = origAPI })
+	updateGitHubAPI = srv.URL
+	t.Setenv("ARCHERY_CLI_NO_UPDATE_CHECK", "1")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	env, exit := runUpdateCapture(t, "--target-version", "1.2.3")
+	if ok, _ := env["ok"].(bool); ok {
+		t.Fatalf("discover 404 must not be ok: %v", env)
+	}
+	if exit != ExitNotFound {
+		t.Fatalf("exit = %d, want 3 (E_NOT_FOUND)", exit)
+	}
+	e := envError(t, env)
+	if e["code"] != "E_NOT_FOUND" {
+		t.Fatalf("code = %v, want E_NOT_FOUND", e["code"])
+	}
+	if retry, _ := e["retryable"].(bool); retry {
+		t.Fatal("E_NOT_FOUND must be retryable:false")
+	}
+	details, _ := e["details"].(map[string]any)
+	if details["stage"] != "discover" {
+		t.Fatalf("stage = %v, want discover", details["stage"])
+	}
+}
+
+// TestUpdate_DiscoverServerErrorRetryable proves a 503 from discover stays a
+// retryable network class (E_SERVER, exit 7), distinct from the 404 case above.
+func TestUpdate_DiscoverServerErrorRetryable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	origAPI := updateGitHubAPI
+	t.Cleanup(func() { updateGitHubAPI = origAPI })
+	updateGitHubAPI = srv.URL
+	t.Setenv("ARCHERY_CLI_NO_UPDATE_CHECK", "1")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	env, exit := runUpdateCapture(t)
+	if exit != ExitNetwork {
+		t.Fatalf("exit = %d, want 7", exit)
+	}
+	e := envError(t, env)
+	if e["code"] != "E_SERVER" {
+		t.Fatalf("code = %v, want E_SERVER", e["code"])
+	}
+	if retry, _ := e["retryable"].(bool); !retry {
+		t.Fatal("E_SERVER must be retryable:true")
+	}
+}
+
+// TestUpdate_VerifySignatureInterrupt proves a SIGINT-style cancellation during
+// signature verification surfaces E_INTERRUPTED (exit 130) with binary_replaced
+// false — never an E_INTEGRITY forged-release verdict.
+func TestUpdate_VerifySignatureInterrupt(t *testing.T) {
+	srv := updateMockReleaseServer(t, "9.9.9")
+	defer srv.Close()
+
+	origAPI := updateGitHubAPI
+	origExec := updateExecutable
+	origDownload := updateDownloadHook
+	t.Cleanup(func() {
+		updateGitHubAPI = origAPI
+		updateExecutable = origExec
+		updateDownloadHook = origDownload
+	})
+	updateGitHubAPI = srv.URL
+	exe := t.TempDir() + "/archery-cli"
+	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
+		t.Fatalf("write exe: %v", err)
+	}
+	updateExecutable = func() (string, error) { return exe, nil }
+	// Archive + checksums download fine; the signature-bundle download is the one
+	// the user cancels (ctx cancelled), so the stage is verify_signature.
+	updateDownloadHook = func(ctx context.Context, url, dest string) error {
+		if strings.Contains(url, "sigstore.json") {
+			return context.Canceled
+		}
+		return nil
+	}
+
+	t.Setenv("ARCHERY_CLI_NO_UPDATE_CHECK", "1")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	env, exit := runUpdateCapture(t)
+	if ok, _ := env["ok"].(bool); ok {
+		t.Fatalf("interrupt must not be ok: %v", env)
+	}
+	if exit != ExitInterrupted {
+		t.Fatalf("exit = %d, want 130", exit)
+	}
+	e := envError(t, env)
+	if e["code"] != "E_INTERRUPTED" {
+		t.Fatalf("code = %v, want E_INTERRUPTED", e["code"])
+	}
+	if e["code"] == "E_INTEGRITY" {
+		t.Fatal("an interrupt must never be an integrity failure")
+	}
+	details, _ := e["details"].(map[string]any)
+	if details["stage"] != "verify_signature" {
+		t.Fatalf("stage = %v, want verify_signature", details["stage"])
+	}
+	if br, _ := details["binary_replaced"].(bool); br {
+		t.Fatal("binary_replaced must be false when cancelled before the swap")
+	}
+}
+
+// TestUpdate_DryRunReachableUnderPackageManager proves --dry-run is decided
+// BEFORE the npm/pip branch: a package-manager-managed install can still get a
+// read-only preview instead of being short-circuited into package_manager_required.
+func TestUpdate_DryRunReachableUnderPackageManager(t *testing.T) {
+	srv := updateMockReleaseServer(t, "9.9.9")
+	defer srv.Close()
+	origAPI := updateGitHubAPI
+	origExec := updateExecutable
+	t.Cleanup(func() {
+		updateGitHubAPI = origAPI
+		updateExecutable = origExec
+	})
+	updateGitHubAPI = srv.URL
+
+	// Lay out a node_modules tree whose package.json names this npm package so
+	// detectInstallMethod returns "npm".
+	root := t.TempDir()
+	pkgDir := root + "/node_modules/@fateforge/archery-cli"
+	if err := os.MkdirAll(pkgDir+"/bin", 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(pkgDir+"/package.json", []byte(`{"name":"`+updateNPMPackage+`"}`), 0o644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+	exe := pkgDir + "/bin/archery-cli"
+	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
+		t.Fatalf("write exe: %v", err)
+	}
+	updateExecutable = func() (string, error) { return exe, nil }
+
+	t.Setenv("ARCHERY_CLI_NO_UPDATE_CHECK", "1")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	env, exit := runUpdateCapture(t, "--dry-run")
+	if ok, _ := env["ok"].(bool); !ok {
+		t.Fatalf("dry-run ok=false: %v", env)
+	}
+	if exit != ExitOK {
+		t.Fatalf("exit = %d, want 0", exit)
+	}
+	data := envData(t, env)
+	if data["status"] != "dry_run" {
+		t.Fatalf("status = %v, want dry_run (preview must win over package_manager_required)", data["status"])
+	}
+	if data["install_method"] != "npm" {
+		t.Fatalf("install_method = %v, want npm", data["install_method"])
+	}
+	preview, _ := data["preview"].(map[string]any)
+	if preview == nil {
+		t.Fatalf("dry-run under npm must still carry a preview: %v", data)
+	}
+}
+
+// TestDetectInstallMethod probes the install-method detection across the binary,
+// npm, and pip layouts so an agent gets the right update path per install shape.
+func TestDetectInstallMethod(t *testing.T) {
+	root := t.TempDir()
+
+	// npm: node_modules tree whose package.json names this package.
+	npmDir := root + "/node_modules/@fateforge/archery-cli"
+	if err := os.MkdirAll(npmDir+"/bin", 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(npmDir+"/package.json", []byte(`{"name":"`+updateNPMPackage+`"}`), 0o644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+	if got := detectInstallMethod(npmDir + "/bin/archery-cli"); got != "npm" {
+		t.Errorf("npm layout -> %q, want npm", got)
+	}
+
+	// A node_modules path WITHOUT a matching package.json is not our npm install.
+	otherDir := root + "/node_modules/other/bin"
+	if err := os.MkdirAll(otherDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if got := detectInstallMethod(otherDir + "/archery-cli"); got != "binary" {
+		t.Errorf("foreign node_modules -> %q, want binary", got)
+	}
+
+	// pip: a site-packages path is detected as pip.
+	if got := detectInstallMethod(root + "/.venv/lib/python3.11/site-packages/archery_cli/cli"); got != "pip" {
+		t.Errorf("site-packages layout -> %q, want pip", got)
+	}
+
+	// plain binary install.
+	if got := detectInstallMethod(root + "/usr/local/bin/archery-cli"); got != "binary" {
+		t.Errorf("plain layout -> %q, want binary", got)
 	}
 }
 

@@ -165,6 +165,8 @@ func ErrorCodeFromStatus(statusCode int) ErrorCode {
 		return E_FORBIDDEN
 	case 404:
 		return E_NOT_FOUND
+	case 408:
+		return E_TIMEOUT
 	case 409:
 		return E_CONFLICT
 	case 429:
