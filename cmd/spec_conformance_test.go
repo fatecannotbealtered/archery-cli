@@ -37,8 +37,24 @@ func TestReferenceReportsWriteConfirmRequirement(t *testing.T) {
 
 func TestReferenceReportsErrorCodesAndOutputSchema(t *testing.T) {
 	tree := buildReferenceTree(rootCmd)
-	if tree.SecurityTier != "T2" {
-		t.Fatalf("security tier = %q, want T2", tree.SecurityTier)
+	if tree.RiskTier != "T2" {
+		t.Fatalf("risk tier = %q, want T2", tree.RiskTier)
+	}
+	// Conformance: the emitted JSON must carry risk_tier (not security_tier).
+	{
+		schema, ok := tree.Schemas["reference"]
+		if !ok {
+			t.Fatal("reference schema not found in schemas map")
+		}
+		hasRiskTier := false
+		for _, f := range schema.Fields {
+			if f == "risk_tier" {
+				hasRiskTier = true
+			}
+		}
+		if !hasRiskTier {
+			t.Fatal("reference schema Fields must include risk_tier")
+		}
 	}
 	if tree.ReleaseReadiness.Level != "stable" {
 		t.Fatalf("release level = %q, want stable", tree.ReleaseReadiness.Level)

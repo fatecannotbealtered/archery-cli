@@ -209,7 +209,7 @@ func referenceSchemas() map[string]refDataSchema {
 		// ─── self-description ─────────────────────────────────────────────────
 		"context":       {Shape: "object", Fields: []string{"version", "env", "defaultRegion", "activeRegion", "regions", "configPath", "credentials", "notices"}},
 		"doctor":        {Shape: "object", Fields: []string{"version", "notices", "checks", "configExists", "authValid", "latencyMs", "region", "url", "username", "credentialStore", "error"}},
-		"reference":     {Shape: "object", Fields: []string{"tool", "version", "security_tier", "release_readiness", "globalFlags", "global_flags", "exitCodes", "exit_codes", "errorCodes", "error_codes", "commands", "schemas"}},
+		"reference":     {Shape: "object", Fields: []string{"tool", "version", "risk_tier", "release_readiness", "globalFlags", "global_flags", "exitCodes", "exit_codes", "errorCodes", "error_codes", "commands", "schemas"}},
 		"changelog":     {Shape: "object", Fields: []string{"current_version", "since", "entries"}},
 		"update_report": {Shape: "object", Fields: []string{"status", "asset", "current_version", "target_version", "update_available", "release_url", "install_method", "signature_status", "skill_sync_command", "skill_sync_status", "previous_version", "binary_replaced", "command", "preview", "checksum_verified", "signature_verified", "path", "hint", "notices", "downgrade"}},
 	}

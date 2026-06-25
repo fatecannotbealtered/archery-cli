@@ -176,7 +176,7 @@ func ExecuteContext(ctx context.Context) error {
 		if errors.Is(err, ErrSilent) {
 			return err
 		}
-		emitError(err.Error(), ExitBadArgs, output.E_VALIDATION)
+		emitError(err.Error(), output.E_VALIDATION)
 		return ErrSilent
 	}
 	return nil
@@ -286,7 +286,7 @@ func markDryRunOrConfirmWithPayload(action string, detail map[string]any, confir
 	if readOnlyMode {
 		emitError(
 			"read-only mode: write commands are disabled (unset --read-only / ARCHERY_CLI_READONLY to enable writes)",
-			ExitForbidden, output.E_FORBIDDEN)
+			output.E_FORBIDDEN)
 		return true
 	}
 	if requiresDangerousGate(activeCmd) {
@@ -325,7 +325,7 @@ func failDangerousRequired(cmd *cobra.Command) bool {
 	if cmd != nil {
 		name = cmd.CommandPath()
 	}
-	emitError(name+" is high risk and requires --dangerous in both dry-run and confirm steps", ExitConfirm, output.E_CONFIRMATION_REQUIRED)
+	emitError(name+" is high risk and requires --dangerous in both dry-run and confirm steps", output.E_CONFIRMATION_REQUIRED)
 	return true
 }
 

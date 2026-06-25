@@ -7,19 +7,19 @@ import (
 
 // failArg reports a validation error (exit 2).
 func failArg(msg string) error {
-	emitError(msg, ExitBadArgs, output.E_VALIDATION)
+	emitError(msg, output.E_VALIDATION)
 	return ErrSilent
 }
 
 // failNotFound reports a missing resource (exit 3).
 func failNotFound(msg string) error {
-	emitError(msg, ExitNotFound, output.E_NOT_FOUND)
+	emitError(msg, output.E_NOT_FOUND)
 	return ErrSilent
 }
 
 // failConfirmRequired reports a missing non-interactive confirmation token (exit 5).
 func failConfirmRequired(msg string) error {
-	emitError(msg, ExitConfirm, output.E_CONFIRMATION_REQUIRED)
+	emitError(msg, output.E_CONFIRMATION_REQUIRED)
 	return ErrSilent
 }
 
@@ -27,7 +27,7 @@ func failConfirmRequired(msg string) error {
 // derived from the error code through the single status->code->exit mapping
 // (exitForErrorCode) so the two can never drift apart.
 func failWithCode(msg string, code output.ErrorCode) error {
-	emitError(msg, exitForErrorCode(code), code)
+	emitError(msg, code)
 	return ErrSilent
 }
 
@@ -45,13 +45,16 @@ func failWithDetails(msg string, code output.ErrorCode, details map[string]any) 
 	return ErrSilent
 }
 
-func emitError(msg string, exit int, code output.ErrorCode) {
+// emitError emits an error message and sets the exit code derived from code.
+// The exit is always derived from the error code via the single canonical mapping,
+// so a caller cannot pass a mismatched exit constant.
+func emitError(msg string, code output.ErrorCode) {
 	if jsonMode {
 		output.PrintErrorJSONWithCode(msg, 0, code)
 	} else {
 		output.Error(msg)
 	}
-	setExitCode(exit)
+	setExitCode(exitForErrorCode(code))
 }
 
 // requireFlagString returns the flag value or fails if empty.

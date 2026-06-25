@@ -181,7 +181,7 @@ func batchDryRunOrConfirm(action string, targets []string, changes []map[string]
 	if readOnlyMode {
 		emitError(
 			"read-only mode: write commands are disabled (unset --read-only / ARCHERY_CLI_READONLY to enable writes)",
-			ExitForbidden, output.E_FORBIDDEN)
+			output.E_FORBIDDEN)
 		return true
 	}
 

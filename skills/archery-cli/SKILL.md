@@ -173,7 +173,7 @@ archery-cli reference --compact
 
 Update runs as staged work — `discover → download → verify_signature → verify_checksum → replace → skill_sync` — with one atomic swap. Every failure carries `stage`, `current_version`, `binary_replaced`, and `skill_sync_status`:
 
-- **discover/download** network/timeout → `E_NETWORK`/`E_TIMEOUT`/`E_RATE_LIMIT`, retryable, still on the old version.
+- **discover/download** network/timeout → `E_NETWORK`/`E_TIMEOUT`/`E_RATE_LIMITED`, retryable, still on the old version.
 - **verify_signature/verify_checksum** → `E_INTEGRITY` (exit 1), **non-retryable** — stop and report a possible supply-chain issue; do not loop.
 - **replace** filesystem failure → `E_IO` (exit 1) or `E_FORBIDDEN` (exit 4) for permission; fix the environment, then re-run.
 - **skill_sync after a successful swap** → partial success (`ok:false`, `binary_replaced:true`) with `skill_sync_command`: you are already on the new binary, just run that command, then `changelog --since <prev>`.
@@ -192,7 +192,7 @@ Check `ok` first, then act on exit code:
 | 4 | `E_AUTH`/`E_FORBIDDEN`/`E_CONFIG` | Auth failure | Don't retry, ask user for credentials or `archery-cli auth login` |
 | 5 | `E_CONFIRMATION_REQUIRED` | Missing confirm token or dangerous gate | Run `--dry-run` first; if `requiresDangerous` is true, include `--dangerous` in both steps |
 | 6 | `E_CONFLICT` | Stale or invalid token | Re-run `--dry-run`, get fresh token, retry |
-| 7 | `E_NETWORK`/`E_RATE_LIMIT`/`E_SERVER` | Transient error | Back off and retry |
+| 7 | `E_NETWORK`/`E_RATE_LIMITED`/`E_SERVER` | Transient error | Back off and retry |
 | 8 | `E_TIMEOUT` | Timeout | Back off and retry |
 | 9 | `E_2FA_REQUIRED` | Account needs a 2FA code | Ask user for a fresh 6-digit code, retry same command with `--otp <code>` (~30s validity) |
 | 130 | `E_INTERRUPTED` | Cancelled by SIGINT/SIGTERM | Nothing left half-applied; re-run `update` (idempotent) or run the reported next step |

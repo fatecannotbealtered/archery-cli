@@ -59,6 +59,13 @@ func checkSuccessEnvelopeKeys(t *testing.T, env SuccessEnvelope, canonical []str
 		t.Fatalf("marshal %s envelope: %v", label, err)
 	}
 	checkTopAndMetaKeys(t, b, canonical, label)
+	// Assert "data" is present in a success envelope built with a non-empty payload.
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(b, &top); err == nil {
+		if _, ok := top["data"]; !ok {
+			t.Errorf("%s envelope missing \"data\" key (success envelopes with non-empty payload must include data)", label)
+		}
+	}
 }
 
 func checkErrorEnvelopeKeys(t *testing.T, env ErrorEnvelope, canonical []string, label string) {
@@ -91,10 +98,57 @@ func checkTopAndMetaKeys(t *testing.T, b []byte, canonical []string, label strin
 	if raw, ok := top["meta"]; ok {
 		_ = json.Unmarshal(raw, &meta)
 	}
+	// Assert every MetaRequiredKey is present.
+	for _, req := range contract.MetaRequiredKeys {
+		if _, ok := meta[req]; !ok {
+			t.Errorf("%s envelope meta missing required key %q", label, req)
+		}
+	}
 	allowed := append(append([]string{}, contract.MetaRequiredKeys...), contract.MetaOptionalKeys...)
 	for k := range meta {
 		if !conformanceContains(allowed, k) {
 			t.Errorf("meta has unexpected key %q (canonical: %v)", k, allowed)
+		}
+	}
+}
+
+// TestContractConformance_ErrorCodeTable is an independent hardcoded assertion of
+// the canonical 16-code table (exit + retryable). It catches a wrong contract.json
+// that the contract-delegating assertions cannot detect.
+func TestContractConformance_ErrorCodeTable(t *testing.T) {
+	type spec struct {
+		exit      int
+		retryable bool
+	}
+	// Canonical table from the fleet spec: ai-native-cli-spec/template/common/contract/contract.json.
+	// E_USAGE/E_VALIDATION=2; E_NOT_FOUND=3; E_AUTH/E_FORBIDDEN/E_CONFIG=4;
+	// E_CONFIRMATION_REQUIRED=5; E_CONFLICT=6;
+	// E_NETWORK/E_RATE_LIMITED/E_SERVER=7 (retryable);
+	// E_TIMEOUT=8 (retryable); E_INTEGRITY/E_IO/E_UNKNOWN=1; E_INTERRUPTED=130 (retryable).
+	table := map[ErrorCode]spec{
+		E_USAGE:                 {2, false},
+		E_VALIDATION:            {2, false},
+		E_NOT_FOUND:             {3, false},
+		E_AUTH:                  {4, false},
+		E_FORBIDDEN:             {4, false},
+		E_CONFIG:                {4, false},
+		E_CONFIRMATION_REQUIRED: {5, false},
+		E_CONFLICT:              {6, false},
+		E_NETWORK:               {7, true},
+		E_RATE_LIMITED:          {7, true},
+		E_SERVER:                {7, true},
+		E_TIMEOUT:               {8, true},
+		E_INTEGRITY:             {1, false},
+		E_IO:                    {1, false},
+		E_UNKNOWN:               {1, false},
+		E_INTERRUPTED:           {130, true},
+	}
+	for code, want := range table {
+		if got := ExitCodeForErrorCode(code); got != want.exit {
+			t.Errorf("ExitCodeForErrorCode(%s) = %d, want %d", code, got, want.exit)
+		}
+		if got := RetryableErrorCode(code); got != want.retryable {
+			t.Errorf("RetryableErrorCode(%s) = %v, want %v", code, got, want.retryable)
 		}
 	}
 }
