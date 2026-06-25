@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.15] - 2026-06-25
+
 ### Added
 
 - **Fleet contract single-source bootstrap** (`contract/contract.json`, `internal/contract/contract_gen.go`). The canonical E_* → exit → retryable table and the JSON schema version are now generated from `ai-native-cli-spec@v1.4` (`.agent/SPEC_VERSION=v1.4`) and checked by a new `scripts/check-spec.js` CI guard.
