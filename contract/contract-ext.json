@@ -1,0 +1,5 @@
+{
+  "error_codes": {
+    "E_2FA_REQUIRED": {"exit": 9, "retryable": false}
+  }
+}

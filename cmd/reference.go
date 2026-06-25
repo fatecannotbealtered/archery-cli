@@ -215,7 +215,7 @@ func referenceErrorCodes() map[string]refErrorCode {
 		{output.E_CONFIRMATION_REQUIRED, ExitConfirm},
 		{output.E_2FA_REQUIRED, ExitHumanRequired},
 		{output.E_CONFLICT, ExitConflict},
-		{output.E_RATE_LIMIT, ExitRateLimit},
+		{output.E_RATE_LIMITED, ExitRateLimit},
 		{output.E_SERVER, ExitNetwork},
 		{output.E_NETWORK, ExitNetwork},
 		{output.E_TIMEOUT, ExitTimeout},

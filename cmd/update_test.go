@@ -526,6 +526,135 @@ func TestUpdate_DryRunReachableUnderPackageManager(t *testing.T) {
 	}
 }
 
+// TestUpdate_NPMDrivesPackageManager proves that a bare `update` on an npm-managed
+// install EXECUTES the package manager (via the updateRunPackageManager seam) rather
+// than printing a package_manager_required message. The seam is stubbed so tests
+// never shell out to real npm.
+func TestUpdate_NPMDrivesPackageManager(t *testing.T) {
+	srv := updateMockReleaseServer(t, "9.9.9")
+	defer srv.Close()
+	origAPI := updateGitHubAPI
+	origExec := updateExecutable
+	origPM := updateRunPackageManager
+	origSync := updateSkillSync
+	t.Cleanup(func() {
+		updateGitHubAPI = origAPI
+		updateExecutable = origExec
+		updateRunPackageManager = origPM
+		updateSkillSync = origSync
+	})
+	updateGitHubAPI = srv.URL
+
+	root := t.TempDir()
+	pkgDir := root + "/node_modules/@fateforge/archery-cli"
+	if err := os.MkdirAll(pkgDir+"/bin", 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(pkgDir+"/package.json", []byte(`{"name":"`+updateNPMPackage+`"}`), 0o644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+	exe := pkgDir + "/bin/archery-cli"
+	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
+		t.Fatalf("write exe: %v", err)
+	}
+	updateExecutable = func() (string, error) { return exe, nil }
+
+	var calledMethod, calledVersion string
+	updateRunPackageManager = func(_ context.Context, method, ver string) error {
+		calledMethod = method
+		calledVersion = ver
+		return nil
+	}
+	updateSkillSync = func(context.Context, string) error { return nil }
+
+	t.Setenv("ARCHERY_CLI_NO_UPDATE_CHECK", "1")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	env, exit := runUpdateCapture(t)
+	if ok, _ := env["ok"].(bool); !ok {
+		t.Fatalf("npm drive ok=false: %v", env)
+	}
+	if exit != ExitOK {
+		t.Fatalf("exit = %d, want 0", exit)
+	}
+	if calledMethod != "npm" {
+		t.Fatalf("package manager method = %q, want npm", calledMethod)
+	}
+	if calledVersion != "9.9.9" {
+		t.Fatalf("package manager version = %q, want 9.9.9", calledVersion)
+	}
+	data := envData(t, env)
+	if data["status"] != "updated" {
+		t.Fatalf("status = %v, want updated (drove npm)", data["status"])
+	}
+	if data["install_method"] != "npm" {
+		t.Fatalf("install_method = %v, want npm", data["install_method"])
+	}
+}
+
+// TestUpdate_PackageManagerFailureIsEIO proves a package manager failure is E_IO
+// (exit 1, retryable:false, binary_replaced:false) — the PM owns integrity/replace,
+// so a failure leaves the installed binary unchanged.
+func TestUpdate_PackageManagerFailureIsEIO(t *testing.T) {
+	srv := updateMockReleaseServer(t, "9.9.9")
+	defer srv.Close()
+	origAPI := updateGitHubAPI
+	origExec := updateExecutable
+	origPM := updateRunPackageManager
+	t.Cleanup(func() {
+		updateGitHubAPI = origAPI
+		updateExecutable = origExec
+		updateRunPackageManager = origPM
+	})
+	updateGitHubAPI = srv.URL
+
+	root := t.TempDir()
+	pkgDir := root + "/node_modules/@fateforge/archery-cli"
+	if err := os.MkdirAll(pkgDir+"/bin", 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(pkgDir+"/package.json", []byte(`{"name":"`+updateNPMPackage+`"}`), 0o644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+	exe := pkgDir + "/bin/archery-cli"
+	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
+		t.Fatalf("write exe: %v", err)
+	}
+	updateExecutable = func() (string, error) { return exe, nil }
+	updateRunPackageManager = func(context.Context, string, string) error {
+		return errBatch("npm: EACCES permission denied")
+	}
+
+	t.Setenv("ARCHERY_CLI_NO_UPDATE_CHECK", "1")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	env, exit := runUpdateCapture(t)
+	if ok, _ := env["ok"].(bool); ok {
+		t.Fatalf("PM failure must not be ok: %v", env)
+	}
+	if exit != ExitIO {
+		t.Fatalf("exit = %d, want 1 (E_IO)", exit)
+	}
+	e := envError(t, env)
+	if e["code"] != "E_IO" {
+		t.Fatalf("code = %v, want E_IO", e["code"])
+	}
+	if retry, _ := e["retryable"].(bool); retry {
+		t.Fatal("PM failure must be retryable:false")
+	}
+	details, _ := e["details"].(map[string]any)
+	if br, _ := details["binary_replaced"].(bool); br {
+		t.Fatal("binary_replaced must be false when PM fails")
+	}
+	if details["command"] == nil || details["command"] == "" {
+		t.Fatal("PM failure must include the command in details")
+	}
+}
+
 // TestDetectInstallMethod probes the install-method detection across the binary,
 // npm, and pip layouts so an agent gets the right update path per install shape.
 func TestDetectInstallMethod(t *testing.T) {

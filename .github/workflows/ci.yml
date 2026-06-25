@@ -111,6 +111,9 @@ jobs:
       - name: Verify version sync
         run: node scripts/check-version.js
 
+      - name: Verify spec/contract sync
+        run: node scripts/check-spec.js
+
   build:
     name: Build
     strategy:

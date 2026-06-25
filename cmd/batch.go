@@ -23,33 +23,12 @@ func errorCodeForAPIErr(err error) output.ErrorCode {
 	return output.E_NETWORK
 }
 
-// exitForErrorCode maps an error code to its semantic process exit code, so a
-// single-target failure surfaced from a shared executor exits consistently.
+// exitForErrorCode maps an error code to its semantic process exit code. Delegates
+// to the canonical contract (internal/contract) so it cannot drift from the fleet's
+// E_* -> exit table, and automatically covers E_CONFIRMATION_REQUIRED, E_UNKNOWN,
+// and any ext codes without manual case additions.
 func exitForErrorCode(code output.ErrorCode) int {
-	switch code {
-	case output.E_AUTH, output.E_CONFIG:
-		return ExitAuth
-	case output.E_FORBIDDEN:
-		return ExitForbidden
-	case output.E_NOT_FOUND:
-		return ExitNotFound
-	case output.E_CONFLICT:
-		return ExitConflict
-	case output.E_RATE_LIMIT:
-		return ExitRateLimit
-	case output.E_SERVER, output.E_NETWORK:
-		return ExitNetwork
-	case output.E_TIMEOUT:
-		return ExitTimeout
-	case output.E_2FA_REQUIRED:
-		return ExitHumanRequired
-	case output.E_INTEGRITY, output.E_IO:
-		return ExitError
-	case output.E_INTERRUPTED:
-		return ExitInterrupted
-	default:
-		return ExitBadArgs
-	}
+	return output.ExitCodeForErrorCode(code)
 }
 
 // This file holds the shared client-side batch contract (CLI-SPEC §15). Every

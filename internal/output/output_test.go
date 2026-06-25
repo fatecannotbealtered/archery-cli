@@ -96,7 +96,7 @@ func TestErrorCodeFromStatus(t *testing.T) {
 		// through the default 4xx branch to E_USAGE (CLI-SPEC §6).
 		408: E_TIMEOUT,
 		409: E_CONFLICT,
-		429: E_RATE_LIMIT,
+		429: E_RATE_LIMITED,
 		500: E_SERVER,
 		503: E_SERVER,
 		400: E_USAGE,
@@ -123,7 +123,7 @@ func TestErrorCodeFromStatus(t *testing.T) {
 func TestHintForErrorCode_AllCodesHaveHint(t *testing.T) {
 	codes := []ErrorCode{
 		E_CONFIG, E_AUTH, E_FORBIDDEN, E_NOT_FOUND, E_USAGE,
-		E_VALIDATION, E_CONFIRMATION_REQUIRED, E_2FA_REQUIRED, E_CONFLICT, E_RATE_LIMIT,
+		E_VALIDATION, E_CONFIRMATION_REQUIRED, E_2FA_REQUIRED, E_CONFLICT, E_RATE_LIMITED,
 		E_SERVER, E_NETWORK, E_TIMEOUT,
 	}
 	for _, c := range codes {

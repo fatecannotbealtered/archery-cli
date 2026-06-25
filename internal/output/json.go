@@ -4,9 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+
+	"github.com/fatecannotbealtered/archery-cli/internal/contract"
 )
 
-const SchemaVersion = "1.0"
+// SchemaVersion is sourced from the canonical contract (contract/contract.json
+// via internal/contract/contract_gen.go), so the JSON schema version cannot drift
+// from the fleet contract.
+const SchemaVersion = contract.SchemaVersion
 
 // Compact controls whether JSON is emitted without indentation (set by --compact).
 var Compact bool
@@ -126,7 +131,7 @@ const (
 	E_CONFIRMATION_REQUIRED ErrorCode = "E_CONFIRMATION_REQUIRED"
 	E_2FA_REQUIRED          ErrorCode = "E_2FA_REQUIRED"
 	E_CONFLICT              ErrorCode = "E_CONFLICT"
-	E_RATE_LIMIT            ErrorCode = "E_RATE_LIMIT"
+	E_RATE_LIMITED          ErrorCode = "E_RATE_LIMITED"
 	E_SERVER                ErrorCode = "E_SERVER"
 	E_NETWORK               ErrorCode = "E_NETWORK"
 	E_TIMEOUT               ErrorCode = "E_TIMEOUT"
@@ -170,7 +175,7 @@ func ErrorCodeFromStatus(statusCode int) ErrorCode {
 	case 409:
 		return E_CONFLICT
 	case 429:
-		return E_RATE_LIMIT
+		return E_RATE_LIMITED
 	default:
 		if statusCode >= 500 {
 			return E_SERVER
@@ -203,7 +208,7 @@ func HintForErrorCode(code ErrorCode) string {
 		return "This Archery account has 2FA enabled. Re-run with --otp <6-digit code> (or set ARCHERY_CLI_OTP). The code expires in ~30s, so generate it just before running"
 	case E_CONFLICT:
 		return "Resource conflict; another change may have happened concurrently. Re-fetch and retry"
-	case E_RATE_LIMIT:
+	case E_RATE_LIMITED:
 		return "Wait and retry; reduce request frequency"
 	case E_SERVER:
 		return "Server error; try again later"
@@ -223,13 +228,17 @@ func HintForErrorCode(code ErrorCode) string {
 }
 
 // RetryableErrorCode reports whether the error code represents a transient failure.
+// Sourced from the canonical contract (internal/contract) so it cannot drift from
+// the fleet's retryability table.
 func RetryableErrorCode(code ErrorCode) bool {
-	switch code {
-	case E_RATE_LIMIT, E_SERVER, E_NETWORK, E_TIMEOUT, E_INTERRUPTED:
-		return true
-	default:
-		return false
-	}
+	return contract.Retryable(string(code))
+}
+
+// ExitCodeForErrorCode maps a semantic error code to its process exit code. Sourced
+// from the canonical contract (internal/contract) so it cannot drift from the
+// fleet's E_* -> exit table.
+func ExitCodeForErrorCode(code ErrorCode) int {
+	return contract.ExitFor(string(code))
 }
 
 // PrintJSON outputs v as a success envelope JSON to stdout.

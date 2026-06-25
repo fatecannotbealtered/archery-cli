@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Fleet contract single-source bootstrap** (`contract/contract.json`, `internal/contract/contract_gen.go`). The canonical E_* → exit → retryable table and the JSON schema version are now generated from `ai-native-cli-spec@v1.4` (`.agent/SPEC_VERSION=v1.4`) and checked by a new `scripts/check-spec.js` CI guard.
+- **Contract conformance test** (`internal/output/contract_conformance_test.go`). Every emitted error code is asserted against the canonical contract — exact exit + retryable + SchemaVersion — so drift is CI-red.
+- **`update` drives the package manager** (npm/pip) rather than printing `package_manager_required`. A bare `update` on an npm/pip-managed install now executes the install command on the user's behalf (via the testable `updateRunPackageManager` seam), then syncs the Skill. `--dry-run` stays read-only (preview only). A PM failure returns `E_IO`, `binary_replaced:false`, with the command in details.
+- **`contract/contract-ext.json`** registers `E_2FA_REQUIRED` (exit 9, retryable false) as an archery-cli extension code.
+
+### Changed
+
+- **`.agent` synced from `ai-native-cli-spec@v1.4`** (AGENT.md, CLI-SPEC.md, SEC-SPEC.md, SKILL-SPEC.md and zh variants).
+- **`E_RATE_LIMIT` renamed to `E_RATE_LIMITED`** to match the canonical fleet code name. The string value emitted in JSON changes accordingly; any agent parsing the old string must update.
+- **`internal/output.SchemaVersion`** is now `contract.SchemaVersion` (no more hardcoded `"1.0"` that could drift).
+- **`internal/output.RetryableErrorCode`** now delegates to `contract.Retryable` (single source of truth).
+- **`internal/output.ExitCodeForErrorCode`** now delegates to `contract.ExitFor` (single source of truth).
+- **`cmd.exitForErrorCode`** replaced with a one-liner `return output.ExitCodeForErrorCode(code)` — eliminates missing-case drift (previously missing `E_CONFIRMATION_REQUIRED` and `E_UNKNOWN`).
+- **CI**: added `Verify spec/contract sync` step (`node scripts/check-spec.js`) in the `npm-audit` job, right after `Verify version sync`.
+
 ## [1.0.14] - 2026-06-25
 
 ### Removed

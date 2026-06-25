@@ -123,7 +123,7 @@ func TestPrintErrorJSONWithCode(t *testing.T) {
 	Compact = false
 
 	stdout, _ := captureStdoutStderr(func() {
-		PrintErrorJSONWithCode("rate limited", 429, E_RATE_LIMIT)
+		PrintErrorJSONWithCode("rate limited", 429, E_RATE_LIMITED)
 	})
 	if stdout == "" {
 		t.Fatal("expected error JSON on stdout")
@@ -131,14 +131,14 @@ func TestPrintErrorJSONWithCode(t *testing.T) {
 	if !strings.Contains(stdout, `"ok": false`) {
 		t.Errorf("stdout missing ok=false: %q", stdout)
 	}
-	if !strings.Contains(stdout, `"code": "E_RATE_LIMIT"`) {
+	if !strings.Contains(stdout, `"code": "E_RATE_LIMITED"`) {
 		t.Errorf("stdout missing code: %q", stdout)
 	}
 	if !strings.Contains(stdout, `"message": "rate limited"`) {
 		t.Errorf("stdout missing message: %q", stdout)
 	}
 	if !strings.Contains(stdout, `"retryable": true`) {
-		t.Errorf("E_RATE_LIMIT should be retryable: %q", stdout)
+		t.Errorf("E_RATE_LIMITED should be retryable: %q", stdout)
 	}
 
 	var env ErrorEnvelope
@@ -154,7 +154,7 @@ func TestPrintErrorJSONWithCode(t *testing.T) {
 }
 
 func TestRetryableErrorCode(t *testing.T) {
-	retryable := []ErrorCode{E_RATE_LIMIT, E_SERVER, E_NETWORK, E_TIMEOUT}
+	retryable := []ErrorCode{E_RATE_LIMITED, E_SERVER, E_NETWORK, E_TIMEOUT}
 	for _, code := range retryable {
 		if !RetryableErrorCode(code) {
 			t.Errorf("RetryableErrorCode(%s) = false, want true", code)
@@ -172,7 +172,7 @@ func TestRetryableErrorCode(t *testing.T) {
 func TestHintForErrorCode(t *testing.T) {
 	allCodes := []ErrorCode{
 		E_CONFIG, E_AUTH, E_FORBIDDEN, E_NOT_FOUND, E_USAGE,
-		E_VALIDATION, E_CONFIRMATION_REQUIRED, E_CONFLICT, E_RATE_LIMIT,
+		E_VALIDATION, E_CONFIRMATION_REQUIRED, E_CONFLICT, E_RATE_LIMITED,
 		E_SERVER, E_NETWORK, E_TIMEOUT,
 	}
 	for _, code := range allCodes {

@@ -136,6 +136,9 @@ var (
 	updateExecutable = os.Executable
 	updateApply      = applyUpdateBinary
 	updateSkillSync  = runUpdateSkillSync
+	// updateRunPackageManager is the testable seam for the npm/pip install step.
+	// Tests stub this to avoid shelling out to real package managers.
+	updateRunPackageManager = runPackageManagerInstall
 	// Stage seams, overridable in tests so the staged-work failure contract can
 	// be exercised without building real signed archives.
 	updateDownloadHook = downloadUpdateFile
@@ -236,11 +239,7 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	}
 
 	if installMethod == "npm" || installMethod == "pip" {
-		command := updateInstallCommand(installMethod, plan.TargetVersion)
-		result["status"] = "package_manager_required"
-		result["command"] = command
-		printUpdateResult(result)
-		return nil
+		return runPackageManagerUpdate(ctx, plan, result, installMethod)
 	}
 
 	if err := ensureExecutable(exePath); err != nil {
@@ -394,6 +393,82 @@ func runUpdateSkillSync(ctx context.Context, repo string) error {
 		return err
 	}
 	return nil
+}
+
+// runPackageManagerUpdate handles `update` for a package-manager-managed install
+// (npm or pip). The binary is owned by the package manager, so instead of replacing
+// it in place, the tool DRIVES the package manager (runs the install command), then
+// syncs the Skill. Integrity on this path is the package manager's own; signature_status
+// stays "not_checked". The new version takes effect on the next invocation.
+func runPackageManagerUpdate(ctx context.Context, plan updatePlan, result map[string]any, method string) error {
+	command := updateInstallCommand(method, plan.TargetVersion)
+	result["command"] = command
+	if err := updateRunPackageManager(ctx, method, plan.TargetVersion); err != nil {
+		return failPackageManagerStage(result, command, err)
+	}
+	// The package manager replaced the on-disk binary; this process is still the
+	// old image, so the new version is effective on the next invocation.
+	result["status"] = "updated"
+	result["previous_version"] = plan.CurrentVersion
+	result["current_version"] = plan.TargetVersion
+	result["signature_status"] = "not_checked"
+	result["binary_replaced"] = true
+	if err := updateSkillSync(ctx, updateSkillRepo); err != nil {
+		details := updateFailDetails(stageSkillSync, plan.TargetVersion, true, "failed")
+		details["binary_replaced"] = true
+		details["skill_sync_command"] = plan.SkillSyncCommand
+		details["previous_version"] = plan.CurrentVersion
+		details["install_method"] = method
+		details["hint"] = fmt.Sprintf("binary now at %s; run %q to sync the Skill", plan.TargetVersion, plan.SkillSyncCommand)
+		return failWithDetails("syncing skill directory: "+err.Error(), output.E_NETWORK, details)
+	}
+	result["skill_sync_status"] = "synced"
+	result["hint"] = fmt.Sprintf("run \"archery-cli changelog --since %s\" to see what changed", plan.CurrentVersion)
+	printUpdateResult(result)
+	return nil
+}
+
+// runPackageManagerInstall drives the package manager to install the target version.
+// argv is built directly (no shell) so the version string cannot be reinterpreted
+// by a shell.
+func runPackageManagerInstall(ctx context.Context, method, targetVersion string) error {
+	var name string
+	var args []string
+	v := normalizeVersion(targetVersion)
+	switch method {
+	case "npm":
+		name = "npm"
+		args = []string{"install", "-g", updateNPMPackage + "@" + v}
+	case "pip":
+		name = "pip"
+		args = []string{"install", "--upgrade", updatePipPackage + "==" + v}
+	default:
+		return fmt.Errorf("unsupported package manager: %s", method)
+	}
+	cmd := exec.CommandContext(ctx, name, args...)
+	outputBytes, err := cmd.CombinedOutput()
+	if err != nil {
+		out := strings.TrimSpace(string(outputBytes))
+		if out != "" {
+			return fmt.Errorf("%w: %s", err, truncateForError(out, 300))
+		}
+		return err
+	}
+	return nil
+}
+
+// failPackageManagerStage reports a failed package-manager-driven update. The
+// package manager owns download/integrity/replace, so a failure leaves the
+// installed binary unchanged (binary_replaced:false). The exact command is
+// surfaced so the agent can run it manually.
+func failPackageManagerStage(result map[string]any, command string, err error) error {
+	msg := fmt.Sprintf("package-manager update failed: %s — run %q manually", strings.TrimSpace(err.Error()), command)
+	method, _ := result["install_method"].(string)
+	currentVersion, _ := result["current_version"].(string)
+	details := updateFailDetails(stageReplace, currentVersion, false, "not_run")
+	details["install_method"] = method
+	details["command"] = command
+	return failWithDetails(msg, output.E_IO, details)
 }
 
 func targetVersionDiffers(plan updatePlan, requested string) bool {
