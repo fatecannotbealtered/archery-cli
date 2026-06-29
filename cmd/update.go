@@ -713,7 +713,7 @@ func verifyUpdateChecksumSignature(ctx context.Context, checksumPath, bundleURL,
 		// classify by status (or interrupt, which the caller detects on ctx.Err).
 		return "download_failed", classifyUpdateNetworkError(err), fmt.Errorf("downloading checksum signature bundle: %w", err)
 	}
-	if err := updateVerifySignature(checksumPath, bundlePath, updateSignerIdentityRegexp()); err != nil {
+	if err := updateVerifySignature(ctx, checksumPath, bundlePath, updateSignerIdentityRegexp()); err != nil {
 		// Obtaining the trust root is a network step, not a signature verdict:
 		// a transient trust-root fetch failure stays retryable network, only a
 		// real signature mismatch is the non-retryable E_INTEGRITY verdict.
@@ -971,16 +971,18 @@ func npmPackageRoot(exe string) string {
 	return ""
 }
 
+// isPipOrVenvPath reports whether the executable lives in a genuine pip/venv
+// install layout. It matches only real path SEGMENTS (site-packages, venv/.venv,
+// lib + python) — never a loose substring like "pip"/"conda" anywhere in the
+// path, which would misclassify a standalone binary under any directory that
+// merely contains those letters (e.g. a "pipeline" folder) as pip-managed and
+// then drive a bogus `pip install`.
 func isPipOrVenvPath(exe string) bool {
 	exe = filepath.Clean(exe)
-	lower := strings.ToLower(exe)
 	if pathHasSegment(exe, "site-packages") {
 		return true
 	}
 	if pathHasSegment(exe, "venv") || pathHasSegment(exe, ".venv") {
-		return true
-	}
-	if strings.Contains(lower, "pip") || strings.Contains(lower, "conda") {
 		return true
 	}
 	if pathHasSegment(exe, "lib") && pathHasSegment(exe, "python") {

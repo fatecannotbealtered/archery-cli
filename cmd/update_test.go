@@ -197,7 +197,7 @@ func TestUpdate_IntegrityFailureNonRetryable(t *testing.T) {
 	// Downloads succeed (archive, checksums, signature bundle all no-op); the
 	// signature verification itself rejects the release.
 	updateDownloadHook = func(context.Context, string, string) error { return nil }
-	updateVerifySignature = func(_, _, _ string) error { return errBatch("certificate identity mismatch") }
+	updateVerifySignature = func(_ context.Context, _, _, _ string) error { return errBatch("certificate identity mismatch") }
 
 	t.Setenv("ARCHERY_CLI_NO_UPDATE_CHECK", "1")
 	home := t.TempDir()
@@ -255,7 +255,7 @@ func TestUpdate_SkillSyncFailureIsPartialSuccess(t *testing.T) {
 	updateGitHubAPI = srv.URL
 	updateExecutable = func() (string, error) { return t.TempDir() + "/archery-cli", nil }
 	updateDownloadHook = func(context.Context, string, string) error { return nil }
-	updateVerifySignature = func(_, _, _ string) error { return nil }
+	updateVerifySignature = func(_ context.Context, _, _, _ string) error { return nil }
 	updateChecksumHook = func(_, _, _ string) error { return nil }
 	updateExtractHook = func(_, _, tmpDir string) (string, error) { return tmpDir + "/bin", nil }
 	updateApply = func(_, dst string) (updateApplyResult, error) {
@@ -316,7 +316,7 @@ func TestUpdate_ReplaceFailureIsIO(t *testing.T) {
 	updateGitHubAPI = srv.URL
 	updateExecutable = func() (string, error) { return t.TempDir() + "/archery-cli", nil }
 	updateDownloadHook = func(context.Context, string, string) error { return nil }
-	updateVerifySignature = func(_, _, _ string) error { return nil }
+	updateVerifySignature = func(_ context.Context, _, _, _ string) error { return nil }
 	updateChecksumHook = func(_, _, _ string) error { return nil }
 	updateExtractHook = func(_, _, tmpDir string) (string, error) { return tmpDir + "/bin", nil }
 	updateApply = func(_, _ string) (updateApplyResult, error) {

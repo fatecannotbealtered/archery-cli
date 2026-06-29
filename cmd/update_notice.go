@@ -159,6 +159,12 @@ func readCachedUpdateNotices() []updateNotice {
 		if notice.Type != "update_available" || !notice.UpdateAvailable {
 			continue
 		}
+		// Version-aware: suppress a stale "update available" notice once the
+		// running binary is already at (or past) the cached latest version — e.g.
+		// right after a successful update, before the 24h cache TTL lapses.
+		if notice.LatestVersion != "" && compareVersions(notice.LatestVersion, version) <= 0 {
+			continue
+		}
 		notice.Source = "cache"
 		notices = append(notices, notice)
 	}

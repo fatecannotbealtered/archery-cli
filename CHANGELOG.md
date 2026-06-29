@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.16] - 2026-06-29
+
+### Fixed
+
+- `update` Sigstore signature verification now bounds the TUF trust-root refresh with a timeout and binds it to the command context. A hung or slow Sigstore TUF registry can no longer stall the `verify_signature` stage indefinitely, and a SIGINT during the refresh is honored instead of being swallowed until the fetch returns (CLI-SPEC §14).
+- `update` notice cache reads are now version-aware: a cached `update_available` notice is suppressed once the running binary is already at or past the cached latest version. Business commands no longer keep advertising an update to a version that is already installed for up to the 24h cache TTL (for example, right after a successful update).
+- Install-method detection no longer classifies a standalone binary as pip-managed just because its path contains the substring `pip` or `conda`. Only genuine pip/venv layouts (a `site-packages`, `venv`/`.venv`, or `lib`+`python` path segment) are treated as pip, so `update` cannot misroute into a bogus `pip install` for a binary that merely lives under a directory whose name happens to contain those letters.
+
 ## [1.0.15] - 2026-06-25
 
 ### Added

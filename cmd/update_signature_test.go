@@ -39,13 +39,13 @@ func TestVerifyUpdateChecksumSignature_FailClosed(t *testing.T) {
 	defer func() { updateHTTPClient = origClient; updateVerifySignature = origVerify }()
 	updateHTTPClient = srv.Client()
 
-	updateVerifySignature = func(_, _, _ string) error { return nil }
+	updateVerifySignature = func(_ context.Context, _, _, _ string) error { return nil }
 	status, _, err = verifyUpdateChecksumSignature(context.Background(), tmp+"/c.txt", srv.URL+"/b.json", tmp)
 	if err != nil || status != "verified" {
 		t.Fatalf("expected verified, got status=%q err=%v", status, err)
 	}
 
-	updateVerifySignature = func(_, _, _ string) error { return errors.New("certificate identity mismatch") }
+	updateVerifySignature = func(_ context.Context, _, _, _ string) error { return errors.New("certificate identity mismatch") }
 	status, code, err = verifyUpdateChecksumSignature(context.Background(), tmp+"/c.txt", srv.URL+"/b.json", tmp)
 	if err == nil {
 		t.Fatal("signature verification failure must abort")
@@ -95,7 +95,7 @@ func TestVerifyUpdateChecksumSignature_TrustRootNetworkClass(t *testing.T) {
 	defer func() { updateDownloadHook = origDownload; updateVerifySignature = origVerify }()
 
 	updateDownloadHook = func(context.Context, string, string) error { return nil }
-	updateVerifySignature = func(_, _, _ string) error {
+	updateVerifySignature = func(_ context.Context, _, _, _ string) error {
 		return fmt.Errorf("%w: dial tcp: i/o timeout", errTrustRootUnavailable)
 	}
 	status, code, err := verifyUpdateChecksumSignature(context.Background(), tmp+"/c.txt", "https://example.com/b.json", tmp)
