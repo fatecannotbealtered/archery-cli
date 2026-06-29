@@ -75,10 +75,15 @@ function packageJsonOptionalDeps(root) {
 function packageLock(root) {
   const file = path.join(root, "package-lock.json");
   if (!fs.existsSync(file)) return null;
-  // Platform entries in the lock are bare {"optional": true} placeholders with
-  // no resolved/integrity, so we surgically rewrite only the version-bearing
-  // spots. We deliberately do NOT run `npm install --package-lock-only`, which
-  // would inject the developer's registry mirror URLs into a public lockfile.
+  // Each platform package appears in the lock TWICE: as an optionalDependencies
+  // *pin* on the root package, and as its own packages["node_modules/<name>"]
+  // subentry. A bump must sync BOTH. Once the platform packages are published to
+  // npm, `npm ci` validates the subentry's version against the root pin, so a
+  // stale or missing subentry version fails the build ("lock file's <pkg>@ does
+  // not satisfy <pkg>@<version>"). We rewrite the version surgically and strip
+  // any resolved/integrity (which would pin a now-wrong tarball), rather than run
+  // `npm install --package-lock-only`, which would bake the developer's registry
+  // mirror URLs into a public lockfile.
   return {
     label: "package-lock.json",
     read() {
@@ -88,7 +93,11 @@ function packageLock(root) {
       if (rootPkg) {
         out.push({ where: 'packages[""].version', value: rootPkg.version });
         const od = rootPkg.optionalDependencies || {};
-        for (const [k, v] of Object.entries(od)) out.push({ where: `pin ${k}`, value: v });
+        for (const [k, v] of Object.entries(od)) {
+          out.push({ where: `pin ${k}`, value: v });
+          const sub = l.packages && l.packages[`node_modules/${k}`];
+          if (sub) out.push({ where: `lock entry ${k}`, value: sub.version });
+        }
       }
       return out;
     },
@@ -103,6 +112,12 @@ function packageLock(root) {
         for (const k of Object.keys(od)) {
           if (od[k] !== version) n++;
           od[k] = version;
+          const sub = l.packages && l.packages[`node_modules/${k}`];
+          if (sub) {
+            if (sub.version !== version) { sub.version = version; n++; }
+            if ("resolved" in sub) { delete sub.resolved; n++; }
+            if ("integrity" in sub) { delete sub.integrity; n++; }
+          }
         }
       }
       if (n) writeJSONPreserving(file, l);
