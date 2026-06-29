@@ -98,9 +98,17 @@ func runAuthLogin(_ *cobra.Command, _ []string) error {
 		regionName = "default"
 	}
 
-	// Determine credentials
+	// Determine credentials. Flags win; otherwise fall back to env so a
+	// non-interactive `auth login --region X` works without echoing secrets in
+	// argv (SEC-SPEC §4: env is the recommended non-interactive secret channel).
 	username := authLoginUsernameFlag
+	if username == "" {
+		username = firstNonEmpty(os.Getenv("ARCHERY_CLI_USERNAME"))
+	}
 	password := authLoginPasswordFlag
+	if password == "" {
+		password = firstNonEmpty(os.Getenv("ARCHERY_CLI_PASSWORD"))
+	}
 	regionURL := strings.TrimSpace(authLoginURLFlag)
 	if regionURL == "" && cfg != nil {
 		if r, ok := cfg.Regions[regionName]; ok {

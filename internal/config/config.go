@@ -164,9 +164,19 @@ func Load() (*Config, error) {
 					if err == nil && at != "" {
 						region.AccessToken = at
 						region.RefreshToken = rt
-						cfg.Regions[name] = region
 					}
 				}
+				// jwt regions still use a Django session for session-only commands
+				// (query/dict/diagnostic/...); restore a cached one so they don't
+				// re-run the form login (+2FA OTP) every call.
+				if region.SessionID == "" && region.Username != "" {
+					sid, csrf, err := ts.LoadSession(name, region.Username)
+					if err == nil && sid != "" {
+						region.SessionID = sid
+						region.CSRFToken = csrf
+					}
+				}
+				cfg.Regions[name] = region
 			default:
 				if region.SessionID == "" && region.Username != "" {
 					sid, csrf, err := ts.LoadSession(name, region.Username)

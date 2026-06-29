@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.17] - 2026-06-29
+
+### Fixed
+
+- **Session/2FA login on jwt-mode regions now actually completes.** Archery's `/api/v1/user/2fa/verify/` requires an `auth_type` form field (default `totp`, overridable via `ARCHERY_CLI_2FA_TYPE`) that the client previously omitted, so every 2FA login silently failed (and was then masked as success — see below). Session-only commands (`query`/`dict`/`diagnostic`/...) on a 2FA account can now authenticate.
+- **2FA / session login success is now positively verified (fail-closed).** `complete2FA` and `ensureSession` previously read a *failed* verify (HTTP 400, or a DRF `{"detail":...}`/field-error body with no `status` key) as success: the HTTP status was ignored, the Archery `status` field defaulted to zero, and a self-injected temporary session cookie made the cookie check always true. Success now requires `status < 400`, a parsed Archery `status == 0`, and — for 2FA — the `sessionid` to actually rotate away from the replayed temp `session_key`. A non-JSON/HTML body fails closed instead of being read as an empty success (CLI-SPEC §1.6/§12.7).
+- **Login-page redirects now surface `E_AUTH`, not a JSON-parse `E_SERVER`.** An unauthenticated session request is bounced (302) to `/login/`; the HTTP client used to follow it into the HTML page and report `failed to parse query response: invalid character '<'`. Session/REST requests no longer follow login redirects and map a 3xx to `E_AUTH` (exit 4); the login-page match tolerates a deployment base path (`/archery/login/`) (CLI-SPEC §6).
+
+### Changed
+
+- **Django sessions are persisted in the OS keyring and reused across commands on jwt-mode regions.** Session-only commands on a jwt region previously re-ran the full form login — including a fresh 2FA OTP — on every invocation. A lazily-established session is now cached and reused until it expires; a cached session the server has since rejected is transparently re-authenticated once before surfacing `E_AUTH` (CLI-SPEC §16.1).
+- **`auth login` falls back to `ARCHERY_CLI_USERNAME` / `ARCHERY_CLI_PASSWORD`** when `--username` / `--password` are omitted, so a non-interactive `auth login --region <name>` works without echoing secrets in argv (SEC-SPEC §4).
+
 ## [1.0.16] - 2026-06-29
 
 ### Fixed
