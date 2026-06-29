@@ -18,6 +18,13 @@ func errBatch(msg string) error { return errors.New(msg) }
 func errorCodeForAPIErr(err error) output.ErrorCode {
 	var apiErr *api.APIError
 	if errors.As(err, &apiErr) {
+		// An explicit Code (e.g. E_2FA_REQUIRED) overrides the status-derived
+		// classification, mirroring handleAPIError — otherwise a 2FA-required
+		// failure on a session command (query/dict/...) collapses to E_AUTH and
+		// the agent is told to fix credentials instead of supplying --otp.
+		if apiErr.Code != "" {
+			return output.ErrorCode(apiErr.Code)
+		}
 		return output.ErrorCodeFromStatus(apiErr.StatusCode)
 	}
 	return output.E_NETWORK
