@@ -541,6 +541,18 @@ func newClient() (*api.Client, *config.Config, *config.RegionConfig, error) {
 	// where the form login never runs.
 	client.SetOTP(effectiveOTP())
 
+	// Persist any session a lazy form login establishes — including on jwt
+	// regions, where query/dict/diagnostic/etc. are session-only and would
+	// otherwise re-run /authenticate/ (+a fresh 2FA OTP) on every call.
+	sessRegion, sessUser := regionName, region.Username
+	client.SetOnSessionEstablished(func(sid, csrf string) {
+		_ = config.NewTokenStore().SaveSession(sessRegion, sessUser, sid, csrf)
+	})
+	// Reuse a cached Django session when present, for BOTH transports.
+	if region.SessionID != "" {
+		client.InjectSessionCookies(region.SessionID, region.CSRFToken)
+	}
+
 	if mode == config.ModeJWT {
 		// JWT transport: prefer a cached token; otherwise mint one now.
 		if region.AccessToken != "" {
@@ -555,11 +567,8 @@ func newClient() (*api.Client, *config.Config, *config.RegionConfig, error) {
 		return client, cfg, &region, nil
 	}
 
-	// Session transport (default): reuse cached cookies to skip the form login.
-	// ensureSession falls back to a fresh login lazily when none are cached.
-	if region.SessionID != "" {
-		client.InjectSessionCookies(region.SessionID, region.CSRFToken)
-	}
+	// Session transport (default): the cached cookies (if any) were already
+	// injected above; ensureSession falls back to a fresh login lazily otherwise.
 	return client, cfg, &region, nil
 }
 

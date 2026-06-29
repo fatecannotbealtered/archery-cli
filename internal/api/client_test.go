@@ -1137,6 +1137,14 @@ func twoFAServer(t *testing.T, sawAuth, sawVerify *bool) *httptest.Server {
 				_, _ = w.Write([]byte(`{"status":1,"msg":"需先校验用户密码！"}`))
 				return
 			}
+			// Archery's DRF verify endpoint requires auth_type; omitting it is a
+			// 400 field error (the original live-smoke bug). Faithfully reject so a
+			// regression on the auth_type field flips this test red.
+			if r.Form.Get("auth_type") == "" {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"auth_type":["该字段是必填项。"]}`))
+				return
+			}
 			if r.Form.Get("otp") == "123456" && r.Form.Get("engineer") == "admin" {
 				http.SetCookie(w, &http.Cookie{Name: "sessionid", Value: "sess-2fa-ok", Path: "/"})
 				_, _ = w.Write([]byte(`{"status":0,"msg":"ok"}`))
@@ -1206,6 +1214,257 @@ func TestEnsureSession_2FAWithOTPSucceeds(t *testing.T) {
 	}
 	if !c.sessionReady {
 		t.Error("session should be ready after a successful 2FA verify")
+	}
+}
+
+// TestInternalRequest_LoginRedirectIsAuthError: an authenticated session whose
+// request is bounced to /login/ (Django @login_required on a session the server
+// no longer accepts) must surface E_AUTH, NOT a parsed-JSON success or an
+// "invalid character '<'" parse error from the HTML login page. Regression guard
+// for the live-smoke H5 wall.
+func TestInternalRequest_LoginRedirectIsAuthError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/login/" && r.Method == http.MethodGet:
+			http.SetCookie(w, &http.Cookie{Name: "csrftoken", Value: "csrf-1", Path: "/"})
+			w.WriteHeader(http.StatusOK)
+		case r.URL.Path == "/authenticate/" && r.Method == http.MethodPost:
+			http.SetCookie(w, &http.Cookie{Name: "sessionid", Value: "sess-1", Path: "/"})
+			_, _ = w.Write([]byte(`{"status":0,"msg":"ok"}`))
+		default:
+			// The endpoint rejects the session and redirects to the HTML login page.
+			http.Redirect(w, r, "/login/", http.StatusFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	c.SetSessionCredentials("admin", "secret")
+	_, err := c.InternalGet(testCtx, "/data_dictionary/table_list/")
+	if err == nil {
+		t.Fatal("expected an auth error on a /login/ redirect, got nil")
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("want *APIError, got %T: %v", err, err)
+	}
+	if apiErr.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("StatusCode = %d, want 401 (E_AUTH)", apiErr.StatusCode)
+	}
+	if strings.Contains(err.Error(), "invalid character") {
+		t.Errorf("HTML login page must not reach the JSON parser: %v", err)
+	}
+}
+
+// TestIsLoginPath covers the login-redirect detection, including base-path
+// deployments (/archery/login/) — the exact-match version missed those and
+// silently reintroduced the auto-follow-into-HTML bug.
+func TestIsLoginPath(t *testing.T) {
+	cases := map[string]bool{
+		"/login/":                      true,
+		"/login":                       true,
+		"/archery/login/":              true,
+		"/archery/login":               true,
+		"/api/v1/instance":             false,
+		"/foologin/":                   false,
+		"/":                            false,
+		"/data_dictionary/table_list/": false,
+	}
+	for p, want := range cases {
+		if got := isLoginPath(p); got != want {
+			t.Errorf("isLoginPath(%q) = %v, want %v", p, got, want)
+		}
+	}
+}
+
+// TestInternalRequest_StaleInjectedSessionRecovers: a cached (injected) session
+// the server has since rejected must be transparently cleared and re-logged-in
+// once, so the command succeeds instead of dead-ending at E_AUTH. Guards the
+// A-4 review finding.
+func TestInternalRequest_StaleInjectedSessionRecovers(t *testing.T) {
+	var authCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/login/" && r.Method == http.MethodGet:
+			http.SetCookie(w, &http.Cookie{Name: "csrftoken", Value: "csrf-new", Path: "/"})
+			w.WriteHeader(http.StatusOK)
+		case r.URL.Path == "/authenticate/" && r.Method == http.MethodPost:
+			authCount.Add(1)
+			http.SetCookie(w, &http.Cookie{Name: "sessionid", Value: "fresh", Path: "/"})
+			_, _ = w.Write([]byte(`{"status":0,"msg":"ok"}`))
+		default:
+			// Accept only the freshly-minted session; reject the stale cached one.
+			if ck, _ := r.Cookie("sessionid"); ck != nil && ck.Value == "fresh" {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"status":0,"msg":"ok","data":{}}`))
+				return
+			}
+			http.Redirect(w, r, "/login/", http.StatusFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	c.SetSessionCredentials("admin", "secret")
+	c.InjectSessionCookies("stale", "csrf-old") // marks ready + injected
+	data, err := c.InternalGet(testCtx, "/data_dictionary/table_list/")
+	if err != nil {
+		t.Fatalf("expected transparent recovery, got error: %v", err)
+	}
+	if authCount.Load() != 1 {
+		t.Errorf("expected exactly one re-login, got %d", authCount.Load())
+	}
+	if !strings.Contains(string(data), `"status":0`) {
+		t.Errorf("unexpected body after recovery: %s", data)
+	}
+}
+
+// TestInternalRequest_StaleSessionNoCredsIsAuthError: a rejected cached session
+// with no credentials to re-login must surface a clean E_AUTH (not loop, not a
+// JSON parse error).
+func TestInternalRequest_StaleSessionNoCredsIsAuthError(t *testing.T) {
+	var authCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/authenticate/" && r.Method == http.MethodPost:
+			authCount.Add(1)
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Redirect(w, r, "/login/", http.StatusFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	// No SetSessionCredentials → recovery cannot apply.
+	c.InjectSessionCookies("stale", "csrf-old")
+	_, err := c.InternalGet(testCtx, "/data_dictionary/table_list/")
+	if err == nil {
+		t.Fatal("expected E_AUTH for an unrecoverable stale session")
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("want 401 APIError, got %T: %v", err, err)
+	}
+	if authCount.Load() != 0 {
+		t.Errorf("must not attempt re-login without credentials, got %d", authCount.Load())
+	}
+}
+
+// TestInternalRequest_RecoveryIsBounded: even when a re-login succeeds but the
+// endpoint keeps redirecting, recovery runs at most once and then surfaces
+// E_AUTH — no infinite loop.
+func TestInternalRequest_RecoveryIsBounded(t *testing.T) {
+	var dataHits, authCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/login/" && r.Method == http.MethodGet:
+			http.SetCookie(w, &http.Cookie{Name: "csrftoken", Value: "csrf-new", Path: "/"})
+			w.WriteHeader(http.StatusOK)
+		case r.URL.Path == "/authenticate/" && r.Method == http.MethodPost:
+			authCount.Add(1)
+			http.SetCookie(w, &http.Cookie{Name: "sessionid", Value: "fresh", Path: "/"})
+			_, _ = w.Write([]byte(`{"status":0,"msg":"ok"}`))
+		default:
+			dataHits.Add(1)
+			http.Redirect(w, r, "/login/", http.StatusFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	c.SetSessionCredentials("admin", "secret")
+	c.InjectSessionCookies("stale", "csrf-old")
+	_, err := c.InternalGet(testCtx, "/data_dictionary/table_list/")
+	if err == nil {
+		t.Fatal("expected E_AUTH when the endpoint keeps redirecting")
+	}
+	if authCount.Load() != 1 {
+		t.Errorf("recovery must re-login exactly once, got %d", authCount.Load())
+	}
+	if dataHits.Load() != 2 {
+		t.Errorf("endpoint should be hit twice (initial + one retry), got %d", dataHits.Load())
+	}
+}
+
+// TestComplete2FA_NoSessionRotationFailsClosed: a verify response that says
+// status==0 but does NOT rotate the sessionid (server never actually logged us
+// in) must fail closed, not be reported as success. Guards the false-positive
+// where a self-injected temp cookie made hasSessionCookie() always true.
+func TestComplete2FA_NoSessionRotationFailsClosed(t *testing.T) {
+	const tempSessionKey = "sess-key-123"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/login/" && r.Method == http.MethodGet:
+			http.SetCookie(w, &http.Cookie{Name: "csrftoken", Value: "csrf-2fa", Path: "/"})
+			w.WriteHeader(http.StatusOK)
+		case r.URL.Path == "/authenticate/" && r.Method == http.MethodPost:
+			_, _ = w.Write([]byte(`{"status":0,"msg":"ok","data":"` + tempSessionKey + `"}`))
+		case r.URL.Path == "/api/v1/user/2fa/verify/" && r.Method == http.MethodPost:
+			// status 0 but NO Set-Cookie: the session was never authenticated.
+			_, _ = w.Write([]byte(`{"status":0,"msg":"ok"}`))
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"status":0,"msg":"ok","data":{}}`))
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	c.SetSessionCredentials("admin", "secret")
+	c.SetOTP("123456")
+	_, _, err := c.Auth.LoginWithSession(testCtx, "admin", "secret")
+	if err == nil {
+		t.Fatal("expected failure when the session is not rotated, got success")
+	}
+	if c.sessionReady {
+		t.Error("session must NOT be marked ready without a rotated sessionid")
+	}
+}
+
+// TestOnSessionEstablished_FiresOnFreshLoginNotOnInject: the persistence hook
+// fires with the authenticated cookies after a fresh form login, but NOT when a
+// cached session is injected (which is already persisted). Guards A-4.
+func TestOnSessionEstablished_FiresOnFreshLoginNotOnInject(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/login/" && r.Method == http.MethodGet:
+			http.SetCookie(w, &http.Cookie{Name: "csrftoken", Value: "csrf-x", Path: "/"})
+			w.WriteHeader(http.StatusOK)
+		case r.URL.Path == "/authenticate/" && r.Method == http.MethodPost:
+			http.SetCookie(w, &http.Cookie{Name: "sessionid", Value: "sess-fresh", Path: "/"})
+			_, _ = w.Write([]byte(`{"status":0,"msg":"ok"}`))
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"status":0,"msg":"ok","data":{}}`))
+		}
+	}))
+	defer srv.Close()
+
+	// Fresh login → callback fires with the server-issued sessionid.
+	var gotSID string
+	var fired int
+	c := NewClient(srv.URL)
+	c.SetSessionCredentials("admin", "secret")
+	c.SetOnSessionEstablished(func(sid, _ string) { fired++; gotSID = sid })
+	if _, err := c.InternalGet(testCtx, "/data_dictionary/table_list/"); err != nil {
+		t.Fatalf("InternalGet: %v", err)
+	}
+	if fired != 1 || gotSID != "sess-fresh" {
+		t.Fatalf("callback fired=%d sid=%q, want 1 / sess-fresh", fired, gotSID)
+	}
+
+	// Injected (cached) session → callback must NOT fire on a no-op ensureSession.
+	var fired2 int
+	c2 := NewClient(srv.URL)
+	c2.SetSessionCredentials("admin", "secret")
+	c2.SetOnSessionEstablished(func(_, _ string) { fired2++ })
+	c2.InjectSessionCookies("cached-sid", "cached-csrf")
+	if _, err := c2.InternalGet(testCtx, "/data_dictionary/table_list/"); err != nil {
+		t.Fatalf("InternalGet (injected): %v", err)
+	}
+	if fired2 != 0 {
+		t.Errorf("callback must not fire when a cached session is injected, fired=%d", fired2)
 	}
 }
 

@@ -65,6 +65,14 @@ func newHTTPClient(opts ClientOptions) *http.Client {
 		Jar:       jar,
 		Transport: transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			// A redirect to the login page means Archery treated the request as
+			// unauthenticated (Django @login_required). Do NOT follow it into the
+			// HTML login page — return the 3xx so the request layer can map it to
+			// E_AUTH instead of handing HTML to a JSON parser. Suffix match so a
+			// base-path deployment (/archery/login/) is covered too.
+			if isLoginPath(req.URL.Path) {
+				return http.ErrUseLastResponse
+			}
 			if len(via) >= 10 {
 				return fmt.Errorf("stopped after 10 redirects")
 			}
@@ -244,6 +252,18 @@ type Client struct {
 	// handshake; the resulting sessionid is cached so later commands need no OTP
 	// (until the session expires). 2FA codes are ~30s-lived, so it must be fresh.
 	otp string
+
+	// onSessionEstablished, when set, is invoked with the freshly authenticated
+	// Django cookies right after a lazy form login succeeds, so the command layer
+	// can persist them (keyring) and reuse the session across later commands —
+	// avoiding a fresh /authenticate/ (+2FA OTP) on every session-mode call.
+	onSessionEstablished func(sessionID, csrfToken string)
+
+	// sessionInjected is true when sessionReady was set by restoring a cached
+	// cookie (InjectSessionCookies) rather than a fresh form login. It lets the
+	// request layer recover once (clear + re-login) when the server rejects a
+	// stale cached session, instead of dead-ending at E_AUTH.
+	sessionInjected bool
 }
 
 // NewClient creates a new API client using global HTTP options. The transport
@@ -301,6 +321,63 @@ func (c *Client) SetOTP(otp string) {
 	c.otp = strings.TrimSpace(otp)
 }
 
+// SetOnSessionEstablished registers a callback invoked with the freshly
+// authenticated Django cookies right after a lazy form login completes, letting
+// the command layer persist and reuse the session. No-op if never set.
+func (c *Client) SetOnSessionEstablished(fn func(sessionID, csrfToken string)) {
+	c.onSessionEstablished = fn
+}
+
+// markSessionReady marks the session authenticated and notifies any persistence
+// hook with the current cookies. Used only on the fresh-login success paths
+// (not InjectSessionCookies, which restores an already-persisted session).
+func (c *Client) markSessionReady() {
+	c.sessionReady = true
+	c.sessionInjected = false // a fresh login supersedes any injected session
+	if c.onSessionEstablished != nil {
+		if sid, csrf := c.ExportSessionCookies(); sid != "" {
+			c.onSessionEstablished(sid, csrf)
+		}
+	}
+}
+
+// recoverInjectedSession attempts a one-shot transparent re-login when a request
+// is bounced to /login/ because a *cached* (injected) session was rejected by the
+// server. Returns (true, nil) when a fresh session is established (retry the
+// request); (false, err) when re-login fails with an actionable error (e.g.
+// E_2FA_REQUIRED); or (false, nil) when recovery does not apply (session was
+// freshly minted this run, or no credentials are available) — the caller then
+// surfaces the generic auth-redirect error.
+func (c *Client) recoverInjectedSession(ctx context.Context) (bool, error) {
+	if !c.sessionInjected {
+		return false, nil
+	}
+	if strings.TrimSpace(c.sessionUser) == "" || strings.TrimSpace(c.sessionPass) == "" {
+		return false, nil
+	}
+	c.clearSessionCookies()
+	c.sessionReady = false
+	c.sessionInjected = false
+	if err := c.ensureSession(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// currentSessionID returns the sessionid cookie value from the jar, or "".
+func (c *Client) currentSessionID() string {
+	u, err := url.Parse(c.host)
+	if err != nil {
+		return ""
+	}
+	for _, ck := range c.httpClient.Jar.Cookies(u) {
+		if ck.Name == "sessionid" {
+			return ck.Value
+		}
+	}
+	return ""
+}
+
 // InjectSessionCookies seeds the cookie jar with cached Django cookies so that
 // session requests can skip the interactive form login. Empty values are
 // ignored. When a sessionid is present the client is marked ready, avoiding a
@@ -323,6 +400,7 @@ func (c *Client) InjectSessionCookies(sessionID, csrfToken string) {
 	c.httpClient.Jar.SetCookies(u, cookies)
 	if sessionID != "" {
 		c.sessionReady = true
+		c.sessionInjected = true
 	}
 }
 
@@ -423,20 +501,36 @@ func (c *Client) ensureSession(ctx context.Context) error {
 	body, _ := io.ReadAll(postResp.Body)
 	_ = postResp.Body.Close()
 
+	// Fail closed: a non-2xx response (incl. a redirect to /login/ stopped by
+	// CheckRedirect) means the login failed; never read it as a zero-value
+	// success.
+	if postResp.StatusCode >= 400 {
+		return c.parseError(postResp.StatusCode, body)
+	}
+	if postResp.StatusCode >= 300 {
+		return c.authRedirectError(postResp.Header.Get("Location"))
+	}
+
 	// Archery's /authenticate/ has two success branches (verified on v1.8.5):
 	//   no 2FA  -> {"status":0,"msg":"ok","data":null}      + sessionid cookie
 	//   2FA on  -> {"status":0,"msg":"ok","data":"<key>"}   + only a temp cookie,
 	//              NOT logged in yet; the session_key in `data` must be completed
-	//              via POST /api/v1/user/2fa/ with the OTP.
+	//              via POST /api/v1/user/2fa/verify/ with the OTP.
 	// A status!=0 carries Archery's reason (wrong password, etc.).
 	var ar struct {
 		Status int             `json:"status"`
 		Msg    string          `json:"msg"`
 		Data   json.RawMessage `json:"data"`
 	}
-	_ = json.Unmarshal(body, &ar)
+	if err := json.Unmarshal(body, &ar); err != nil {
+		// A 2xx that isn't the expected JSON (e.g. an HTML page) must fail closed.
+		return &APIError{
+			StatusCode:    http.StatusUnauthorized,
+			ErrorMessages: []string{"session login returned an unexpected (non-JSON) response: " + bodySnippet(body)},
+		}
+	}
 	if ar.Status == 0 && c.hasSessionCookie() {
-		c.sessionReady = true
+		c.markSessionReady()
 		return nil
 	}
 
@@ -500,8 +594,9 @@ func (c *Client) complete2FA(ctx context.Context, csrf, sessionKey string) error
 	}
 
 	form := url.Values{
-		"engineer": {c.sessionUser},
-		"otp":      {c.otp},
+		"engineer":  {c.sessionUser},
+		"otp":       {c.otp},
+		"auth_type": {twoFAAuthType()},
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.host+"/api/v1/user/2fa/verify/", strings.NewReader(form.Encode()))
 	if err != nil {
@@ -520,24 +615,65 @@ func (c *Client) complete2FA(ctx context.Context, csrf, sessionKey string) error
 	body, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
 
+	// Fail closed — a 2FA verify is successful ONLY when the server positively
+	// confirms it. ① a non-2xx (e.g. 400 "auth_type required") is a failure;
+	// ② the Archery envelope must carry status==0; ③ Django's login() rotates
+	// the session key, so the sessionid MUST change away from the temp
+	// session_key we replayed — otherwise we are NOT logged in. hasSessionCookie()
+	// alone is meaningless because we injected that temp key ourselves.
+	if resp.StatusCode >= 400 {
+		return twoFAError(c.parseError(resp.StatusCode, body))
+	}
 	var ar struct {
-		Status int    `json:"status"`
+		Status *int   `json:"status"`
 		Msg    string `json:"msg"`
 	}
-	_ = json.Unmarshal(body, &ar)
-	if ar.Status == 0 && c.hasSessionCookie() {
-		c.sessionReady = true
-		return nil
+	if err := json.Unmarshal(body, &ar); err != nil {
+		return &APIError{
+			StatusCode:    http.StatusBadRequest,
+			Code:          CodeValidation,
+			ErrorMessages: []string{"2FA 验证返回了非预期（非 JSON）响应：" + bodySnippet(body)},
+		}
+	}
+	if ar.Status != nil && *ar.Status == 0 {
+		if sid := c.currentSessionID(); sid != "" && sid != sessionKey {
+			c.markSessionReady()
+			return nil
+		}
 	}
 	msg := strings.TrimSpace(ar.Msg)
 	if msg == "" {
-		msg = "2FA 验证码错误或已过期（2FA 验证码有效期约 30 秒，请重新生成后重试）"
+		msg = "2FA 验证码错误或已过期（2FA 验证码有效期约 30 秒，请重新生成后重试）；或账号 2FA 类型与 auth_type 不符"
 	}
 	return &APIError{
 		StatusCode:    http.StatusBadRequest,
 		Code:          CodeValidation,
 		ErrorMessages: []string{"2FA 验证码错误：" + msg},
 	}
+}
+
+// twoFAAuthType returns the 2FA mechanism sent to Archery's verify endpoint.
+// Archery requires this field; it defaults to "totp" (authenticator apps, which
+// a 6-digit --otp implies) and can be overridden for SMS-based 2FA.
+func twoFAAuthType() string {
+	if v := strings.TrimSpace(os.Getenv("ARCHERY_CLI_2FA_TYPE")); v != "" {
+		return v
+	}
+	return "totp"
+}
+
+// twoFAError normalizes a verify failure into an E_VALIDATION-class APIError so
+// the command layer reports a wrong/expired code (or missing field) as a
+// validation problem, not a retryable server error.
+func twoFAError(e *APIError) *APIError {
+	if e == nil {
+		e = &APIError{StatusCode: http.StatusBadRequest}
+	}
+	e.Code = CodeValidation
+	if len(e.ErrorMessages) == 0 && len(e.Errors) == 0 {
+		e.ErrorMessages = []string{"2FA 验证失败"}
+	}
+	return e
 }
 
 // clearSessionCookies evicts any sessionid/csrftoken from the jar by overwriting
@@ -633,6 +769,11 @@ func (c *Client) restRequest(ctx context.Context, method, path string, body any)
 		statusCode := resp.StatusCode
 		header := resp.Header
 
+		// A 3xx that survived CheckRedirect is an auth redirect to /login/; treat
+		// it as E_AUTH rather than letting an empty/HTML body reach a JSON parser.
+		if statusCode >= 300 && statusCode < 400 {
+			return nil, statusCode, header, c.authRedirectError(header.Get("Location"))
+		}
 		if statusCode < 400 {
 			return data, statusCode, header, nil
 		}
@@ -661,6 +802,7 @@ func (c *Client) internalRequest(ctx context.Context, method, path string, form 
 	if err := c.ensureSession(ctx); err != nil {
 		return nil, 0, nil, err
 	}
+	triedRecovery := false
 	for attempt := 0; ; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return nil, 0, nil, err
@@ -695,6 +837,23 @@ func (c *Client) internalRequest(ctx context.Context, method, path string, form 
 		statusCode := resp.StatusCode
 		header := resp.Header
 
+		// A 3xx that survived CheckRedirect is an auth redirect to /login/. If the
+		// session was restored from cache (injected) and the server has since
+		// rejected it, transparently clear it and re-login ONCE before giving up —
+		// otherwise a stale cached cookie would dead-end every session command at
+		// E_AUTH (CLI-SPEC §16.1: refreshable creds should refresh transparently).
+		// A freshly-logged-in session that still bounces is a real auth failure.
+		if statusCode >= 300 && statusCode < 400 {
+			if !triedRecovery {
+				triedRecovery = true
+				if recovered, rerr := c.recoverInjectedSession(ctx); recovered {
+					continue
+				} else if rerr != nil {
+					return nil, statusCode, header, rerr
+				}
+			}
+			return nil, statusCode, header, c.authRedirectError(header.Get("Location"))
+		}
 		if statusCode < 400 {
 			return data, statusCode, header, nil
 		}
@@ -711,6 +870,36 @@ func (c *Client) internalRequest(ctx context.Context, method, path string, form 
 
 		return nil, statusCode, header, c.parseError(statusCode, data)
 	}
+}
+
+// isLoginPath reports whether p is Archery's login page, tolerating a trailing
+// slash and a deployment base path (e.g. /archery/login/ or /login/).
+func isLoginPath(p string) bool {
+	return strings.HasSuffix(strings.TrimRight(p, "/"), "/login")
+}
+
+// authRedirectError converts a 3xx redirect (typically to /login/) into an
+// E_AUTH-class APIError. Archery's web endpoints redirect unauthenticated
+// requests to the HTML login page; following it would hand HTML to a JSON
+// parser. StatusCode 401 maps to E_AUTH (exit 4) at the command layer.
+func (c *Client) authRedirectError(location string) *APIError {
+	msg := "Archery redirected to the login page: not authenticated (session expired or invalid)."
+	if loc := strings.TrimSpace(location); loc != "" {
+		msg = "Archery redirected to " + loc + ": not authenticated (session expired or invalid)."
+	}
+	msg += " Re-login (for jwt regions with 2FA, re-run with --otp <code>)."
+	return &APIError{StatusCode: http.StatusUnauthorized, ErrorMessages: []string{msg}}
+}
+
+// bodySnippet returns a trimmed, length-capped preview of a response body for
+// diagnostics when a response cannot be parsed as expected.
+func bodySnippet(b []byte) string {
+	const max = 256
+	s := strings.TrimSpace(string(b))
+	if len(s) > max {
+		return s[:max] + "…"
+	}
+	return s
 }
 
 // parseError converts an HTTP status code and response body into an APIError.

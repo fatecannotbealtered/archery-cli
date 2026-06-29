@@ -1,6 +1,6 @@
 {
   "name": "@fateforge/archery-cli",
-  "version": "1.0.16",
+  "version": "1.0.17",
   "description": "Archery SQL audit CLI for AI Agents - manage SQL workflows, queries, instances, diagnostics, and data dictionaries with a machine-readable contract",
   "keywords": [
     "archery",
@@ -30,12 +30,12 @@
     "check-version": "node scripts/check-version.js"
   },
   "optionalDependencies": {
-    "@fateforge/archery-cli-darwin-arm64": "1.0.16",
-    "@fateforge/archery-cli-darwin-x64": "1.0.16",
-    "@fateforge/archery-cli-linux-arm64": "1.0.16",
-    "@fateforge/archery-cli-linux-x64": "1.0.16",
-    "@fateforge/archery-cli-win32-arm64": "1.0.16",
-    "@fateforge/archery-cli-win32-x64": "1.0.16"
+    "@fateforge/archery-cli-darwin-arm64": "1.0.17",
+    "@fateforge/archery-cli-darwin-x64": "1.0.17",
+    "@fateforge/archery-cli-linux-arm64": "1.0.17",
+    "@fateforge/archery-cli-linux-x64": "1.0.17",
+    "@fateforge/archery-cli-win32-arm64": "1.0.17",
+    "@fateforge/archery-cli-win32-x64": "1.0.17"
   },
   "files": [
     "scripts/run.js",

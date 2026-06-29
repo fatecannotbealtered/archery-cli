@@ -1,10 +1,10 @@
 ---
 name: archery-cli
-version: "1.0.16"
+version: "1.0.17"
 description: "Archery SQL audit platform CLI for managing SQL workflows, queries, instances, diagnostics. Use when the user asks about SQL审核, database operations, Archery platform management, or needs to submit/review/execute SQL against database instances."
 license: MIT
 user-invocable: true
-metadata: {"requires":{"bins":["archery-cli"],"min_version":"1.0.16"}}
+metadata: {"requires":{"bins":["archery-cli"],"min_version":"1.0.17"}}
 ---
 
 # archery-cli
@@ -59,7 +59,7 @@ First-time setup: ask user for Archery URL + credentials, then run `archery-cli 
 | Discovery | `archery-cli reference` is the machine truth for params, `write`, `requiresConfirmation`, `requiresDangerous`, `riskLevel`, output schemas, and errors |
 | Transport | Defaults to **session** mode (Archery web AJAX endpoints) — works for ordinary accounts on all versions. REST + JWT is opt-in via `--mode jwt` or a region's `mode: jwt`. Precedence: `--mode` flag → region config → `session`. |
 | Read-only | Pass `--read-only` (or set `ARCHERY_CLI_READONLY`) to hard-disable all writes; they fail with `E_FORBIDDEN` (exit 4) before any network call. Use it when the task is read-only/analysis. |
-| 2FA | If a command fails with `E_2FA_REQUIRED` (exit 9), the account has 2FA on. Ask the user for a fresh 6-digit code and retry the **same** command with `--otp <code>` (codes last ~30s). The session is then cached, so later commands need no OTP. |
+| 2FA | If a command fails with `E_2FA_REQUIRED` (exit 9), the account has 2FA on. Ask the user for a fresh 6-digit code and retry the **same** command with `--otp <code>` (codes last ~30s). The authenticated session is then cached in the OS keyring and reused (incl. on `jwt` regions for session-only commands), so later commands need no OTP until it expires. Codes are treated as authenticator/TOTP by default; for SMS-based 2FA set `ARCHERY_CLI_2FA_TYPE`. |
 | Instance/group IDs | `workflow submit/sqlcheck/auto-review` accept either `--instance`/`--group` (numeric IDs, resolved automatically) **or** `--instance-name`/`--group-name`. IDs work in both transport modes. |
 | Schema discovery | To locate a table/column by **meaning** (not its exact name), use `dict tables` → `{name, comment}` then `dict table-info` → per-column `column_comment`: those carry the human labels (e.g. `班级学生表`, `性别`). `instance resource`/`instance describe` return **bare names with no comments** — use them only when you already know the exact identifier. Already know the table name but not which instance holds it? `instance table-instances --table <name>`. `dict` needs `--instance <name>` (not ID) **and** `--db-type <mysql/...>` (db-type is required on v1.8.5; omitting it fails with `Instance.DoesNotExist`). |
 
