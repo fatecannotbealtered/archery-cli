@@ -42,6 +42,10 @@ func clearArcheryEnv(t *testing.T) {
 	for _, k := range []string{"ARCHERY_CLI_URL", "ARCHERY_CLI_USERNAME", "ARCHERY_CLI_PASSWORD", "ARCHERY_CLI_REGION"} {
 		t.Setenv(k, "")
 	}
+	// Reset the package-level region override so it can't leak between tests.
+	prev := activeRegionOverride
+	SetActiveRegionOverride("")
+	t.Cleanup(func() { SetActiveRegionOverride(prev) })
 }
 
 // --- helpers ---
@@ -636,6 +640,47 @@ func TestLoad_RegionEnvOverrideAppliesToSelectedRegion(t *testing.T) {
 			t.Errorf("us-east URL = %q, want unchanged", got.Regions["us-east"].URL)
 		}
 	})
+}
+
+// TestLoad_RegionFlagOverrideAppliesEnvCredsToSelectedRegion is the A-5
+// regression: env credentials must land on the --region target (recorded via
+// SetActiveRegionOverride), not the config default — otherwise `--region X` +
+// ARCHERY_CLI_PASSWORD silently leaves X without the password and applies it to
+// the wrong region.
+func TestLoad_RegionFlagOverrideAppliesEnvCredsToSelectedRegion(t *testing.T) {
+	withTempHome(t, func(_ string) {
+		clearArcheryEnv(t)
+		writeConfigFile(t, &Config{
+			DefaultRegion: "default",
+			Regions: map[string]RegionConfig{
+				"default":  {URL: "https://default.example.com", Username: "defuser"},
+				"overseas": {URL: "https://overseas.example.com", Username: "alice"},
+			},
+		})
+		SetActiveRegionOverride("overseas") // simulate --region overseas
+		t.Setenv("ARCHERY_CLI_PASSWORD", "envpass")
+
+		got, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if got.Regions["overseas"].Password != "envpass" {
+			t.Errorf("overseas Password = %q, want envpass (env creds must follow --region)", got.Regions["overseas"].Password)
+		}
+		if got.Regions["default"].Password != "" {
+			t.Errorf("default Password = %q, want empty (env creds must NOT leak to the default region)", got.Regions["default"].Password)
+		}
+	})
+}
+
+func TestActiveRegion_FlagOverridesEnvAndDefault(t *testing.T) {
+	clearArcheryEnv(t)
+	cfg := &Config{DefaultRegion: "us-east"}
+	t.Setenv("ARCHERY_CLI_REGION", "eu-west")
+	SetActiveRegionOverride("overseas")
+	if got := ActiveRegion(cfg); got != "overseas" {
+		t.Errorf("ActiveRegion() = %q, want overseas (--region override outranks env and default)", got)
+	}
 }
 
 func TestLoad_PartialEnvOverrides(t *testing.T) {

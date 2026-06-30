@@ -81,15 +81,35 @@ func firstNonEmpty(candidates ...string) string {
 	return ""
 }
 
+// activeRegionOverride, when non-empty, is the caller-selected region (e.g. the
+// --region flag). It outranks ARCHERY_CLI_REGION and Config.DefaultRegion so that
+// env-var credential overrides (see Load) land on the SAME region the command
+// actually operates on — otherwise `--region X` + ARCHERY_CLI_PASSWORD silently
+// applies the password to the default region and X is left without credentials.
+var activeRegionOverride string
+
+// SetActiveRegionOverride records the caller-selected region (from --region) so
+// ActiveRegion and Load's env overrides resolve against it. Pass "" to clear.
+func SetActiveRegionOverride(name string) {
+	activeRegionOverride = strings.TrimSpace(name)
+}
+
 // ActiveRegion returns the name of the active region, determined by:
 //
-//	ARCHERY_CLI_REGION env var (highest precedence)
+//	--region flag (SetActiveRegionOverride, highest precedence)
+//	ARCHERY_CLI_REGION env var
 //	Config.DefaultRegion
 //
-// Returns empty string if neither is set.
+// Returns empty string if none is set.
 func ActiveRegion(cfg *Config) string {
+	if activeRegionOverride != "" {
+		return activeRegionOverride
+	}
 	if v := firstNonEmpty(os.Getenv("ARCHERY_CLI_REGION")); v != "" {
 		return v
+	}
+	if cfg == nil {
+		return ""
 	}
 	return cfg.DefaultRegion
 }
