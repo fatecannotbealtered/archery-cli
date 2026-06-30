@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Env credentials now follow `--region` instead of the config default.** `ARCHERY_CLI_USERNAME`/`ARCHERY_CLI_PASSWORD`/`ARCHERY_CLI_URL` overrides were applied to the *active/default* region, so `archery-cli <cmd> --region X` with env creds silently left region X without those credentials (and you had to set `ARCHERY_CLI_REGION=X` as a workaround). The `--region` flag now sets the effective region (precedence: `--region` > `ARCHERY_CLI_REGION` > `default_region`) before env overrides resolve, so credentials land on the region the command actually targets (A-5, CLI-SPEC §11).
 - **`npm ci` lockfile drift fixed.** The per-platform `optionalDependencies` subentries in `package-lock.json` (`node_modules/@fateforge/archery-cli-*`) were missing their `version`, so once those platform packages were published, `npm ci` failed its consistency check (`lock file's <pkg>@ does not satisfy <pkg>@<version>`). The version bump (`scripts/version-files.js`) now syncs the lockfile platform subentries too, and `check-version.js` guards them, so the drift can't silently recur.
 
 ## [1.0.17] - 2026-06-29

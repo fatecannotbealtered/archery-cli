@@ -139,6 +139,10 @@ func init() {
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		cmdStartTime = time.Now()
 		activeCmd = cmd
+		// Make the --region flag the effective region for config resolution, so
+		// ARCHERY_CLI_USERNAME/PASSWORD overrides land on the region the command
+		// actually targets (not the config default). Empty clears the override.
+		config.SetActiveRegionOverride(regionFlag)
 		applyReadOnlyFromEnv()
 		if err := applyFormatFlags(cmd); err != nil {
 			return err
