@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.18] - 2026-07-02
+
 ### Fixed
 
 - **Env credentials now follow `--region` instead of the config default.** `ARCHERY_CLI_USERNAME`/`ARCHERY_CLI_PASSWORD`/`ARCHERY_CLI_URL` overrides were applied to the *active/default* region, so `archery-cli <cmd> --region X` with env creds silently left region X without those credentials (and you had to set `ARCHERY_CLI_REGION=X` as a workaround). The `--region` flag now sets the effective region (precedence: `--region` > `ARCHERY_CLI_REGION` > `default_region`) before env overrides resolve, so credentials land on the region the command actually targets (A-5, CLI-SPEC §11).
