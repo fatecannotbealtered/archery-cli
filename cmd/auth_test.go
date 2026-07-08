@@ -86,6 +86,7 @@ func TestAuthLogoutFlags(t *testing.T) {
 	f := rootCmd.PersistentFlags().Lookup("region")
 	if f == nil {
 		t.Fatal("persistent flag 'region' not registered on rootCmd")
+		return
 	}
 	if f.Value.Type() != "string" {
 		t.Errorf("flag 'region' type = %q, want 'string'", f.Value.Type())
@@ -105,6 +106,7 @@ func TestAuthStatusFlags(t *testing.T) {
 	f := rootCmd.PersistentFlags().Lookup("region")
 	if f == nil {
 		t.Fatal("persistent flag 'region' not registered on rootCmd")
+		return
 	}
 	if f.Value.Type() != "string" {
 		t.Errorf("flag 'region' type = %q, want 'string'", f.Value.Type())

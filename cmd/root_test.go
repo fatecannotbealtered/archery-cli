@@ -168,6 +168,7 @@ func TestFieldsFlag(t *testing.T) {
 	f := workflowListCmd.Flags().Lookup("fields")
 	if f == nil {
 		t.Fatal("flag 'fields' not registered on workflowListCmd")
+		return
 	}
 	if f.Value.Type() != "string" {
 		t.Errorf("flag 'fields' type = %q, want 'string'", f.Value.Type())
