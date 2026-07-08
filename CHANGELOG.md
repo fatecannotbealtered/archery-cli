@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.19] - 2026-07-08
+
+### Fixed
+
+- `update` success now reports final post-install state (`current_version == target_version`, `update_available: false`) and clears the cached update notice after the binary or package manager commits.
+- Post-swap Skill-sync partial-success details now also report `target_version` and `update_available: false`, so agents can tell the binary is already at the target version even though the Skill still needs syncing.
+- Windows Go test binaries (`*.test.exe`) no longer read or write the real user update-notice cache by default.
+
 ## [1.0.18] - 2026-07-02
 
 ### Fixed
@@ -282,4 +290,3 @@ First stable release: recorded live smoke against a real Archery v1.8.5 stack (`
 ### Fixed
 
 - `update` text output now reads the snake_case result fields, so version numbers render instead of empty strings; removed duplicated camelCase keys (`currentVersion`, `targetVersion`, `updateAvailable`, `releaseUrl`, `installMethod`, `pendingPath`) from the top-level update JSON in favor of the snake_case set.
-

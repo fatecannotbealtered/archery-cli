@@ -199,6 +199,7 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	// Idempotent: already on the latest (or requested) version is a no-op success.
 	installNeeded := reinstall || plan.UpdateAvailable || targetVersionDiffers(plan, targetVersion)
 	if !installNeeded {
+		writeUpdateNoticeCache(nil)
 		printUpdateResult(result)
 		return nil
 	}
@@ -309,6 +310,7 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 		return failWithDetails("installing update: "+err.Error(), updateReplaceFailureClass(err),
 			updateFailDetails(stageReplace, plan.CurrentVersion, false, "not_run"))
 	}
+	writeUpdateNoticeCache(nil)
 
 	// skill_sync runs AFTER the atomic swap. A failure here is PARTIAL SUCCESS:
 	// the binary is on the new version, only the Skill is stale. Report that
@@ -319,6 +321,8 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 		details["binary_replaced"] = true
 		details["skill_sync_command"] = plan.SkillSyncCommand
 		details["previous_version"] = plan.CurrentVersion
+		details["target_version"] = plan.TargetVersion
+		details["update_available"] = false
 		details["signature_status"] = signatureStatus
 		details["status"] = applied.Status
 		details["hint"] = fmt.Sprintf("binary now at %s; run %q to sync the Skill, then \"archery-cli changelog --since %s\"", plan.TargetVersion, plan.SkillSyncCommand, plan.CurrentVersion)
@@ -336,6 +340,7 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	result["path"] = applied.Path
 	result["previous_version"] = plan.CurrentVersion
 	result["current_version"] = plan.TargetVersion
+	result["update_available"] = false
 	result["binary_replaced"] = true
 	result["checksum_verified"] = true
 	result["signature_status"] = signatureStatus
@@ -406,11 +411,13 @@ func runPackageManagerUpdate(ctx context.Context, plan updatePlan, result map[st
 	if err := updateRunPackageManager(ctx, method, plan.TargetVersion); err != nil {
 		return failPackageManagerStage(result, command, err)
 	}
+	writeUpdateNoticeCache(nil)
 	// The package manager replaced the on-disk binary; this process is still the
 	// old image, so the new version is effective on the next invocation.
 	result["status"] = "updated"
 	result["previous_version"] = plan.CurrentVersion
 	result["current_version"] = plan.TargetVersion
+	result["update_available"] = false
 	result["signature_status"] = "not_checked"
 	result["binary_replaced"] = true
 	if err := updateSkillSync(ctx, updateSkillRepo); err != nil {
@@ -418,9 +425,15 @@ func runPackageManagerUpdate(ctx context.Context, plan updatePlan, result map[st
 		details["binary_replaced"] = true
 		details["skill_sync_command"] = plan.SkillSyncCommand
 		details["previous_version"] = plan.CurrentVersion
+		details["target_version"] = plan.TargetVersion
+		details["update_available"] = false
 		details["install_method"] = method
 		details["hint"] = fmt.Sprintf("binary now at %s; run %q to sync the Skill", plan.TargetVersion, plan.SkillSyncCommand)
-		return failWithDetails("syncing skill directory: "+err.Error(), output.E_NETWORK, details)
+		code := output.E_NETWORK
+		if interrupted := updateInterrupted(ctx, err); interrupted != nil {
+			code = output.E_INTERRUPTED
+		}
+		return failWithDetails("syncing skill directory: "+err.Error(), code, details)
 	}
 	result["skill_sync_status"] = "synced"
 	result["hint"] = fmt.Sprintf("run \"archery-cli changelog --since %s\" to see what changed", plan.CurrentVersion)

@@ -215,7 +215,8 @@ func updateNoticeDisabled() bool {
 // which case the auto update-notice cache I/O is disabled. Overridable so cache
 // tests can exercise the read/write path under `go test`.
 var updateNoticeTestModeDisabled = func() bool {
-	return strings.HasSuffix(os.Args[0], ".test")
+	exe := strings.ToLower(os.Args[0])
+	return strings.HasSuffix(exe, ".test") || strings.HasSuffix(exe, ".test.exe")
 }
 
 func updateNoticeAutoDisabled() bool {

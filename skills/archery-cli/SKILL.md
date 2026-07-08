@@ -1,10 +1,10 @@
 ---
 name: archery-cli
-version: "1.0.18"
+version: "1.0.19"
 description: "Archery SQL audit platform CLI for managing SQL workflows, queries, instances, diagnostics. Use when the user asks about SQL审核, database operations, Archery platform management, or needs to submit/review/execute SQL against database instances."
 license: MIT
 user-invocable: true
-metadata: {"requires":{"bins":["archery-cli"],"min_version":"1.0.18"}}
+metadata: {"requires":{"bins":["archery-cli"],"min_version":"1.0.19"}}
 ---
 
 # archery-cli
@@ -159,6 +159,8 @@ STOP CHECKPOINT: If SQL text, query results, slow-query logs, binlog output, or 
 
 `update` is a **single command — no confirm token**. A bare `archery-cli update` runs the whole self-update in one call: resolve the latest (or `--target-version`) release → verify the Sigstore signature, then the checksum → replace the binary → sync the Skill directory. `--check` and `--dry-run` are **optional read-only** flags (the dry-run preview issues no token). `update` is idempotent: already-latest returns a no-op success.
 
+Successful update results are final-state: `current_version` must equal `target_version`, `update_available` must be `false`, and stale `update_available` notices must be cleared or suppressed before later commands attach `meta.notices`. An already-current install must return a no-op result without running a package-manager install command.
+
 After a successful self-update, review signature/checksum status, ensure `skill_sync_status` is `synced`, then read the changelog delta before continuing; this refreshes the agent's command knowledge and the whole Skill directory.
 
 When an update is available, the notice also rides on **every command's `meta.notices`** (read-only from the local cache, no network — one local file read), not just `data.notices` on `context`/`doctor`/`update`. It is severity-graded: `warning` when the changelog delta since the running version contains a `security` entry or the latest crosses a major version, otherwise `info`. The field is omitted when the cache has nothing to report — so any `meta.notices` you see came from the cache, never an active check.
@@ -176,7 +178,7 @@ Update runs as staged work — `discover → download → verify_signature → v
 - **discover/download** network/timeout → `E_NETWORK`/`E_TIMEOUT`/`E_RATE_LIMITED`, retryable, still on the old version.
 - **verify_signature/verify_checksum** → `E_INTEGRITY` (exit 1), **non-retryable** — stop and report a possible supply-chain issue; do not loop.
 - **replace** filesystem failure → `E_IO` (exit 1) or `E_FORBIDDEN` (exit 4) for permission; fix the environment, then re-run.
-- **skill_sync after a successful swap** → partial success (`ok:false`, `binary_replaced:true`) with `skill_sync_command`: you are already on the new binary, just run that command, then `changelog --since <prev>`.
+- **skill_sync after a successful swap** → partial success (`ok:false`, `binary_replaced:true`) with `target_version`, `update_available:false`, and `skill_sync_command`: you are already on the new binary, just run that command, then `changelog --since <prev>`.
 - **Ctrl-C / SIGTERM** → `E_INTERRUPTED` (exit 130), retryable; the envelope states the true post-state. Nothing is left half-applied; re-run `update` (it is idempotent).
 
 ## Error decision tree

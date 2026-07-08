@@ -141,6 +141,58 @@ func TestUpdate_BareExecutesWithoutToken(t *testing.T) {
 	}
 }
 
+func TestUpdate_NoOpClearsStaleNoticeCache(t *testing.T) {
+	enableNoticeCacheForTest(t)
+	seedUpdateNoticeCache(t)
+	path, err := updateNoticeCachePath()
+	if err != nil {
+		t.Fatalf("cache path: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("seed cache not written: %v", err)
+	}
+
+	srv := updateMockReleaseServer(t, version)
+	defer srv.Close()
+	origAPI := updateGitHubAPI
+	origApply := updateApply
+	origPM := updateRunPackageManager
+	t.Cleanup(func() {
+		updateGitHubAPI = origAPI
+		updateApply = origApply
+		updateRunPackageManager = origPM
+	})
+	updateGitHubAPI = srv.URL
+	updateApply = func(_, _ string) (updateApplyResult, error) {
+		t.Fatal("up-to-date update must not apply")
+		return updateApplyResult{}, nil
+	}
+	updateRunPackageManager = func(context.Context, string, string) error {
+		t.Fatal("up-to-date update must not run package manager")
+		return nil
+	}
+
+	env, exit := runUpdateCapture(t)
+	if ok, _ := env["ok"].(bool); !ok {
+		t.Fatalf("no-op update ok=false: %v", env)
+	}
+	if exit != ExitOK {
+		t.Fatalf("exit = %d, want 0", exit)
+	}
+	data := envData(t, env)
+	if data["update_available"] != false {
+		t.Fatalf("update_available = %v, want false", data["update_available"])
+	}
+	if meta, _ := env["meta"].(map[string]any); meta != nil {
+		if _, ok := meta["notices"]; ok {
+			t.Fatalf("no-op update must not emit stale meta.notices: %#v", meta)
+		}
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("notice cache should be cleared after no-op update, stat err = %v", err)
+	}
+}
+
 // TestUpdate_DryRunIssuesNoToken proves `update --dry-run` is a read-only
 // preview that issues NO confirm_token and NO expires_at.
 func TestUpdate_DryRunIssuesNoToken(t *testing.T) {
@@ -263,10 +315,15 @@ func TestUpdate_SkillSyncFailureIsPartialSuccess(t *testing.T) {
 	}
 	updateSkillSync = func(context.Context, string) error { return errBatch("npx not found") }
 
-	t.Setenv("ARCHERY_CLI_NO_UPDATE_CHECK", "1")
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
+	enableNoticeCacheForTest(t)
+	seedUpdateNoticeCache(t)
+	path, err := updateNoticeCachePath()
+	if err != nil {
+		t.Fatalf("cache path: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("seed cache not written: %v", err)
+	}
 
 	env, exit := runUpdateCapture(t)
 	if ok, _ := env["ok"].(bool); ok {
@@ -286,8 +343,22 @@ func TestUpdate_SkillSyncFailureIsPartialSuccess(t *testing.T) {
 	if br, _ := details["binary_replaced"].(bool); !br {
 		t.Fatal("binary_replaced must be true after a successful swap")
 	}
+	if details["target_version"] != "9.9.9" {
+		t.Fatalf("target_version = %v, want 9.9.9", details["target_version"])
+	}
+	if details["update_available"] != false {
+		t.Fatalf("update_available = %v, want false", details["update_available"])
+	}
 	if _, ok := details["skill_sync_command"]; !ok {
 		t.Fatal("partial success must include skill_sync_command")
+	}
+	if meta, _ := env["meta"].(map[string]any); meta != nil {
+		if _, ok := meta["notices"]; ok {
+			t.Fatalf("partial success must not emit stale meta.notices: %#v", meta)
+		}
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("notice cache should be cleared after partial success, stat err = %v", err)
 	}
 }
 
@@ -589,8 +660,136 @@ func TestUpdate_NPMDrivesPackageManager(t *testing.T) {
 	if data["status"] != "updated" {
 		t.Fatalf("status = %v, want updated (drove npm)", data["status"])
 	}
+	if data["update_available"] != false {
+		t.Fatalf("update_available = %v, want false after successful update", data["update_available"])
+	}
 	if data["install_method"] != "npm" {
 		t.Fatalf("install_method = %v, want npm", data["install_method"])
+	}
+}
+
+func TestUpdate_NPMClearsNoticeCache(t *testing.T) {
+	srv := updateMockReleaseServer(t, "9.9.9")
+	defer srv.Close()
+	origAPI := updateGitHubAPI
+	origExec := updateExecutable
+	origPM := updateRunPackageManager
+	origSync := updateSkillSync
+	origNoticeMode := updateNoticeTestModeDisabled
+	t.Cleanup(func() {
+		updateGitHubAPI = origAPI
+		updateExecutable = origExec
+		updateRunPackageManager = origPM
+		updateSkillSync = origSync
+		updateNoticeTestModeDisabled = origNoticeMode
+	})
+	updateGitHubAPI = srv.URL
+	updateNoticeTestModeDisabled = func() bool { return false }
+
+	root := t.TempDir()
+	pkgDir := root + "/node_modules/@fateforge/archery-cli"
+	if err := os.MkdirAll(pkgDir+"/bin", 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(pkgDir+"/package.json", []byte(`{"name":"`+updateNPMPackage+`"}`), 0o644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+	exe := pkgDir + "/bin/archery-cli"
+	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
+		t.Fatalf("write exe: %v", err)
+	}
+	updateExecutable = func() (string, error) { return exe, nil }
+	updateRunPackageManager = func(context.Context, string, string) error { return nil }
+	updateSkillSync = func(context.Context, string) error { return nil }
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("ARCHERY_CLI_NO_UPDATE_CHECK", "")
+	seedUpdateNoticeCache(t)
+	path, err := updateNoticeCachePath()
+	if err != nil {
+		t.Fatalf("cache path: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("seed cache not written: %v", err)
+	}
+
+	env, exit := runUpdateCapture(t)
+	if ok, _ := env["ok"].(bool); !ok {
+		t.Fatalf("npm drive ok=false: %v", env)
+	}
+	if exit != ExitOK {
+		t.Fatalf("exit = %d, want 0", exit)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("notice cache should be cleared after package-manager install, stat err = %v", err)
+	}
+}
+
+func TestUpdate_NPMSkillSyncInterruptionIsInterrupted(t *testing.T) {
+	srv := updateMockReleaseServer(t, "9.9.9")
+	defer srv.Close()
+	origAPI := updateGitHubAPI
+	origExec := updateExecutable
+	origPM := updateRunPackageManager
+	origSync := updateSkillSync
+	t.Cleanup(func() {
+		updateGitHubAPI = origAPI
+		updateExecutable = origExec
+		updateRunPackageManager = origPM
+		updateSkillSync = origSync
+	})
+	updateGitHubAPI = srv.URL
+
+	root := t.TempDir()
+	pkgDir := root + "/node_modules/@fateforge/archery-cli"
+	if err := os.MkdirAll(pkgDir+"/bin", 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(pkgDir+"/package.json", []byte(`{"name":"`+updateNPMPackage+`"}`), 0o644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+	exe := pkgDir + "/bin/archery-cli"
+	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
+		t.Fatalf("write exe: %v", err)
+	}
+	updateExecutable = func() (string, error) { return exe, nil }
+	updateRunPackageManager = func(context.Context, string, string) error { return nil }
+	ctx, cancel := context.WithCancel(context.Background())
+	updateSkillSync = func(ctx context.Context, _ string) error {
+		cancel()
+		return context.Canceled
+	}
+
+	origCtx := updateCmd.Context()
+	updateCmd.SetContext(ctx)
+	t.Cleanup(func() {
+		cancel()
+		updateCmd.SetContext(origCtx)
+	})
+	t.Setenv("ARCHERY_CLI_NO_UPDATE_CHECK", "1")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	env, exit := runUpdateCapture(t)
+	if ok, _ := env["ok"].(bool); ok {
+		t.Fatalf("skill_sync interruption must not be ok: %v", env)
+	}
+	if exit != ExitInterrupted {
+		t.Fatalf("exit = %d, want %d", exit, ExitInterrupted)
+	}
+	e := envError(t, env)
+	if e["code"] != "E_INTERRUPTED" {
+		t.Fatalf("code = %v, want E_INTERRUPTED", e["code"])
+	}
+	details, _ := e["details"].(map[string]any)
+	if details["stage"] != stageSkillSync || details["binary_replaced"] != true {
+		t.Fatalf("unexpected details: %#v", details)
+	}
+	if details["target_version"] != "9.9.9" || details["update_available"] != false {
+		t.Fatalf("unexpected final-state details: %#v", details)
 	}
 }
 

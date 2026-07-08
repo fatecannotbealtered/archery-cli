@@ -133,6 +133,18 @@ func TestMetaNotices_AbsentWhenCacheEmpty(t *testing.T) {
 	}
 }
 
+func TestUpdateNoticeAutoDisabledDetectsWindowsGoTestBinary(t *testing.T) {
+	origArgs := os.Args
+	t.Cleanup(func() { os.Args = origArgs })
+	orig := updateNoticeTestModeDisabled
+	t.Cleanup(func() { updateNoticeTestModeDisabled = orig })
+	os.Args = []string{`C:\Users\me\AppData\Local\Temp\cmd.test.exe`}
+
+	if !updateNoticeTestModeDisabled() {
+		t.Fatal("Windows Go test binary must not write the real update notice cache")
+	}
+}
+
 // TestMetaNotices_NoNetwork asserts the piggyback path makes zero network calls:
 // any GitHub access would go through updateGitHubAPI, so a poisoned base URL must
 // not be touched while the cache is consulted.
