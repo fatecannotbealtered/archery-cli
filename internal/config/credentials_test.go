@@ -37,6 +37,7 @@ func TestNewTokenStore(t *testing.T) {
 	ts := NewTokenStore()
 	if ts == nil {
 		t.Fatal("NewTokenStore returned nil")
+		return
 	}
 	if ts.keyring == nil {
 		t.Fatal("keyring field is nil")
