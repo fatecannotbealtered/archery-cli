@@ -151,6 +151,7 @@ func TestGlobalFlags(t *testing.T) {
 			f := rootCmd.PersistentFlags().Lookup(tt.flagName)
 			if f == nil {
 				t.Fatalf("persistent flag %q not registered on rootCmd", tt.flagName)
+				return
 			}
 			if f.Value.Type() != tt.wantType {
 				t.Errorf("flag %q type = %q, want %q", tt.flagName, f.Value.Type(), tt.wantType)
