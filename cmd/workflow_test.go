@@ -249,6 +249,7 @@ func TestWorkflowExecuteFlags(t *testing.T) {
 	f := cmd.Flags().Lookup("mode")
 	if f == nil {
 		t.Fatal("flag 'mode' not registered on workflow execute")
+		return
 	}
 	if f.Value.Type() != "string" {
 		t.Errorf("flag 'mode' type = %q, want 'string'", f.Value.Type())

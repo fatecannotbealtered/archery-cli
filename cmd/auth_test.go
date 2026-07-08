@@ -22,6 +22,7 @@ func TestAuthLoginFlags(t *testing.T) {
 			f := cmd.Flags().Lookup(tt.flagName)
 			if f == nil {
 				t.Fatalf("flag %q not registered on auth login", tt.flagName)
+				return
 			}
 			if f.Value.Type() != tt.wantType {
 				t.Errorf("flag %q type = %q, want %q", tt.flagName, f.Value.Type(), tt.wantType)
