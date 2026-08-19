@@ -1,6 +1,6 @@
 module github.com/fatecannotbealtered/archery-cli
 
-go 1.25.8
+go 1.26.6
 
 require (
 	github.com/sigstore/sigstore-go v1.2.2

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Raise the Go toolchain to 1.26.6 to clear four reachable Go standard-library
+  vulnerabilities reported by `govulncheck`: GO-2026-6218 (`net/url`),
+  GO-2026-6090 (`crypto/tls`), GO-2026-5972 (`encoding/asn1`), and
+  GO-2026-5026 (`net/http`).
+
 ## [1.0.19] - 2026-07-08
 
 ### Fixed
