@@ -27,6 +27,15 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # SEC-SPEC §5 requires an audit per shipped ecosystem, fail-closed. This is
+      # the Go half; the `npm audit` job below is the wrapper half. govulncheck
+      # also covers the Go standard library, so a toolchain CVE turns CI red --
+      # fix it by moving the `go` directive in go.mod, which setup-go reads above.
+      - name: Go vulnerability audit
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
       - name: Project-specific clean check
         if: runner.os == 'Linux'
         run: |
