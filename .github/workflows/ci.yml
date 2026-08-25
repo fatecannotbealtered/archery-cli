@@ -38,6 +38,7 @@ jobs:
 
       - name: Project-specific clean check
         if: runner.os == 'Linux'
+        timeout-minutes: 5
         run: |
           if [ -f scripts/check-clean.sh ]; then
             if ! command -v rg >/dev/null 2>&1; then
@@ -80,6 +81,7 @@ jobs:
 
       - name: Ensure race detector toolchain
         if: runner.os == 'Linux'
+        timeout-minutes: 5
         run: |
           if ! command -v gcc >/dev/null 2>&1; then
             sudo apt-get update -qq

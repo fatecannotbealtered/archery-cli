@@ -28,8 +28,32 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # SEC-SPEC §5: the release path gates on the same dependency audit the
+      # merge path does. Without this, a CVE published after the last green run
+      # on main ships: this job re-runs formatting, vet and tests at tag time but
+      # never asked whether the code it is about to sign has a known reachable
+      # vulnerability. A release blocked by a fresh upstream advisory is the
+      # intended outcome, not a regression.
+      - name: Go vulnerability audit
+        if: runner.os == 'Linux'
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      # REPO-SPEC §5c: refuse to publish a binary whose vendored spec or
+      # generated contract module has drifted from the pinned tag.
+      - uses: actions/setup-node@v7
+        if: runner.os == 'Linux'
+        with:
+          node-version: '20'
+
+      - name: Verify spec/contract sync
+        if: runner.os == 'Linux'
+        run: node scripts/check-spec.js
+
       - name: Project-specific clean check
         if: runner.os == 'Linux'
+        timeout-minutes: 5
         run: |
           if [ -f scripts/check-clean.sh ]; then
             if ! command -v rg >/dev/null 2>&1; then
@@ -46,6 +70,7 @@ jobs:
 
       - name: Ensure race detector toolchain
         if: runner.os == 'Linux'
+        timeout-minutes: 5
         run: |
           if ! command -v gcc >/dev/null 2>&1; then
             sudo apt-get update -qq

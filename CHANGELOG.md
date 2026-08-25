@@ -37,6 +37,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   worked purely because the GitHub runner image happens to preinstall Go — one
   image change away from every Go tool in the fleet reporting phantom contract
   drift at once. The codegen verifier now gets the codegen's own toolchain.
+- **The release path now gates on the same checks as the merge path.**
+  `release.yml` re-ran formatting, vet and tests at tag time but never ran
+  `govulncheck` or `check-spec.js`, so a CVE published after the last green run
+  on main shipped signed and published — which is exactly what would have
+  happened this month. It now runs both, Linux-only, before the build. A
+  release blocked by a fresh upstream advisory is the intended outcome.
+- The two steps that shell out to `apt-get` (`Project-specific clean check` and
+  `Ensure race detector toolchain`) are bounded with `timeout-minutes: 5`. They
+  normally take seconds; one stalled for close to an hour and had to be
+  cancelled by hand, which without a bound would have run to the six-hour job
+  default.
 
 ## [1.0.19] - 2026-07-08
 
