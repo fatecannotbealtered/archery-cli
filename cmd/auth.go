@@ -229,7 +229,11 @@ func doAuthLogin(cfg *config.Config, regionName, regionURL, username, password s
 		return nil
 	}
 	if !config.KeyringAvailable() {
-		return failWithCode("OS credential store unavailable; cannot persist credentials securely. Enable the OS keyring or use ARCHERY_CLI_URL, ARCHERY_CLI_USERNAME, and ARCHERY_CLI_PASSWORD for one-shot commands.", output.E_CONFIG)
+		// Name the 2FA env channel too: on a headless host (no Secret Service)
+		// this is exactly the path a 2FA account has to take, and an operator
+		// told only about URL/username/password would conclude the account
+		// cannot be used here at all.
+		return failWithCode("OS credential store unavailable; cannot persist credentials securely. Enable the OS keyring, or run one-shot commands with ARCHERY_CLI_URL, ARCHERY_CLI_USERNAME and ARCHERY_CLI_PASSWORD (plus ARCHERY_CLI_2FA_SECRET when the account has 2FA).", output.E_CONFIG)
 	}
 
 	if !jsonMode {
