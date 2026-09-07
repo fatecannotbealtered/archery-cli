@@ -13,6 +13,61 @@ from scratch for this acceptance.
   asserted. JWT cached in the OS keyring; session-mode commands authenticate
   via the Django form login.
 
+## 2026-09-07 — unattended 2FA via a stored TOTP secret (closes the 1.0.5 mock-only gap)
+
+Live verification against a purpose-built stack: `hhyo/archery:v1.14.0` +
+MySQL 5.7 + Redis via the upstream `src/docker-compose`, on `localhost:9123`,
+**session mode**. Unlike the earlier `cli_verify` account, this run used
+`clitest` with **TOTP 2FA genuinely enrolled** (a row in `TwoFactorAuthConfig`,
+`auth_type=totp`), which is what makes the 2FA branch reachable at all.
+
+The seed used is the RFC 6238 Appendix B secret, so the code Archery's
+`pyotp.TOTP(...).verify()` accepted can be cross-checked against the standard's
+own vectors rather than against our own implementation.
+
+### Result by scenario
+
+| Scenario | Status | Result |
+|---|---|---|
+| No secret, no `--otp` | **live PASS** | `E_2FA_REQUIRED` (exit 9); message names both remedies — `--otp` for a human, `--totp-secret` / `ARCHERY_CLI_2FA_SECRET` for unattended |
+| `auth login --totp-secret <base32>` | **live PASS** | Logs in with no human code; `session cookie cached successfully` |
+| Env credentials + stored seed → `instance list` | **live PASS** | `ok:true`, exit 0 — the full unattended path, no OTP anywhere |
+| `ARCHERY_CLI_2FA_SECRET` (env channel) | **live PASS** | Same result with the seed supplied per-run instead of stored |
+| Malformed secret | **live PASS** | `E_VALIDATION` (exit 2) at `--dry-run`, before any network call |
+| Windows Credential Manager | **live PASS** | `archery-cli:<region>\|totp\|<user>` present, same key shape as the `jwt` / `session` entries |
+| `config.json` after login | **live PASS** | Contains `url` / `username` / `mode` only — no secret material (SEC-SPEC §4) |
+| `auth logout` | **live PASS** | All three keyring entries (jwt / session / totp) removed |
+| No keyring (`ARCHERY_CLI_NO_KEYRING=1`) | **live PASS** | Env credentials + env seed still run `instance list` to exit 0; `auth login --totp-secret` fails closed with `E_CONFIG` (exit 4) rather than dropping the secret |
+
+**This closes the honest gap recorded for 1.0.5 below**: the real
+`/api/v1/user/2fa/verify/` round-trip is now live-verified, not mock-only —
+including the `auth_type` field and the session-key replay that the mock could
+only approximate.
+
+### Found by this run, not by unit tests
+
+- `--dry-run` accepted a malformed secret and only `--confirm` failed, because
+  the validation sat after the dry-run gate. A preview that promises a login the
+  confirmed run cannot perform is worse than no preview. Moved ahead of the gate.
+- The no-keyring error named only the URL/username/password env vars, so an
+  operator on a headless host with a 2FA account would read it as "this account
+  cannot be used here"; `ARCHERY_CLI_2FA_SECRET` is now named alongside them.
+
+### Honesty notes
+
+- **Single platform:** this run was on Windows, so the Credential Manager row is
+  the only credential backend exercised live. macOS Keychain and Linux Secret
+  Service are covered by the same `zalando/go-keyring` calls and by the CI
+  matrix, not by this smoke.
+- **Archery v1.14.0, not the 1.11.x primary target:** the upstream compose pins
+  v1.14.0 and the 2FA endpoints are unchanged across that range, but this is a
+  newer server than COMPATIBILITY.md records as verified.
+- **SMS 2FA not exercised:** `auth_type=sms` needs a human to receive a message
+  and cannot be automated; only the `totp` branch is covered.
+- The stack, the test regions, and every keyring entry created were removed
+  after verification.
+
+
 ## 2026-06-15 — `instance` group, session (AJAX) path
 
 Live run of every `instance` leaf command against the running
@@ -420,7 +475,7 @@ binary built from this working tree (`go build -o /tmp/a.exe ./cmd/archery-cli`)
 | Unknown instance ID | live | PASS — `--instance 999` → `E_NOT_FOUND` (exit 3) with a clear "check 'instance list'" message. |
 | `workflow detail` result rework | live | PASS — `detail 4` returns `result[]` (real auto-review rejection "仅支持DML和DDL语句…") + `statusCode:workflow_autoreviewwrong` + numeric `status:3`. |
 | `--otp` harmless for non-2FA account | live | PASS — passing `--otp 000000` for `cli_verify` (no 2FA) does not break login; the OTP path only fires when the server signals 2FA. |
-| 2FA detection + `--otp` completion | **mock only** | The `cli_verify` account has **no 2FA enabled**, so the 2FA login branch cannot be exercised live. Covered by unit tests `TestEnsureSession_2FARequiredNoOTP` / `2FAWithOTPSucceeds` / `2FAWrongOTP` against an httptest server that mimics v1.8.5's `/authenticate/` (status 0 + `data` session_key, no sessionid) and `/api/v1/user/2fa/`. **Honest gap: the real `/api/v1/user/2fa/` round-trip is not live-verified.** |
+| 2FA detection + `--otp` completion | **mock only** | The `cli_verify` account has **no 2FA enabled**, so the 2FA login branch cannot be exercised live. Covered by unit tests `TestEnsureSession_2FARequiredNoOTP` / `2FAWithOTPSucceeds` / `2FAWrongOTP` against an httptest server that mimics v1.8.5's `/authenticate/` (status 0 + `data` session_key, no sessionid) and `/api/v1/user/2fa/`. ~~**Honest gap: the real `/api/v1/user/2fa/` round-trip is not live-verified.**~~ **Closed 2026-09-07** — live-verified against v1.14.0 with a genuinely 2FA-enrolled account; see the entry at the top of this file. |
 
 Test workflow id 4 was cancelled after verification (`workflow cancel 4`) to
 leave the container clean.

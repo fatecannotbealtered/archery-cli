@@ -58,7 +58,15 @@ PowerShell 使用 `$env:NAME = "value"` 设置同样的环境变量。真实密�
 
 **只读模式。** 传 `--read-only`（或将 `ARCHERY_CLI_READONLY` 设为任意非空值）即可硬禁用所有写命令。写命令会在统一入口处被拒，返回 `E_FORBIDDEN`（退出码 4），且发生在任何网络调用之前，不受 `--dry-run`/`--confirm` 影响；读命令不受影响。适合在生产环境安全运行。`doctor` 和 `context` 会显示当前是否只读。
 
-**二次验证（2FA）。** 对开启了 2FA 的账号，用 `--otp <验证码>`（或 `ARCHERY_CLI_OTP`）传入新鲜的 6 位验证码。CLI 会检测到 Archery 要求二次验证；若未提供验证码，会立即失败并返回 `E_2FA_REQUIRED`（退出码 9），提示用 `--otp` 重试。验证码有效期约 30 秒，请在运行前即时生成；验证成功后会话会被缓存，后续命令在会话过期前无需再次输入 OTP。
+**二次验证（2FA）。** 两种模式，面向两类调用者。
+
+*人工模式* —— 用 `--otp <验证码>`（或 `ARCHERY_CLI_OTP`）传入新鲜的 6 位验证码。验证码有效期约 30 秒，请在运行前即时生成。未提供时立即失败，返回 `E_2FA_REQUIRED`（退出码 9）。
+
+*无人值守模式* —— 用 `archery-cli auth login --totp-secret <base32>` 存入 TOTP 共享密钥（即二维码背后的那个 base32 种子），或每次运行通过 `ARCHERY_CLI_2FA_SECRET` 传入。CLI 随后自行推导验证码完成 2FA，全程无需人工介入，Agent 与 CI 因此可以无人值守运行。显式的 `--otp` 始终优先，密钥轮换或失效时仍可人工覆盖。
+
+两种模式下会话都会被缓存，后续命令在会话过期前无需再次二次验证。
+
+> **安全权衡。** 存下种子等于把两个因子放在同一台机器上——那台机器不再具备双因子，而是把两个密钥放在了一处。因此：种子只写入 OS 凭据库（绝不进配置文件），`context` 与 `doctor` 只报告是否已配置、绝不回显其值，`auth logout` 会连同令牌一并删除。优先使用 `ARCHERY_CLI_2FA_SECRET` 而非命令行参数——argv 在进程列表和 shell 历史中可见。高权限账号请勿使用此模式。
 
 最坏情况风险等级：**T2 高风险** - 可对已配置数据库实例执行和管理 SQL 工单。参见 [SECURITY.md](SECURITY.md) 和 [.agent/SEC-SPEC.md](.agent/SEC-SPEC.md)。
 
@@ -107,6 +115,8 @@ README 只做地图，不做完整手册。Agent 在执行任务命令前，应�
 | `ARCHERY_CLI_REGION` | 当前区域/profile |
 | `ARCHERY_CLI_READONLY` | 任意非空值即禁用所有写命令（等价于 `--read-only`） |
 | `ARCHERY_CLI_OTP` | 开启 2FA 账号的 6 位验证码（等价于 `--otp`） |
+| `ARCHERY_CLI_2FA_SECRET` | TOTP 共享密钥（base32），让无人值守运行自行推导验证码（等价于 `auth login --totp-secret`） |
+| `ARCHERY_CLI_2FA_TYPE` | 发给 Archery 的 2FA 类型：`totp`（默认）或 `sms` |
 | `NO_COLOR` | 显式使用 text 模式时禁用彩色输出 |
 
 支持保存凭据时，凭据会加密或进入 OS 凭据库。环境变量优先级更高，也是短生命周期 Agent 会话的推荐方式。

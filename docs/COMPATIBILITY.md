@@ -6,6 +6,7 @@ archery-cli is a CLI wrapper for the [Archery](https://github.com/hhyo/Archery) 
 
 | Archery Version | Status | Notes |
 |-----------------|--------|-------|
+| 1.14.x | Verified | 2FA (TOTP) login path live-verified 2026-09-07; see docs/LIVE-SMOKE-EVIDENCE.md |
 | 1.11.x | Verified | Primary development target |
 | 1.10.x | Compatible | Most features supported |
 | 1.9.x  | Partial  | Some internal endpoints may differ |

@@ -40,6 +40,7 @@ When using archery-cli:
 - **Least privilege**: Grant only the minimum permissions required. Do not use admin-level credentials for routine operations.
 - **Keep updated**: Run `archery-cli update` regularly to get the latest security patches.
 - **Protect credentials**: archery-cli stores credentials only in the OS keyring. Passwords and tokens are not written to the config file; if the keyring is unavailable, use environment variables for one-shot commands and never commit config files.
+- **Think before storing a 2FA seed**: `auth login --totp-secret` exists so an agent or CI job can complete 2FA unattended, and it does so by keeping the TOTP shared secret in the OS keyring next to the credentials it completes. That host then holds both factors — it has two secrets in one place, not two-factor authentication. Use it for an automation account scoped to what the automation needs, never for a high-privilege or human-owned account, and prefer `ARCHERY_CLI_2FA_SECRET` over the flag because argv is visible in process listings and shell history. `auth logout` removes the seed along with the tokens.
 
 ## Supply Chain
 

@@ -28,4 +28,25 @@ archery-cli reference --compact
 archery-cli instance list --limit 1 --compact
 ```
 
+## Two-Factor Accounts
+
+When the test account has 2FA enabled, the smoke flow above stops at
+`E_2FA_REQUIRED` (exit 9) unless a second factor is supplied. Two ways:
+
+```bash
+# Interactive: a fresh code, valid ~30s
+archery-cli auth login ... --otp 123456 --confirm <confirm_token>
+
+# Unattended: store the TOTP seed once, then no code is ever needed
+archery-cli auth login ... --totp-secret "$ARCHERY_CLI_2FA_SECRET" --confirm <confirm_token>
+```
+
+For CI, prefer the env channel and skip `auth login` entirely — export
+`ARCHERY_CLI_USERNAME`, `ARCHERY_CLI_PASSWORD` and `ARCHERY_CLI_2FA_SECRET` and
+run one-shot commands. That path also works on hosts with no OS keyring, which
+is the usual CI case.
+
+Do not point these at an account whose 2FA protects anything that matters: a
+stored seed puts both factors on the runner.
+
 Write scenarios must always use the documented `--dry-run` then `--confirm <confirm_token>` sequence. High and critical writes must include `--dangerous` in both steps.
