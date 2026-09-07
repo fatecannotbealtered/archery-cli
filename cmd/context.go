@@ -37,7 +37,11 @@ type contextRegion struct {
 	Username   string `json:"username,omitempty"`
 	HasTokens  bool   `json:"hasTokens"`
 	HasSession bool   `json:"hasSession"`
-	IsActive   bool   `json:"isActive"`
+	// HasTOTPSecret says whether a 2FA shared secret is stored for this region,
+	// never what it is. An agent uses it to tell "2FA will be handled
+	// unattended" apart from "2FA will dead-end asking for --otp".
+	HasTOTPSecret bool `json:"hasTotpSecret"`
+	IsActive      bool `json:"isActive"`
 }
 
 // contextCredentials reports credential status without leaking secrets.
@@ -92,6 +96,10 @@ func runContext(cmd *cobra.Command, _ []string) error {
 		Notices:       readCachedUpdateNotices(),
 	}
 
+	// One store for the whole loop: IsAvailable() probes the OS keyring on every
+	// call, which is cheap but not free, and there is no reason to pay it once
+	// per configured region.
+	totpStore := config.NewTokenStore()
 	for name, r := range cfg.Regions {
 		result.Regions = append(result.Regions, contextRegion{
 			Name:       name,
@@ -100,7 +108,11 @@ func runContext(cmd *cobra.Command, _ []string) error {
 			Username:   r.Username,
 			HasTokens:  r.AccessToken != "",
 			HasSession: r.SessionID != "",
-			IsActive:   name == activeRegion,
+			// Presence only. A read failure and "not configured" are reported
+			// identically here because both mean the same thing to the caller:
+			// this region cannot complete 2FA on its own.
+			HasTOTPSecret: totpStore.HasTOTPSecret(name, r.Username),
+			IsActive:      name == activeRegion,
 		})
 	}
 

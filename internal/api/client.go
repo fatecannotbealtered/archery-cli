@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/fatecannotbealtered/archery-cli/internal/totp"
 )
 
 // APIBasePath is the Archery REST API base path.
@@ -253,6 +255,12 @@ type Client struct {
 	// (until the session expires). 2FA codes are ~30s-lived, so it must be fresh.
 	otp string
 
+	// totpSecret is the base32 2FA shared secret. When set, a code is derived
+	// locally instead of being typed by a human, which is what lets an
+	// unattended agent complete the 2FA handshake. It is only consulted when no
+	// explicit otp was given, so a human at the keyboard always wins.
+	totpSecret string
+
 	// onSessionEstablished, when set, is invoked with the freshly authenticated
 	// Django cookies right after a lazy form login succeeds, so the command layer
 	// can persist them (keyring) and reuse the session across later commands —
@@ -319,6 +327,41 @@ func (c *Client) SetSessionCredentials(username, password string) {
 // then surfaces an E_2FA_REQUIRED error when the account demands one.
 func (c *Client) SetOTP(otp string) {
 	c.otp = strings.TrimSpace(otp)
+}
+
+// SetTOTPSecret supplies the base32 2FA shared secret from which codes are
+// derived when no explicit OTP is available.
+//
+// Precedence is deliberate: an explicit --otp (or ARCHERY_CLI_OTP) is used as
+// given and this secret is not touched. Deriving is the unattended fallback,
+// not an override of what the operator typed.
+func (c *Client) SetTOTPSecret(secret string) {
+	c.totpSecret = strings.TrimSpace(secret)
+}
+
+// currentOTP returns the 2FA code to submit: the explicit one when present,
+// otherwise a freshly derived one.
+//
+// The code is derived at the moment of use rather than at client construction.
+// A TOTP code lives about 30 seconds, and the session login that precedes this
+// step involves two network round-trips; deriving early is how a code that was
+// valid when the command started arrives expired.
+func (c *Client) currentOTP() (string, error) {
+	if c.otp != "" {
+		return c.otp, nil
+	}
+	if c.totpSecret == "" {
+		return "", nil
+	}
+	code, err := totp.Generate(c.totpSecret)
+	if err != nil {
+		return "", &APIError{
+			StatusCode:    http.StatusBadRequest,
+			Code:          CodeValidation,
+			ErrorMessages: []string{"stored 2FA secret is unusable: " + err.Error()},
+		}
+	}
+	return code, nil
 }
 
 // SetOnSessionEstablished registers a callback invoked with the freshly
@@ -573,11 +616,18 @@ func sessionKeyFromData(raw json.RawMessage) string {
 // sessionid, which we then mark ready. For an already-configured account the
 // server reads auth_type from its own config, so engineer + otp suffice.
 func (c *Client) complete2FA(ctx context.Context, csrf, sessionKey string) error {
-	if c.otp == "" {
+	otp, err := c.currentOTP()
+	if err != nil {
+		return err
+	}
+	if otp == "" {
 		return &APIError{
-			StatusCode:    http.StatusUnauthorized,
-			Code:          Code2FARequired,
-			ErrorMessages: []string{"该 Archery 账号开启了 2FA，需要 6 位验证码，请加 --otp <code> 重试"},
+			StatusCode: http.StatusUnauthorized,
+			Code:       Code2FARequired,
+			ErrorMessages: []string{
+				"该 Archery 账号开启了 2FA。人工操作请加 --otp <code>；" +
+					"无人值守请先存入 2FA 密钥：archery-cli auth login --totp-secret <base32>（或设 ARCHERY_CLI_2FA_SECRET），之后本机自动生成验证码",
+			},
 		}
 	}
 
@@ -595,7 +645,7 @@ func (c *Client) complete2FA(ctx context.Context, csrf, sessionKey string) error
 
 	form := url.Values{
 		"engineer":  {c.sessionUser},
-		"otp":       {c.otp},
+		"otp":       {otp},
 		"auth_type": {twoFAAuthType()},
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.host+"/api/v1/user/2fa/verify/", strings.NewReader(form.Encode()))

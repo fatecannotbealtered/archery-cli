@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/fatecannotbealtered/archery-cli/internal/totp"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -1491,5 +1493,133 @@ func TestEnsureSession_2FAWrongOTP(t *testing.T) {
 	}
 	if !sawVerify {
 		t.Error("expected /api/v1/user/2fa/verify/ to be called with the wrong OTP")
+	}
+}
+
+// twoFASecretServer is twoFAServer's sibling for the derived-code path: instead
+// of a hardcoded OTP it accepts whatever code the shared secret produces right
+// now, which is what Archery's pyotp-backed verifier does.
+//
+// It records the code it was sent so a test can assert WHICH code travelled,
+// not merely that the login succeeded. The TOTP algorithm itself is pinned by
+// the RFC 6238 vectors in internal/totp; these tests cover the wiring.
+func twoFASecretServer(t *testing.T, secret string, sawVerify *bool, gotOTP *string) *httptest.Server {
+	t.Helper()
+	const tempSessionKey = "sess-key-secret"
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/login/" && r.Method == http.MethodGet:
+			http.SetCookie(w, &http.Cookie{Name: "csrftoken", Value: "csrf-2fa", Path: "/"})
+			w.WriteHeader(http.StatusOK)
+		case r.URL.Path == "/authenticate/" && r.Method == http.MethodPost:
+			_, _ = w.Write([]byte(`{"status":0,"msg":"ok","data":"` + tempSessionKey + `"}`))
+		case r.URL.Path == "/api/v1/user/2fa/verify/" && r.Method == http.MethodPost:
+			*sawVerify = true
+			_ = r.ParseForm()
+			*gotOTP = r.Form.Get("otp")
+			if r.Form.Get("auth_type") == "" {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"auth_type":["该字段是必填项。"]}`))
+				return
+			}
+			want, err := totp.Generate(secret)
+			if err != nil {
+				t.Errorf("test secret is unusable: %v", err)
+			}
+			if r.Form.Get("otp") == want {
+				http.SetCookie(w, &http.Cookie{Name: "sessionid", Value: "sess-2fa-derived", Path: "/"})
+				_, _ = w.Write([]byte(`{"status":0,"msg":"ok"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"status":1,"msg":"验证码不正确！"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+}
+
+// TestEnsureSession_2FADerivesCodeFromStoredSecret is the point of the feature:
+// with a secret and no --otp, an unattended run completes 2FA on its own.
+func TestEnsureSession_2FADerivesCodeFromStoredSecret(t *testing.T) {
+	const secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+	var sawVerify bool
+	var gotOTP string
+	srv := twoFASecretServer(t, secret, &sawVerify, &gotOTP)
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	c.SetSessionCredentials("admin", "secret")
+	c.SetTOTPSecret(secret)
+	if _, _, err := c.Auth.LoginWithSession(testCtx, "admin", "secret"); err != nil {
+		t.Fatalf("login with a stored secret should succeed: %v", err)
+	}
+	if !sawVerify {
+		t.Fatal("/api/v1/user/2fa/verify/ was never called")
+	}
+	want, _ := totp.Generate(secret)
+	if gotOTP != want {
+		t.Errorf("sent otp %q, want the derived %q", gotOTP, want)
+	}
+}
+
+// TestEnsureSession_2FAExplicitOTPWinsOverSecret pins the precedence: a human
+// who typed a code gets that code sent, not one the tool made up. Otherwise an
+// operator working around a broken/rotated secret could not do so.
+func TestEnsureSession_2FAExplicitOTPWinsOverSecret(t *testing.T) {
+	const secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+	var sawVerify bool
+	var gotOTP string
+	srv := twoFASecretServer(t, secret, &sawVerify, &gotOTP)
+	defer srv.Close()
+
+	derived, _ := totp.Generate(secret)
+	explicit := "000000"
+	if derived == explicit {
+		explicit = "111111" // vanishingly unlikely, but keep the assertion meaningful
+	}
+
+	c := NewClient(srv.URL)
+	c.SetSessionCredentials("admin", "secret")
+	c.SetTOTPSecret(secret)
+	c.SetOTP(explicit)
+	// The explicit code is wrong on purpose, so the login must FAIL — proving the
+	// derived code was not silently substituted to rescue it.
+	err := func() error { _, _, e := c.Auth.LoginWithSession(testCtx, "admin", "secret"); return e }()
+	if err == nil {
+		t.Fatal("a wrong explicit OTP must fail even when a valid secret is stored")
+	}
+	if !sawVerify {
+		t.Fatal("verify should still have been attempted")
+	}
+	if gotOTP != explicit {
+		t.Errorf("sent otp %q, want the explicit %q (the secret must not override it)", gotOTP, explicit)
+	}
+}
+
+// TestEnsureSession_2FAUnusableSecretFailsClosed: a stored secret that cannot
+// produce a code is an error, never a silent fallback to "no 2FA". The verify
+// endpoint must not be called with an empty code.
+func TestEnsureSession_2FAUnusableSecretFailsClosed(t *testing.T) {
+	var sawVerify bool
+	var gotOTP string
+	srv := twoFASecretServer(t, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", &sawVerify, &gotOTP)
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	c.SetSessionCredentials("admin", "secret")
+	c.SetTOTPSecret("this-is-not-base32!!")
+	_, _, err := c.Auth.LoginWithSession(testCtx, "admin", "secret")
+	if err == nil {
+		t.Fatal("an unusable stored secret must fail the login")
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("want *APIError, got %T: %v", err, err)
+	}
+	if apiErr.Code != CodeValidation {
+		t.Errorf("Code = %q, want %q", apiErr.Code, CodeValidation)
+	}
+	if sawVerify {
+		t.Error("verify must not be called when no code could be derived")
 	}
 }

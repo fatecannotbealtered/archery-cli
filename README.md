@@ -58,7 +58,15 @@ PowerShell uses `$env:NAME = "value"` for the same environment variables. Keep r
 
 **Read-only mode.** Pass `--read-only` (or set `ARCHERY_CLI_READONLY` to any non-empty value) to hard-disable every write command. Writes are refused at the shared chokepoint with an `E_FORBIDDEN` envelope (exit 4) before any network call, regardless of `--dry-run`/`--confirm`; read commands are unaffected. Use it to run safely against production. `doctor` and `context` report the active state.
 
-**Two-factor auth.** For accounts with 2FA enabled, supply a fresh 6-digit code with `--otp <code>` (or `ARCHERY_CLI_OTP`). The CLI detects when Archery requires a second factor and, without a code, fails fast with `E_2FA_REQUIRED` (exit 9) and a hint to retry with `--otp`. Codes are ~30s-lived, so generate one immediately before running; the resulting session is cached, so later commands need no OTP until it expires.
+**Two-factor auth.** Two modes, for two different callers.
+
+*Interactive* — supply a fresh 6-digit code with `--otp <code>` (or `ARCHERY_CLI_OTP`). Codes are ~30s-lived, so generate one immediately before running. Without a code the CLI fails fast with `E_2FA_REQUIRED` (exit 9).
+
+*Unattended* — store the TOTP shared secret (the base32 key behind the enrolment QR code) with `archery-cli auth login --totp-secret <base32>`, or pass it per-run via `ARCHERY_CLI_2FA_SECRET`. The CLI then derives its own code and completes 2FA with no human in the loop, which is what lets an agent or CI job run unsupervised. An explicit `--otp` always wins, so you can still override a rotated or broken secret.
+
+Either way the resulting session is cached, so later commands need no second factor until it expires.
+
+> **Security trade-off.** Storing the seed puts both factors on one machine — it is no longer two-factor for that host, it is two secrets in one place. The secret goes only to the OS keyring (never the config file), `context` and `doctor` report whether one is configured but never its value, and `auth logout` deletes it along with the tokens. Prefer `ARCHERY_CLI_2FA_SECRET` over the flag: argv is visible in process listings and shell history. Do not do this for a high-privilege account.
 
 Worst-case risk tier: **T2 high** - can execute and manage SQL workflows against configured database instances. See [SECURITY.md](SECURITY.md) and [.agent/SEC-SPEC.md](.agent/SEC-SPEC.md).
 
@@ -107,6 +115,8 @@ Config location: `~/.archery-cli/config.json`.
 | `ARCHERY_CLI_REGION` | Active region/profile |
 | `ARCHERY_CLI_READONLY` | Any non-empty value disables all write commands (same as `--read-only`) |
 | `ARCHERY_CLI_OTP` | 6-digit 2FA code for accounts with two-factor auth (same as `--otp`) |
+| `ARCHERY_CLI_2FA_SECRET` | TOTP shared secret (base32) so unattended runs derive their own codes (same as `auth login --totp-secret`) |
+| `ARCHERY_CLI_2FA_TYPE` | 2FA mechanism sent to Archery; `totp` (default) or `sms` |
 | `NO_COLOR` | Disable colored text output when text mode is explicitly requested |
 
 Saved credentials, when supported, are encrypted or stored in the OS credential store. Environment variables take precedence and are the preferred path for short-lived Agent sessions.

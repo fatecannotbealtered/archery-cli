@@ -87,6 +87,11 @@ func sessionKey(region, username string) string {
 	return credentialKeyKind(region, username, "session")
 }
 
+// totpSecretKey builds a stable keyring account name for the 2FA shared secret.
+func totpSecretKey(region, username string) string {
+	return credentialKeyKind(region, username, "totp")
+}
+
 func credentialKeyKind(region, username, kind string) string {
 	region = strings.TrimSpace(region)
 	user := strings.TrimSpace(username)
@@ -207,4 +212,57 @@ func (ts *TokenStore) DeleteSession(region, username string) error {
 		}
 	}
 	return nil
+}
+
+// SaveTOTPSecret persists the 2FA shared secret (the base32 key behind the
+// enrolment QR code) for a region.
+//
+// SEC-SPEC §4 puts durable secrets in the OS keyring and nothing sensitive in
+// the config file, so this deliberately has no file fallback: if there is no
+// secret store, the caller is told rather than silently downgraded to plaintext
+// on disk. Storing the seed lets an unattended run derive its own codes; that
+// trade-off is documented at the command layer, not decided here.
+func (ts *TokenStore) SaveTOTPSecret(region, username, secret string) error {
+	if !ts.keyring.IsAvailable() {
+		return errors.New("OS credential store unavailable")
+	}
+	if err := ts.keyring.Store(keyringService, totpSecretKey(region, username), secret); err != nil {
+		return fmt.Errorf("saving 2FA secret to keyring: %w", err)
+	}
+	return nil
+}
+
+// LoadTOTPSecret retrieves the stored 2FA shared secret for a region, or an
+// empty string when none is configured (which is the common case and not an
+// error — most accounts have no 2FA).
+func (ts *TokenStore) LoadTOTPSecret(region, username string) (string, error) {
+	if !ts.keyring.IsAvailable() {
+		return "", nil
+	}
+	secret, err := ts.keyring.Retrieve(keyringService, totpSecretKey(region, username))
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return "", nil
+		}
+		return "", fmt.Errorf("loading 2FA secret from keyring: %w", err)
+	}
+	return secret, nil
+}
+
+// DeleteTOTPSecret removes the stored 2FA shared secret for a region.
+func (ts *TokenStore) DeleteTOTPSecret(region, username string) error {
+	if ts.keyring.IsAvailable() {
+		// A missing entry is the desired end state, so a delete miss is not an
+		// error worth surfacing.
+		_ = ts.keyring.Delete(keyringService, totpSecretKey(region, username))
+	}
+	return nil
+}
+
+// HasTOTPSecret reports whether a 2FA secret is configured, without reading its
+// value. Used by context/doctor so the diagnostic can say "configured" and
+// never risk putting the secret itself into output.
+func (ts *TokenStore) HasTOTPSecret(region, username string) bool {
+	secret, err := ts.LoadTOTPSecret(region, username)
+	return err == nil && strings.TrimSpace(secret) != ""
 }

@@ -544,6 +544,10 @@ func newClient() (*api.Client, *config.Config, *config.RegionConfig, error) {
 	// A 2FA code (if any) feeds the session login handshake; harmless in JWT mode
 	// where the form login never runs.
 	client.SetOTP(effectiveOTP())
+	// Unattended fallback: with a stored 2FA secret the client derives its own
+	// code when no --otp was given, so an agent is not dead-ended on a prompt it
+	// cannot answer. An explicit --otp still wins (see Client.currentOTP).
+	client.SetTOTPSecret(effectiveTOTPSecret(regionName, region.Username))
 
 	// Persist any session a lazy form login establishes — including on jwt
 	// regions, where query/dict/diagnostic/etc. are session-only and would
@@ -650,6 +654,38 @@ func effectiveOTP() string {
 		return v
 	}
 	return strings.TrimSpace(os.Getenv("ARCHERY_CLI_OTP"))
+}
+
+// effectiveTOTPSecretForLogin resolves the secret available to `auth login`
+// itself: the --totp-secret flag, else the env var.
+//
+// It deliberately does NOT read the keyring. auth login is the command that
+// establishes the secret, so consulting a store it is about to write would make
+// the outcome depend on whatever a previous run happened to leave behind.
+func effectiveTOTPSecretForLogin() string {
+	if v := strings.TrimSpace(authLoginTOTPFlag); v != "" {
+		return v
+	}
+	return strings.TrimSpace(os.Getenv("ARCHERY_CLI_2FA_SECRET"))
+}
+
+// effectiveTOTPSecret resolves the 2FA shared secret for a region: the env var
+// first, then whatever `auth login --totp-secret` put in the OS keyring.
+//
+// Env comes first because SEC-SPEC §4 names it the recommended non-interactive
+// secret channel — a CI job can supply one without writing to the host's
+// credential store. A keyring read failure is not surfaced: having no secret is
+// the ordinary case (most accounts have no 2FA), and if 2FA does turn out to be
+// required the login path reports that with actionable guidance.
+func effectiveTOTPSecret(region, username string) string {
+	if v := strings.TrimSpace(os.Getenv("ARCHERY_CLI_2FA_SECRET")); v != "" {
+		return v
+	}
+	secret, err := config.NewTokenStore().LoadTOTPSecret(region, username)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(secret)
 }
 
 func applyInsecureFromEnv() {

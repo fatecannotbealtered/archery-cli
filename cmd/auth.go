@@ -11,6 +11,7 @@ import (
 	"github.com/fatecannotbealtered/archery-cli/internal/api"
 	"github.com/fatecannotbealtered/archery-cli/internal/config"
 	"github.com/fatecannotbealtered/archery-cli/internal/output"
+	"github.com/fatecannotbealtered/archery-cli/internal/totp"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -61,6 +62,7 @@ var (
 	authLoginPasswordFlag string
 	authLoginRegionFlag   string
 	authLoginURLFlag      string
+	authLoginTOTPFlag     string
 )
 
 func init() {
@@ -73,6 +75,7 @@ func init() {
 	authLoginCmd.Flags().StringVar(&authLoginPasswordFlag, "password", "", "Archery password")
 	authLoginCmd.Flags().StringVar(&authLoginRegionFlag, "region", "", "Region name to save credentials under")
 	authLoginCmd.Flags().StringVar(&authLoginURLFlag, "url", "", "Archery URL")
+	authLoginCmd.Flags().StringVar(&authLoginTOTPFlag, "totp-secret", "", "2FA shared secret (base32) so unattended runs derive their own codes; prefer ARCHERY_CLI_2FA_SECRET, argv is visible to other processes")
 
 	markWrite(authLoginCmd)
 	markWrite(authLogoutCmd)
@@ -206,6 +209,18 @@ func doAuthLogin(cfg *config.Config, regionName, regionURL, username, password s
 		"password": password,
 		"mode":     mode,
 	}
+	// Validate the 2FA secret BEFORE the dry-run gate. A dry-run exists to
+	// preview what the confirmed run will do, so previewing success for a secret
+	// that cannot produce a code — and only failing after the operator commits
+	// with --confirm — would make the preview a lie. It is also free: no network
+	// or credential store is touched.
+	totpSecret := effectiveTOTPSecretForLogin()
+	if totpSecret != "" {
+		if err := totp.Validate(totpSecret); err != nil {
+			return failArg(err.Error())
+		}
+	}
+
 	action := "log in via session cookie and cache it"
 	if mode == config.ModeJWT {
 		action = "log in and cache JWT tokens"
@@ -223,8 +238,11 @@ func doAuthLogin(cfg *config.Config, regionName, regionURL, username, password s
 
 	client := api.NewClient(regionURL)
 	client.SetMode(mode)
-	// Pass any 2FA code through to the session login handshake.
+	// Pass any 2FA code through to the session login handshake. The secret is
+	// read from env only: a login that is itself establishing the secret must
+	// not depend on a keyring entry it has not written yet.
 	client.SetOTP(effectiveOTP())
+	client.SetTOTPSecret(effectiveTOTPSecretForLogin())
 
 	region := cfg.Regions[regionName]
 	region.URL = regionURL
@@ -258,6 +276,17 @@ func doAuthLogin(cfg *config.Config, regionName, regionURL, username, password s
 	}
 	if err := config.Save(cfg); err != nil {
 		return failWithCode("failed to save credentials: "+err.Error(), output.E_NETWORK)
+	}
+
+	// Persist the 2FA secret only after the login it just completed succeeded.
+	// Storing it earlier would leave a secret behind for credentials Archery
+	// rejected. It goes to the OS keyring and never to the config file
+	// (SEC-SPEC §4), so a failure to store is reported rather than silently
+	// downgraded to plaintext on disk.
+	if totpSecret != "" {
+		if err := config.NewTokenStore().SaveTOTPSecret(regionName, username, totpSecret); err != nil {
+			return failWithCode("logged in, but storing the 2FA secret failed: "+err.Error(), output.E_CONFIG)
+		}
 	}
 
 	cachedLabel := "session cookie cached"
@@ -310,6 +339,9 @@ func runAuthLogout(_ *cobra.Command, _ []string) error {
 	ts := config.NewTokenStore()
 	_ = ts.DeleteTokens(regionName, region.Username)
 	_ = ts.DeleteSession(regionName, region.Username)
+	// The 2FA secret is a credential for this region too; leaving it behind
+	// would mean "logged out" still holds the factor that completes a login.
+	_ = ts.DeleteTOTPSecret(regionName, region.Username)
 
 	region.AccessToken = ""
 	region.RefreshToken = ""
@@ -329,7 +361,7 @@ func runAuthLogout(_ *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	output.Success(fmt.Sprintf("Logged out (region: %s). Tokens cleared.", regionName))
+	output.Success(fmt.Sprintf("Logged out (region: %s). Tokens, session, and any stored 2FA secret cleared.", regionName))
 	return nil
 }
 

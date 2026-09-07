@@ -127,6 +127,7 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	client := api.NewClient(region.URL)
 	client.SetMode(result.Mode)
 	client.SetOTP(effectiveOTP())
+	client.SetTOTPSecret(effectiveTOTPSecret(regionName, region.Username))
 
 	hasCreds, authFix, verifyErr := doctorVerify(client, region, result.Mode, &result.LatencyMs)
 

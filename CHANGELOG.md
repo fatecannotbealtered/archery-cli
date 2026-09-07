@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Unattended 2FA via a stored TOTP secret.** `auth login --totp-secret <base32>`
+  (or `ARCHERY_CLI_2FA_SECRET`) stores the shared secret behind the enrolment QR
+  code, and the CLI then derives its own 6-digit code to complete Archery's
+  `/api/v1/user/2fa/verify/` handshake. An agent or CI job on a 2FA account no
+  longer dead-ends on `E_2FA_REQUIRED` waiting for a human to read a phone.
+  `--otp` still wins when given, so an operator can override a rotated secret.
+  `context` reports `regions[].hasTotpSecret` so a caller can tell "2FA is
+  handled" from "2FA will block", and `auth logout` deletes the secret with the
+  rest of the region's credentials.
+
+  The secret goes only to the OS keyring, alongside the JWT and session entries
+  and under the same `region|kind|user` key (SEC-SPEC §4); the config file keeps
+  zero secrets. A malformed secret is refused by `--dry-run`, before any network
+  call, so the preview cannot promise a login that `--confirm` would fail.
+
+  RFC 6238 is implemented on the standard library rather than added as a
+  dependency: the algorithm is HMAC-SHA1 plus dynamic truncation, it is pinned
+  by the RFC's own test vectors, and the usual Go TOTP module also carries a
+  QR-code encoder this tool has no use for.
+
+  **Trade-off, stated plainly:** a stored seed puts both factors on one host, so
+  that host no longer has two-factor auth — it has two secrets in one place.
+  Prefer `ARCHERY_CLI_2FA_SECRET` over the flag (argv is visible in process
+  listings), and do not do this for a high-privilege account.
 ## [1.0.20] - 2026-08-26
 
 ### Security
