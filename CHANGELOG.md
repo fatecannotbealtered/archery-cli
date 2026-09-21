@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.0.22] - 2026-09-21
 
+### Security
+
+- **Bumped the indirect `google.golang.org/grpc` to v1.83.2** for GO-2026-6348,
+  published while this release was being prepared. grpc arrives via
+  `sigstore/sigstore-go`, which is already at its latest (v1.3.0) and still
+  pins the affected line, so the indirect dependency is raised directly.
+  `govulncheck` under the CI platform (`GOOS=linux`) reports no reachable
+  vulnerabilities afterwards.
+
 ### Fixed
 
 - **`workflow submit` / `sqlcheck` / `auto-review` returned 404 on Archery
