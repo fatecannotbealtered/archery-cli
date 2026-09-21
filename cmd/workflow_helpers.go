@@ -122,7 +122,7 @@ func printWorkflowDetail(detail *api.SQLWorkflowDetail, host string) {
 	if detail.DemandURL != "" {
 		printField("Demand URL", detail.DemandURL)
 	}
-	printField("URL", host+fmt.Sprintf("/sqlworkflow/%d/", detail.ID))
+	printField("URL", workflowWebURL(host, detail.ID))
 
 	if detail.SQLContent != "" {
 		fmt.Println()
@@ -222,7 +222,7 @@ func workflowToMap(w api.SQLWorkflow, host string) map[string]any {
 		m["group"] = w.GroupName
 	}
 	if host != "" {
-		m["webUrl"] = host + fmt.Sprintf("/sqlworkflow/%d/", w.ID)
+		m["webUrl"] = workflowWebURL(host, w.ID)
 	}
 	api.TagUntrusted(m, "title")
 	return normalizeAgentMap(m)
@@ -277,7 +277,7 @@ func workflowDetailToMap(d *api.SQLWorkflowDetail, host string) map[string]any {
 		m["demandUrl"] = d.DemandURL
 	}
 	if host != "" {
-		m["webUrl"] = host + fmt.Sprintf("/sqlworkflow/%d/", d.ID)
+		m["webUrl"] = workflowWebURL(host, d.ID)
 	}
 	if len(d.AuditLog) > 0 {
 		logs := make([]map[string]any, len(d.AuditLog))
@@ -379,4 +379,15 @@ func formatTime(t string) string {
 		return t[:10]
 	}
 	return t
+}
+
+// workflowWebURL builds the browser link for a workflow.
+//
+// The detail page is /detail/<id>/, not /sqlworkflow/<id>/: Archery routes
+// "sqlworkflow/" to the workflow *list*, with no id segment, so appending one
+// matches nothing and the link 404s. This has been true since v1.8.5 and is
+// still true in v1.9.x. The submit view's own 302 points at /detail/<id>/ —
+// which is where the CLI already reads the new workflow's id from.
+func workflowWebURL(host string, id int) string {
+	return strings.TrimRight(host, "/") + fmt.Sprintf("/detail/%d/", id)
 }

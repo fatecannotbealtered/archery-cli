@@ -69,6 +69,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with spaces and quotes, and cmd.exe and POSIX shells disagree on quoting, so
   a wrong line would be worse than none.
 
+- **Workflow links pointed at a route that does not exist.** Every `webUrl`,
+  every `URL` line in `workflow detail`, and the link returned by a successful
+  `workflow submit` was built as `<host>/sqlworkflow/<id>/`. Archery routes
+  `sqlworkflow/` to the workflow *list* page, which takes no id segment, so
+  that URL matched nothing and 404'd — for every workflow the CLI has ever
+  printed, on v1.8.5 through v1.9.x alike. The detail page is `/detail/<id>/`,
+  which is also where Archery's own submit view redirects and where the CLI
+  already read the new workflow's id from.
+
 - **Resource groups now resolve for non-superuser accounts.** Moving submit to
   the REST endpoint meant `--group-name` had to be resolved to a numeric
   group_id, and the only listing the CLI knew, `/group/group/`, is

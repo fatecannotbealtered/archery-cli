@@ -357,7 +357,7 @@ var workflowSubmitCmd = &cobra.Command{
 			return handleAPIError(err)
 		}
 
-		url := region.URL + fmt.Sprintf("/sqlworkflow/%d/", resp.ID)
+		url := workflowWebURL(region.URL, resp.ID)
 		if jsonMode {
 			output.PrintJSON(map[string]any{
 				"workflowId": strconv.Itoa(resp.ID),
