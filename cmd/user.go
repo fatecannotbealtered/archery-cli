@@ -217,6 +217,18 @@ var userResourceGroupsCmd = &cobra.Command{
 		if err != nil {
 			return handleAPIError(err)
 		}
+		// /group/group/ is superuser-only, so an ordinary account sees an empty
+		// list and no way to learn the group_id that `workflow submit` needs.
+		// Fall back to the groups Archery renders into its own submit page, and
+		// apply the search/paging client-side since that page takes neither.
+		if len(rows) == 0 {
+			mine, ferr := resourceGroupsForResolution(client)
+			if ferr == nil && len(mine) > 0 {
+				rows = filterResourceGroups(mine, search)
+				total = len(rows)
+				rows = pageResourceGroups(rows, limit, offset)
+			}
+		}
 
 		if jsonMode {
 			fields := getFieldsFlag(cmd)
@@ -413,4 +425,32 @@ func resourceGroupRowToMap(rg api.ResourceGroupRow) map[string]any {
 	}
 	tagCommonUntrusted(m)
 	return m
+}
+
+// filterResourceGroups applies a case-insensitive name search client-side. The
+// submit-page fallback has no server-side search to delegate to.
+func filterResourceGroups(rows []api.ResourceGroupRow, search string) []api.ResourceGroupRow {
+	if strings.TrimSpace(search) == "" {
+		return rows
+	}
+	needle := strings.ToLower(strings.TrimSpace(search))
+	out := make([]api.ResourceGroupRow, 0, len(rows))
+	for _, r := range rows {
+		if strings.Contains(strings.ToLower(r.Name), needle) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// pageResourceGroups applies limit/offset client-side, for the same reason.
+func pageResourceGroups(rows []api.ResourceGroupRow, limit, offset int) []api.ResourceGroupRow {
+	if offset >= len(rows) {
+		return nil
+	}
+	rows = rows[offset:]
+	if limit > 0 && limit < len(rows) {
+		rows = rows[:limit]
+	}
+	return rows
 }

@@ -912,6 +912,47 @@ func resolveInstanceName(lazyClient func() (*api.Client, error), instanceID int)
 	return "", failNotFound(fmt.Sprintf("instance ID %d not found; check 'archery-cli instance list'", instanceID))
 }
 
+// resourceGroupsForResolution lists the resource groups an identifier can be
+// resolved against.
+//
+// The admin JSON listing is tried first, then the groups Archery renders into
+// its own submit page. That fallback is not a nicety: /group/group/ is
+// @superuser_required, so an ordinary account gets an empty list from it — and
+// submitting a workflow needs the numeric group_id, which Archery shows a
+// non-admin nowhere else. Without this, every non-superuser could resolve no
+// group at all and so could not submit.
+func resourceGroupsForResolution(client *api.Client) ([]api.ResourceGroupRow, error) {
+	groups, _, adminErr := client.Users.ListResourceGroups(apiCtx(), 500, 0, "")
+	if adminErr == nil && len(groups) > 0 {
+		return groups, nil
+	}
+	mine, err := client.Users.ListMyResourceGroups(apiCtx())
+	if err != nil {
+		if adminErr != nil {
+			return nil, adminErr
+		}
+		return groups, nil
+	}
+	if len(mine) > 0 {
+		output.Warn("resource groups listed from your own submit page (/submitsql/): " +
+			"the admin group list (/group/group/) needs superuser permission")
+	}
+	return mine, nil
+}
+
+// groupNames renders the resolvable group names for an error message, so a
+// failure says what *is* available instead of only what is not.
+func groupNames(groups []api.ResourceGroupRow) string {
+	if len(groups) == 0 {
+		return "none are visible to this account"
+	}
+	names := make([]string, 0, len(groups))
+	for _, g := range groups {
+		names = append(names, fmt.Sprintf("%s (%d)", g.Name, g.ID))
+	}
+	return "available: " + strings.Join(names, ", ")
+}
+
 // resolveGroupName maps a numeric resource-group ID back to its name, for the
 // same preview and pre-confirm validation reasons as resolveInstanceName.
 func resolveGroupName(lazyClient func() (*api.Client, error), groupID int) (string, error) {
@@ -919,7 +960,7 @@ func resolveGroupName(lazyClient func() (*api.Client, error), groupID int) (stri
 	if err != nil {
 		return "", err
 	}
-	groups, _, err := client.Users.ListResourceGroups(apiCtx(), 500, 0, "")
+	groups, err := resourceGroupsForResolution(client)
 	if err != nil {
 		return "", handleAPIError(err)
 	}
@@ -928,7 +969,7 @@ func resolveGroupName(lazyClient func() (*api.Client, error), groupID int) (stri
 			return g.Name, nil
 		}
 	}
-	return "", failNotFound(fmt.Sprintf("resource group ID %d not found; check 'archery-cli user resource-groups'", groupID))
+	return "", failNotFound(fmt.Sprintf("resource group ID %d not found; %s", groupID, groupNames(groups)))
 }
 
 // resolveGroupID maps a resource-group name to its numeric id via the
@@ -938,7 +979,7 @@ func resolveGroupID(lazyClient func() (*api.Client, error), groupName string) (i
 	if err != nil {
 		return 0, err
 	}
-	groups, _, err := client.Users.ListResourceGroups(apiCtx(), 500, 0, "")
+	groups, err := resourceGroupsForResolution(client)
 	if err != nil {
 		return 0, handleAPIError(err)
 	}
@@ -947,7 +988,7 @@ func resolveGroupID(lazyClient func() (*api.Client, error), groupName string) (i
 			return g.ID, nil
 		}
 	}
-	return 0, failNotFound(fmt.Sprintf("resource group %q not found; check 'archery-cli user resource-groups'", groupName))
+	return 0, failNotFound(fmt.Sprintf("resource group %q not found; %s", groupName, groupNames(groups)))
 }
 
 // newClientMemo returns a function that builds the API client once and caches

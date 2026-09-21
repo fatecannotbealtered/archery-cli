@@ -69,6 +69,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with spaces and quotes, and cmd.exe and POSIX shells disagree on quoting, so
   a wrong line would be worse than none.
 
+- **Resource groups now resolve for non-superuser accounts.** Moving submit to
+  the REST endpoint meant `--group-name` had to be resolved to a numeric
+  group_id, and the only listing the CLI knew, `/group/group/`, is
+  `@superuser_required` — it returns an empty list to an ordinary account
+  rather than an error. Every non-superuser therefore got `resource group "x"
+  not found` and could not submit at all, with the message pointing at
+  `user resource-groups`, which was empty for the same reason. The CLI now
+  falls back to the groups Archery renders into its own submit page — the one
+  place a non-admin can see the id — and `user resource-groups` uses the same
+  fallback so its advice is true. A group that really is missing now lists the
+  ones that are available instead.
+
 - **A token mismatch now says what the fingerprint covers.** `confirmation
   token does not match this operation` gave no way to guess *which* dimension
   differed. It now names the command and the active region context, and says

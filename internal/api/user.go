@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/url"
+	"regexp"
 	"strconv"
 )
 
@@ -308,4 +310,61 @@ func nonEmptyMsg(msg, fallback string) string {
 		return fallback
 	}
 	return msg
+}
+
+// ListMyResourceGroups returns the resource groups the authenticated user
+// belongs to, read from the groups Archery renders into its own SQL-submit
+// page.
+//
+// This is a fallback, not a preference. The JSON listing (/group/group/) is
+// @superuser_required, so an ordinary account gets an empty list from it — yet
+// submitting a workflow needs the numeric group_id, and Archery exposes that
+// mapping to a non-admin nowhere else. Its own submit page renders the user's
+// groups as
+//
+//	<option value="<group_name>" group-id="<group_id>">…</option>
+//
+// which is the same source its web UI uses to populate the picker.
+func (u *UserAPI) ListMyResourceGroups(ctx context.Context) ([]ResourceGroupRow, error) {
+	data, err := u.client.SessionGet(ctx, "/submitsql/")
+	if err != nil {
+		return nil, fmt.Errorf("list my resource groups: %w", err)
+	}
+	return parseSubmitPageGroups(string(data)), nil
+}
+
+var (
+	optionTagRe     = regexp.MustCompile(`(?is)<option\b[^>]*>`)
+	optionValueRe   = regexp.MustCompile(`(?i)\bvalue\s*=\s*"([^"]*)"`)
+	optionGroupIDRe = regexp.MustCompile(`(?i)\bgroup-id\s*=\s*"(\d+)"`)
+)
+
+// parseSubmitPageGroups pulls {group_id, group_name} out of the submit page's
+// option tags. Attributes are read independently of their order, and an option
+// without a group-id (the instance and database pickers on the same page) is
+// skipped, so this does not depend on the template's attribute ordering or on
+// the group select being the only one present.
+func parseSubmitPageGroups(page string) []ResourceGroupRow {
+	var rows []ResourceGroupRow
+	seen := map[int]bool{}
+	for _, tag := range optionTagRe.FindAllString(page, -1) {
+		idMatch := optionGroupIDRe.FindStringSubmatch(tag)
+		if idMatch == nil {
+			continue
+		}
+		id, err := strconv.Atoi(idMatch[1])
+		if err != nil || seen[id] {
+			continue
+		}
+		name := ""
+		if v := optionValueRe.FindStringSubmatch(tag); v != nil {
+			name = html.UnescapeString(v[1])
+		}
+		if name == "" {
+			continue
+		}
+		seen[id] = true
+		rows = append(rows, ResourceGroupRow{ID: id, Name: name})
+	}
+	return rows
 }
