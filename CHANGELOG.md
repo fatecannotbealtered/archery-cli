@@ -69,6 +69,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with spaces and quotes, and cmd.exe and POSIX shells disagree on quoting, so
   a wrong line would be worse than none.
 
+- **A token mismatch now says what the fingerprint covers.** `confirmation
+  token does not match this operation` gave no way to guess *which* dimension
+  differed. It now names the command and the active region context, and says
+  the arguments are covered too. The common cause is the region context
+  differing between the two steps — for instance `ARCHERY_CLI_REGION` set on
+  only one of them, which is exactly how this was found.
+
 - **`auth login --dry-run` no longer asks for a password it cannot use.** The
   password was collected before the gate, so a dry-run took the secret and
   discarded it — which reads like the password was rejected — and in json mode

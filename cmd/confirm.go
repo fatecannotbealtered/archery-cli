@@ -61,7 +61,19 @@ func validateConfirmToken(token, action, region string, payload any) error {
 	if subtle.ConstantTimeCompare([]byte(token), []byte(expected)) == 1 {
 		return nil
 	}
-	return failWithCode("confirmation token does not match this operation; re-run with --dry-run", output.E_CONFLICT)
+	// Name what the fingerprint covers. The token binds the command, its
+	// arguments, and the active region context — so a token minted with a
+	// different --region (or with ARCHERY_CLI_REGION set on only one of the two
+	// steps) mismatches for a reason the bare message gave no way to guess.
+	ctx := region
+	if ctx == "" {
+		ctx = "(none)"
+	}
+	return failWithCode(fmt.Sprintf(
+		"confirmation token does not match this operation (command %q, region context %q); "+
+			"the token also covers the command's arguments, so re-run --dry-run with the same "+
+			"flags, --region and environment, and use the token it prints",
+		action, ctx), output.E_CONFLICT)
 }
 
 // requireConfirm enforces non-interactive confirmation for destructive or high-impact writes.
