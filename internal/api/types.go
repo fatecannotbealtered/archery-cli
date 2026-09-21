@@ -357,10 +357,12 @@ func (s *flexString) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// reviewResultRow is the session ReviewResult shape returned by /simplecheck/
-// (data.rows) and /sqlworkflow/detail_content/ (rows). It mirrors Archery's
-// ReviewResult.__dict__ projection. Numeric-or-string fields use flexString
-// because Archery emits them inconsistently across workflows/stages.
+// reviewResultRow is Archery's ReviewResult row, returned by the REST
+// pre-check (/api/v1/workflow/sqlcheck/, in `rows`) and by
+// /sqlworkflow/detail_content/. It mirrors the ReviewResult.__dict__
+// projection, which is why both endpoints share it. Numeric-or-string fields
+// use flexString because Archery emits them inconsistently across
+// workflows/stages.
 type reviewResultRow struct {
 	ID           int        `json:"id"`
 	Stage        string     `json:"stage"`

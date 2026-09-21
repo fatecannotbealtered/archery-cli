@@ -709,7 +709,7 @@ var workflowSQLCheckCmd = &cobra.Command{
 var workflowAutoReviewCmd = &cobra.Command{
 	Use:   "auto-review",
 	Short: "Classify SQL by the auto-review rules; optionally approve compliant workflows",
-	Long: "Runs the SQL pre-check (/simplecheck/) and classifies each statement as " +
+	Long: "Runs the SQL pre-check (POST /api/v1/workflow/sqlcheck/) and classifies each statement as " +
 		"pass or block by the auto-review rules: a statement blocks if its errlevel " +
 		"is non-zero (a syntax/risk error). Without --execute this is a read-only " +
 		"dry-run that reports the classification. With --execute it approves (audit " +

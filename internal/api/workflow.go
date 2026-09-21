@@ -11,10 +11,14 @@ import (
 
 // WorkflowAPI provides methods for the SQL workflow endpoints.
 //
-// Each method branches on the client transport mode. Session mode (the default)
-// targets Archery's AJAX/Django endpoints, which ordinary accounts can reach;
-// JWT mode targets the REST API under /api/v1/. The session shapes are taken
+// Most methods branch on the client transport mode: session mode (the default)
+// targets Archery's AJAX/Django endpoints, which ordinary accounts can reach,
+// and JWT mode the REST API under /api/v1/. Those session shapes are taken
 // from sql/sql_workflow.py in the v1.8.5 source.
+//
+// Submit and SQLCheck are the exception. Archery deleted the AJAX views behind
+// them in v1.9.0, so both transports use the REST endpoints and the mode
+// decides only how the request is authenticated.
 type WorkflowAPI struct {
 	client *Client
 }

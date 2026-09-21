@@ -54,7 +54,9 @@ PowerShell 使用 `$env:NAME = "value"` 设置同样的环境变量。真实密�
 
 `archery-cli` 是 AI Agent 优先的 CLI。默认输出 JSON，实时命令面通过 `archery-cli reference` 发现；支持写操作的命令使用非交互的 `--dry-run` 到 `--confirm <confirm_token>` 流程。
 
-**双模传输 —— 普通开发者账号即可用。** CLI **默认走 Archery 网页端的 session + AJAX 端点**（`/authenticate/`、`/sqlworkflow_list/`、`/sqlquery/` 等）登录和请求。这条路径在所有 Archery 版本、对普通账号都可用；而 `/api/v1` REST 面通常对普通账号关闭（`403`）或根本未开启。REST + JWT 作为可选的高级模式保留：传 `--mode jwt` 或在 region 配置 `mode: jwt` 即可。模式优先级为 `--mode` 参数 → region 配置 → 默认 `session`。已在 `hhyo/archery:v1.8.5` 上用普通账号真机验证。
+**双模传输 —— 普通开发者账号即可用。** CLI **默认走 Archery 网页端的 session + AJAX 端点**（`/authenticate/`、`/sqlworkflow_list/`、`/sqlquery/` 等）登录和请求。这条路径在所有 Archery 版本、对普通账号都可用；而 `/api/v1` REST 面通常对普通账号关闭（`403`）或根本未开启。REST + JWT 作为可选的高级模式保留：传 `--mode jwt` 或在 region 配置 `mode: jwt` 即可。模式优先级为 `--mode` 参数 → region 配置 → 默认 `session`。已在 `hhyo/archery:v1.8.5` 和 `v1.9.1` 上用普通账号真机验证。
+
+**有两个命令是例外，且不得不例外。** Archery 在 **v1.9.0** 删掉了 `workflow submit` 和 `workflow sqlcheck` 所依赖的 AJAX 视图，因此这两个命令在**两种模式下**都走 `/api/v1/workflow/` 和 `/api/v1/workflow/sqlcheck/` —— 这两条路由在 v1.8.5 也存在，所以一条路径覆盖所有支持的版本。它不需要 JWT，也不需要进 API 白名单：Archery 的 DRF 配置里 `SessionAuthentication` 与 `JWTAuthentication` 并存，而这两个端点都用 `IsAuthenticated` 覆盖了全局的白名单权限。详见 [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md)。
 
 **只读模式。** 传 `--read-only`（或将 `ARCHERY_CLI_READONLY` 设为任意非空值）即可硬禁用所有写命令。写命令会在统一入口处被拒，返回 `E_FORBIDDEN`（退出码 4），且发生在任何网络调用之前，不受 `--dry-run`/`--confirm` 影响；读命令不受影响。适合在生产环境安全运行。`doctor` 和 `context` 会显示当前是否只读。
 
