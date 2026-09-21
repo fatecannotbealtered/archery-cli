@@ -1,10 +1,10 @@
 ---
 name: archery-cli
-version: "1.0.21"
+version: "1.0.22"
 description: "Archery SQL audit platform CLI for managing SQL workflows, queries, instances, diagnostics. Use when the user asks about SQL审核, database operations, Archery platform management, or needs to submit/review/execute SQL against database instances."
 license: MIT
 user-invocable: true
-metadata: {"requires":{"bins":["archery-cli"],"min_version":"1.0.21"}}
+metadata: {"requires":{"bins":["archery-cli"],"min_version":"1.0.22"}}
 ---
 
 # archery-cli
@@ -59,7 +59,7 @@ First-time setup: ask user for Archery URL + credentials, then run `archery-cli 
 | Writes | `--dry-run` first, inspect `data.preview`, then retry with `--confirm <confirm_token>` from `data.confirm_token` |
 | Dangerous writes | If `reference` shows `requiresDangerous`, include `--dangerous` in both dry-run and confirm commands |
 | Discovery | `archery-cli reference` is the machine truth for params, `write`, `requiresConfirmation`, `requiresDangerous`, `riskLevel`, output schemas, and errors |
-| Transport | Defaults to **session** mode (Archery web AJAX endpoints) — works for ordinary accounts on all versions. REST + JWT is opt-in via `--mode jwt` or a region's `mode: jwt`. Precedence: `--mode` flag → region config → `session`. |
+| Transport | Defaults to **session** mode (Archery web AJAX endpoints) — works for ordinary accounts on all versions. REST + JWT is opt-in via `--mode jwt` or a region's `mode: jwt`. Precedence: `--mode` flag → region config → `session`. **Exception:** `workflow submit`, `sqlcheck` and `auto-review` use `/api/v1/workflow/` and `/api/v1/workflow/sqlcheck/` in *both* modes — Archery deleted their AJAX views in v1.9.0. Still no JWT needed: those two endpoints accept the session cookie and override the API whitelist with `IsAuthenticated`. |
 | Read-only | Pass `--read-only` (or set `ARCHERY_CLI_READONLY`) to hard-disable all writes; they fail with `E_FORBIDDEN` (exit 4) before any network call. Use it when the task is read-only/analysis. |
 | 2FA | If a command fails with `E_2FA_REQUIRED` (exit 9), the account has 2FA on. **First check `context.regions[].hasTotpSecret`**: when true the tool derives its own code and this error means something else is wrong (clock skew, rotated secret) — do not ask the user for a code. When false, ask the user for a fresh 6-digit code and retry the **same** command with `--otp <code>` (codes last ~30s); if the user wants future runs unattended, tell them to store the seed once with `auth login --totp-secret <base32>` or set `ARCHERY_CLI_2FA_SECRET`. Either way the session is then cached in the OS keyring and reused (incl. on `jwt` regions for session-only commands), so later commands need no second factor until it expires. Codes are treated as authenticator/TOTP by default; for SMS-based 2FA set `ARCHERY_CLI_2FA_TYPE` (SMS cannot be automated — it always needs a human). |
 | Instance/group IDs | `workflow submit/sqlcheck/auto-review` accept either `--instance`/`--group` (numeric IDs, resolved automatically) **or** `--instance-name`/`--group-name`. IDs work in both transport modes. |
