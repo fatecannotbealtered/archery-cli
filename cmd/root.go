@@ -287,10 +287,7 @@ func markDryRunOrConfirmWithPayload(action string, detail map[string]any, confir
 	// Read-only is the outermost gate: every write command funnels through here,
 	// so refusing at this chokepoint blocks writes regardless of --dry-run /
 	// --confirm. The dangerous gate and dry-run preview never run once refused.
-	if readOnlyMode {
-		emitError(
-			"read-only mode: write commands are disabled (unset --read-only / ARCHERY_CLI_READONLY to enable writes)",
-			output.E_FORBIDDEN)
+	if refuseIfReadOnly() {
 		return true
 	}
 	if requiresDangerousGate(activeCmd) {
@@ -636,6 +633,21 @@ func InsecureTLS() bool { return insecureTLS }
 
 // ReadOnly reports whether write commands are disabled (for doctor/context).
 func ReadOnly() bool { return readOnlyMode }
+
+// refuseIfReadOnly emits the read-only refusal and reports whether it fired.
+// markDryRunOrConfirm applies this gate at the confirm chokepoint; a write
+// command that has to reach the network *before* that chokepoint — to resolve
+// an instance or group identifier, say — calls this first, so --read-only keeps
+// its stronger promise: no request leaves the process at all.
+func refuseIfReadOnly() bool {
+	if !readOnlyMode {
+		return false
+	}
+	emitError(
+		"read-only mode: write commands are disabled (unset --read-only / ARCHERY_CLI_READONLY to enable writes)",
+		output.E_FORBIDDEN)
+	return true
+}
 
 // applyReadOnlyFromEnv turns on read-only mode when ARCHERY_CLI_READONLY holds
 // any non-empty value, mirroring the --read-only flag. The flag, once set, wins.

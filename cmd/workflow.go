@@ -43,15 +43,19 @@ func init() {
 
 	// workflow submit
 	workflowSubmitCmd.Flags().String("name", "", "Workflow title (required)")
-	workflowSubmitCmd.Flags().Int("instance", 0, "Target instance ID (both modes; session resolves it to a name)")
-	workflowSubmitCmd.Flags().String("instance-name", "", "Target instance name (session mode; wins over --instance)")
+	workflowSubmitCmd.Flags().Int("instance", 0, "Target instance ID (both modes)")
+	workflowSubmitCmd.Flags().String("instance-name", "", "Target instance name; resolved to the ID (--instance wins over it)")
 	workflowSubmitCmd.Flags().String("db", "", "Target database name (required)")
 	workflowSubmitCmd.Flags().String("sql", "", "SQL content (required)")
-	workflowSubmitCmd.Flags().Int("group", 0, "Resource group ID (both modes; session resolves it to a name)")
-	workflowSubmitCmd.Flags().String("group-name", "", "Resource group name (session mode; wins over --group)")
+	workflowSubmitCmd.Flags().Int("group", 0, "Resource group ID (both modes)")
+	workflowSubmitCmd.Flags().String("group-name", "", "Resource group name; resolved to the ID (--group wins over it)")
 	workflowSubmitCmd.Flags().Bool("backup", true, "Require backup before execution")
 	workflowSubmitCmd.Flags().String("demand-url", "", "Related demand/requirement URL")
-	workflowSubmitCmd.Flags().StringSlice("cc", nil, "CC notify usernames (session mode)")
+	// Kept registered, and rejected with an explanation, rather than deleted:
+	// an agent working from an older Skill gets the reason instead of an
+	// "unknown flag" it cannot act on.
+	workflowSubmitCmd.Flags().StringSlice("cc", nil,
+		"(unsupported) CC notify usernames — Archery's workflow API has no cc_users field")
 	workflowCmd.AddCommand(workflowSubmitCmd)
 	markWrite(workflowSubmitCmd)
 	markRiskLevel(workflowSubmitCmd, "medium")
@@ -85,15 +89,15 @@ func init() {
 	markRiskLevel(workflowCancelCmd, "medium")
 
 	// workflow sqlcheck
-	workflowSQLCheckCmd.Flags().Int("instance", 0, "Target instance ID (both modes; session resolves it to a name)")
-	workflowSQLCheckCmd.Flags().String("instance-name", "", "Target instance name (session mode; wins over --instance)")
+	workflowSQLCheckCmd.Flags().Int("instance", 0, "Target instance ID (both modes)")
+	workflowSQLCheckCmd.Flags().String("instance-name", "", "Target instance name; resolved to the ID (--instance wins over it)")
 	workflowSQLCheckCmd.Flags().String("db", "", "Target database name (required)")
 	workflowSQLCheckCmd.Flags().String("sql", "", "SQL to check (required)")
 	workflowCmd.AddCommand(workflowSQLCheckCmd)
 
 	// workflow auto-review
-	workflowAutoReviewCmd.Flags().Int("instance", 0, "Target instance ID (both modes; session resolves it to a name)")
-	workflowAutoReviewCmd.Flags().String("instance-name", "", "Target instance name (session mode; wins over --instance)")
+	workflowAutoReviewCmd.Flags().Int("instance", 0, "Target instance ID (both modes)")
+	workflowAutoReviewCmd.Flags().String("instance-name", "", "Target instance name; resolved to the ID (--instance wins over it)")
 	workflowAutoReviewCmd.Flags().String("db", "", "Target database name (required)")
 	workflowAutoReviewCmd.Flags().String("sql", "", "SQL to classify (required)")
 	workflowAutoReviewCmd.Flags().StringSlice("ids", nil, "Approve these workflow IDs after they pass the rules (with --execute)")
@@ -242,40 +246,67 @@ var workflowSubmitCmd = &cobra.Command{
 		demandURL, _ := cmd.Flags().GetString("demand-url")
 		ccUsers, _ := cmd.Flags().GetStringSlice("cc")
 
+		// Archery's REST submit has no cc_users field — only the /autoreview/
+		// AJAX view deleted in v1.9.0 ever carried one. Refuse rather than drop
+		// the recipients silently: a notification list that vanishes without a
+		// word is worse than a failed flag.
+		if len(ccUsers) > 0 {
+			return failArg("--cc is not supported: Archery's workflow API has no cc_users field " +
+				"(only the /autoreview/ view removed in v1.9.0 had one). Configure carbon-copy " +
+				"recipients in Archery's notification settings instead, then re-run without --cc")
+		}
+
+		// Resolving the instance/group identifiers below queries the server, so
+		// the read-only refusal has to come first: --read-only promises that a
+		// write command issues no request at all, not merely that it stops at
+		// the confirm chokepoint.
+		if refuseIfReadOnly() {
+			return nil
+		}
+
 		getClientRegion := newClientRegionMemo()
 		getClient := func() (*api.Client, error) {
 			c, _, err := getClientRegion()
 			return c, err
 		}
 		mode := activeTransportMode()
-		// Session submit keys on names; REST keys on numeric IDs. In session mode
-		// the agent may pass the name directly, or the numeric ID (resolved to a
-		// name here) — same flags as JWT mode, no per-transport memorisation. The
-		// name flag wins when both are present.
-		if mode == api.ModeSession {
+		// Both transports submit through the REST endpoint, which keys on the
+		// numeric instance pk and group_id. An agent may still pass the names it
+		// has — they are resolved to IDs here — so the same flags work in either
+		// mode. The ID wins when both are given.
+		//
+		// Whichever side is supplied, the other is resolved too. That is not
+		// bookkeeping: submit is a write behind a confirm gate, so the preview
+		// has to name the instance and group the caller is about to touch, and
+		// an ID that matches nothing must fail here — at dry-run — rather than
+		// after the operator has approved a token.
+		if instanceID == 0 {
 			if instanceName == "" {
-				if instanceID == 0 {
-					return failArg("--instance-name or --instance (ID) is required in session mode")
-				}
-				instanceName, err = resolveInstanceName(getClient, instanceID)
-				if err != nil {
-					return err
-				}
+				return failArg("--instance (ID) or --instance-name is required")
 			}
+			instanceID, err = resolveInstanceID(getClient, instanceName)
+			if err != nil {
+				return err
+			}
+		} else if instanceName == "" {
+			instanceName, err = resolveInstanceName(getClient, instanceID)
+			if err != nil {
+				return err
+			}
+		}
+		if groupID == 0 {
 			if groupName == "" {
-				if groupID == 0 {
-					return failArg("--group-name or --group (ID) is required in session mode")
-				}
-				groupName, err = resolveGroupName(getClient, groupID)
-				if err != nil {
-					return err
-				}
+				return failArg("--group (ID) or --group-name is required")
 			}
-			// The session endpoint keys on names; clear the IDs so the request and
-			// preview never carry a stale numeric identifier the server ignores.
-			instanceID, groupID = 0, 0
-		} else if instanceID == 0 {
-			return failArg("--instance is required in jwt mode")
+			groupID, err = resolveGroupID(getClient, groupName)
+			if err != nil {
+				return err
+			}
+		} else if groupName == "" {
+			groupName, err = resolveGroupName(getClient, groupID)
+			if err != nil {
+				return err
+			}
 		}
 
 		req := api.WorkflowSubmitRequest{
@@ -288,7 +319,6 @@ var workflowSubmitCmd = &cobra.Command{
 			GroupName:    groupName,
 			IsBackup:     backup,
 			DemandURL:    demandURL,
-			CCUsers:      ccUsers,
 		}
 
 		detail := map[string]any{
@@ -815,41 +845,55 @@ func printAutoReviewResult(classified []map[string]any, compliant bool, blocked 
 
 // ─── helper ─────────────────────────────────────────────────────────────────
 
-// workflowInstanceIdentifier resolves the instance identifier the active
-// transport needs: session mode keys on --instance-name, JWT mode on the
-// numeric --instance. Returns (id, name) with the unused side zero/empty.
-//
-// In session mode the caller may pass --instance-name directly, or supply the
-// numeric --instance (ID) which is resolved to a name via the instance list —
-// so agents no longer have to remember a different flag per transport. The name
-// flag wins when both are given. lazyClient builds the API client on first use
-// (only when an ID actually needs resolving), so the no-resolution paths stay
-// network-free for the dry-run gate.
+// workflowInstanceIdentifier resolves the instance to the numeric id both
+// transports now need, and returns it with the display name for previews and
+// messages. The caller may pass --instance (the id) or --instance-name, in
+// either mode; the id wins when both are given. lazyClient builds the API
+// client on first use (only when a name actually needs resolving), so the
+// id path stays network-free for the dry-run gate.
 func workflowInstanceIdentifier(cmd *cobra.Command, lazyClient func() (*api.Client, error)) (int, string, error) {
 	instanceID, _ := cmd.Flags().GetInt("instance")
 	instanceName, _ := cmd.Flags().GetString("instance-name")
-	if activeTransportMode() == api.ModeSession {
-		if instanceName != "" {
-			return 0, instanceName, nil
-		}
-		if instanceID > 0 {
-			name, err := resolveInstanceName(lazyClient, instanceID)
-			if err != nil {
-				return 0, "", err
-			}
-			return 0, name, nil
-		}
-		return 0, "", failArg("--instance-name or --instance (ID) is required in session mode")
+	if instanceID > 0 {
+		return instanceID, instanceName, nil
 	}
-	if instanceID == 0 {
-		return 0, "", failArg("--instance is required in jwt mode")
+	if instanceName == "" {
+		return 0, "", failArg("--instance (ID) or --instance-name is required")
 	}
-	return instanceID, "", nil
+	id, err := resolveInstanceID(lazyClient, instanceName)
+	if err != nil {
+		return 0, "", err
+	}
+	return id, instanceName, nil
 }
 
-// resolveInstanceName maps a numeric instance ID to its instance name by paging
-// the instance list (session mode has no by-id JSON endpoint). A page of 500
-// covers any realistic single-region fleet.
+// resolveInstanceID maps an instance name to its numeric id by paging the
+// instance list (there is no by-name lookup endpoint). A page of 500 covers any
+// realistic single-region fleet. Names are unique in Archery's schema.
+func resolveInstanceID(lazyClient func() (*api.Client, error), instanceName string) (int, error) {
+	client, err := lazyClient()
+	if err != nil {
+		return 0, err
+	}
+	instances, _, err := listInstancesSession(client, "", "", "", 500, 0)
+	if err != nil {
+		return 0, handleAPIError(err)
+	}
+	for _, inst := range instances {
+		if inst.InstanceName == instanceName {
+			id, convErr := strconv.Atoi(inst.ID)
+			if convErr != nil {
+				return 0, failNotFound(fmt.Sprintf("instance %q has a non-numeric id %q", instanceName, inst.ID))
+			}
+			return id, nil
+		}
+	}
+	return 0, failNotFound(fmt.Sprintf("instance %q not found; check 'archery-cli instance list'", instanceName))
+}
+
+// resolveInstanceName maps a numeric instance ID back to its name, so a
+// submit preview can state which instance the caller is about to touch and a
+// bogus ID is rejected before the confirm step.
 func resolveInstanceName(lazyClient func() (*api.Client, error), instanceID int) (string, error) {
 	client, err := lazyClient()
 	if err != nil {
@@ -868,8 +912,8 @@ func resolveInstanceName(lazyClient func() (*api.Client, error), instanceID int)
 	return "", failNotFound(fmt.Sprintf("instance ID %d not found; check 'archery-cli instance list'", instanceID))
 }
 
-// resolveGroupName maps a numeric resource-group ID to its group name via the
-// resource-group list. Used so session-mode submit accepts --group (ID) too.
+// resolveGroupName maps a numeric resource-group ID back to its name, for the
+// same preview and pre-confirm validation reasons as resolveInstanceName.
 func resolveGroupName(lazyClient func() (*api.Client, error), groupID int) (string, error) {
 	client, err := lazyClient()
 	if err != nil {
@@ -885,6 +929,25 @@ func resolveGroupName(lazyClient func() (*api.Client, error), groupID int) (stri
 		}
 	}
 	return "", failNotFound(fmt.Sprintf("resource group ID %d not found; check 'archery-cli user resource-groups'", groupID))
+}
+
+// resolveGroupID maps a resource-group name to its numeric id via the
+// resource-group list, so submit accepts --group-name as well as --group.
+func resolveGroupID(lazyClient func() (*api.Client, error), groupName string) (int, error) {
+	client, err := lazyClient()
+	if err != nil {
+		return 0, err
+	}
+	groups, _, err := client.Users.ListResourceGroups(apiCtx(), 500, 0, "")
+	if err != nil {
+		return 0, handleAPIError(err)
+	}
+	for _, g := range groups {
+		if g.Name == groupName {
+			return g.ID, nil
+		}
+	}
+	return 0, failNotFound(fmt.Sprintf("resource group %q not found; check 'archery-cli user resource-groups'", groupName))
 }
 
 // newClientMemo returns a function that builds the API client once and caches

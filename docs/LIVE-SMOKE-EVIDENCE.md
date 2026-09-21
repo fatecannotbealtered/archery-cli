@@ -13,6 +13,90 @@ from scratch for this acceptance.
   asserted. JWT cached in the OS keyring; session-mode commands authenticate
   via the Django form login.
 
+## 2026-09-21 — submit/sqlcheck moved to the REST endpoints (Archery v1.9.1)
+
+Purpose-built stack: `hhyo/archery:v1.9.1` + `mysql:5.7` + `redis:5` +
+`hanchuanchuan/goinception` on `localhost:9124`, fresh DB (migrated from
+empty), superuser `cli_verify`, **session mode** throughout — no JWT, and the
+account is *not* in `api_user_whitelist`.
+
+`GET /api/info` → `{"archery": {"version": "1.9.1"}}`.
+
+### Route ground truth, authenticated session, POST
+
+Unauthenticated probes are useless here: Archery's login middleware answers
+`302` for present and absent routes alike. With a session cookie:
+
+| Route | Status | Reading |
+|---|---|---|
+| `/autoreview/` | **404** | deleted in v1.9.0 — what `workflow submit` used to call |
+| `/simplecheck/` | **404** | deleted in v1.9.0 — what `sqlcheck` / `auto-review` used to call |
+| `/api/v1/workflow/` | **400** | route present; reached the serializer, which rejected an empty body |
+| `/api/v1/workflow/sqlcheck/` | **400** | same |
+| `/passed/` | 200 | survived v1.9.0 |
+| `/sqlworkflow_list/` | 200 | survived v1.9.0 |
+
+`400` rather than `401`/`403` on the two REST routes is the load-bearing
+result: the session cookie authenticated, and the global `IsInUserWhitelist`
+permission did not apply — both endpoints override it with `IsAuthenticated`.
+
+### Before / after on the same server
+
+| Binary | `workflow sqlcheck` |
+|---|---|
+| released 1.0.21 | `E_NOT_FOUND` — `Archery API error 404: resource not found` |
+| this build | `ok:true`, two goinception rows, `errlevel 0`, `Audit Completed` |
+
+The 1.0.21 message reproduces the field report exactly, including the part
+that made it expensive: nothing in it names the route.
+
+### Commands
+
+| Command | Result |
+|---|---|
+| `instance list` | **live PASS** — session auth over the REST-era server |
+| `workflow sqlcheck` | **live PASS** — real goinception rows: the USE statement plus the DDL, both `errlevel 0`, `Audit Completed` |
+| `workflow auto-review` | **live PASS** — `UPDATE` on a missing column → `errlevel 2`, `verdict:block`, `compliant:false`, engine message `Column 'zzz' not existed.` |
+| `workflow submit` | **live PASS (write)** — dry-run preview carries *both* `instanceName`/`groupName` and `instanceId`/`groupId`; confirm → `workflowId 2`, visible in `list` as `workflow_manreviewing` |
+| `workflow audit --action pass` | **live PASS** — `/passed/` still correct after the change |
+| `workflow execute --mode auto` | **live PASS** — workflow 3 reached `workflow_finish`; `SHOW COLUMNS` confirms `qqq int(11)` really landed in `sql_users` |
+| `workflow detail` | **live PASS** — surfaced the one real failure below in `result[].error` |
+
+### Error paths verified against stub servers, not mocks
+
+Two fixes could not be shown by the 1.9.1 stack (every route it has now
+answers), so they were exercised end-to-end with the real binary against a
+throwaway HTTP server:
+
+| Server behaviour | released 1.0.21 | this build |
+|---|---|---|
+| 404 on the route | `E_NOT_FOUND` — `resource not found` | `E_NOT_FOUND` — `no such route on this Archery server: POST /api/v1/workflow/sqlcheck/ …` |
+| 200 with an undecodable body | **`ok:true`, `data:[]`** | `E_UNKNOWN`, `retryable:false`, names the decode failure |
+
+The second row is the more serious of the two: the old tolerant decoder turned
+a body it could not read into a *clean pre-check*.
+
+### Failure paths
+
+| Case | Result |
+|---|---|
+| `--cc alice` | `E_VALIDATION` (exit 2), message names `cc_users` and the v1.9.0 removal |
+| `--instance-name nope` | `E_NOT_FOUND` (exit 3) at `--dry-run`, before any token is issued |
+| `--read-only` | `E_FORBIDDEN` (exit 4) before the identifier resolution reaches the network |
+
+### Two stack prerequisites, not CLI defects
+
+1. **`workflow audit` → 500** until a Django auth `Group` existed matching the
+   `WorkflowAuditSetting.audit_auth_groups` id: `can_review` does
+   `Group.objects.get(id=...)` and raises `DoesNotExist`. A seeding gap in this
+   stack; the CLI reported the server's 500 faithfully.
+2. **`workflow execute` → `workflow_exception`** with
+   `binlog日志未开启,无法备份!`, even for a workflow submitted `--backup=false`.
+   Archery forces backup on when `enable_backup_switch` is unset and the engine
+   supports it, and this container's MySQL runs without binlog. Setting
+   `enable_backup_switch` made the same submit execute to `workflow_finish`.
+   This matches the backup prerequisite already documented in the Skill.
+
 ## 2026-09-07 — unattended 2FA via a stored TOTP secret (closes the 1.0.5 mock-only gap)
 
 Live verification against a purpose-built stack: `hhyo/archery:v1.14.0` +

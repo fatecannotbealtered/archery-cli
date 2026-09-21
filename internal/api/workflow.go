@@ -142,66 +142,47 @@ func (w *WorkflowAPI) listREST(ctx context.Context, params WorkflowListParams) (
 
 // Submit creates a new SQL workflow.
 //
-//	session: POST /autoreview/ (names; is_backup as "True"/"False"; 302 redirect)
-//	jwt:     POST /api/v1/workflow/
+//	POST /api/v1/workflow/ (both transports)
+//
+// Archery deleted the /autoreview/ AJAX view — and its backing
+// sql_workflow.submit — in v1.9.0, so from that version on the DRF endpoint is
+// the only submit path. It exists in v1.8.5 too, which makes it the one route
+// that works across every supported version. The transport mode therefore no
+// longer picks the route, only how the request is authenticated.
 func (w *WorkflowAPI) Submit(ctx context.Context, req WorkflowSubmitRequest) (*WorkflowSubmitResponse, error) {
-	if w.client.Mode() == ModeJWT {
-		return w.submitREST(ctx, req)
-	}
-	return w.submitSession(ctx, req)
-}
-
-// submitSession posts the workflow form to /autoreview/. On success the view
-// returns a 302 redirect to /detail/<id>/; the workflow id is parsed from the
-// Location header. On a validation failure it renders error.html (HTTP 200);
-// the redirect-absent case surfaces as an error.
-func (w *WorkflowAPI) submitSession(ctx context.Context, req WorkflowSubmitRequest) (*WorkflowSubmitResponse, error) {
-	form := url.Values{}
-	form.Set("sql_content", req.SQLContent)
-	form.Set("workflow_name", req.Name)
-	form.Set("demand_url", req.DemandURL)
-	form.Set("group_name", req.GroupName)
-	form.Set("instance_name", req.InstanceName)
-	form.Set("db_name", req.DBName)
-	form.Set("is_backup", boolToPyString(req.IsBackup))
-	for _, u := range req.CCUsers {
-		form.Add("cc_users", u)
-	}
-	if req.RunDateStart != "" {
-		form.Set("run_date_start", req.RunDateStart)
-	}
-	if req.RunDateEnd != "" {
-		form.Set("run_date_end", req.RunDateEnd)
-	}
-
-	id, err := w.client.SessionPostExpectRedirect(ctx, "/autoreview/", form)
+	data, err := w.postAPI(ctx, "/v1/workflow/", req.toWire())
 	if err != nil {
 		return nil, fmt.Errorf("submit workflow: %w", err)
+	}
+
+	// A response we received but cannot decode is a contract failure, not a
+	// network one: return it as an APIError (no status) so it maps to a
+	// non-retryable E_UNKNOWN rather than the retryable E_NETWORK a plain error
+	// would get.
+	var env workflowSubmitEnvelope
+	if err := json.Unmarshal(data, &env); err != nil {
+		return nil, &APIError{ErrorMessages: []string{"parsing submit response: " + err.Error()}}
+	}
+	id := env.WorkflowID
+	if id == 0 {
+		id = env.Workflow.ID
+	}
+	if id == 0 {
+		return nil, fmt.Errorf("submit workflow: server accepted the request but returned no workflow id")
 	}
 	return &WorkflowSubmitResponse{ID: id}, nil
 }
 
-// submitREST posts the workflow to the JWT REST endpoint.
-func (w *WorkflowAPI) submitREST(ctx context.Context, req WorkflowSubmitRequest) (*WorkflowSubmitResponse, error) {
-	data, err := w.client.Post(ctx, w.client.APIPath("/v1/workflow/"), req)
-	if err != nil {
-		return nil, fmt.Errorf("submit workflow: %w", err)
+// postAPI posts body to an Archery REST path with the active transport's
+// credentials — the Django session cookie the CLI already holds, or the bearer
+// token in jwt mode. Archery accepts both: SessionAuthentication sits beside
+// JWTAuthentication in its DRF DEFAULT_AUTHENTICATION_CLASSES.
+func (w *WorkflowAPI) postAPI(ctx context.Context, path string, body any) ([]byte, error) {
+	full := w.client.APIPath(path)
+	if w.client.Mode() == ModeJWT {
+		return w.client.Post(ctx, full, body)
 	}
-
-	var resp WorkflowSubmitResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("parsing submit response: %w", err)
-	}
-	if resp.ID == 0 {
-		// Some Archery versions return the ID in a different shape.
-		var raw map[string]any
-		if json.Unmarshal(data, &raw) == nil {
-			if id, ok := raw["id"].(float64); ok && id > 0 {
-				resp.ID = int(id)
-			}
-		}
-	}
-	return &resp, nil
+	return w.client.SessionPostJSON(ctx, full, body)
 }
 
 // Detail fetches workflow details. v1.8.5 has no REST detail endpoint
@@ -339,84 +320,27 @@ func (w *WorkflowAPI) Cancel(ctx context.Context, req WorkflowCancelRequest) err
 
 // SQLCheck runs SQL syntax and risk checks without creating a workflow.
 //
-//	session: POST /simplecheck/ (instance_name + db_name + sql_content)
-//	jwt:     POST /api/v1/workflow/sqlcheck/
+//	POST /api/v1/workflow/sqlcheck/ (both transports)
+//
+// Like Submit, this moved off the AJAX view (/simplecheck/) that v1.9.0
+// deleted. The DRF endpoint answers with ExecuteCheckResultSerializer, whose
+// shape is byte-identical from v1.8.5 through v1.14 — the per-statement
+// ReviewResult rows plus aggregate counters — so there is one envelope to
+// parse, not a guess across several.
 func (w *WorkflowAPI) SQLCheck(ctx context.Context, req WorkflowSQLCheckRequest) ([]SQLCheckResult, error) {
-	if w.client.Mode() == ModeJWT {
-		return w.sqlCheckREST(ctx, req)
-	}
-	return w.sqlCheckSession(ctx, req)
-}
-
-// sqlCheckSession posts to /simplecheck/. The view returns
-// {"status":0,"msg":"ok","data":{"rows":[ReviewResult],"CheckWarningCount":N,
-// "CheckErrorCount":N}}; status!=0 carries the engine error (e.g. instance not
-// found) and is surfaced as an error.
-func (w *WorkflowAPI) sqlCheckSession(ctx context.Context, req WorkflowSQLCheckRequest) ([]SQLCheckResult, error) {
-	form := url.Values{
-		"sql_content":   {req.SQLContent},
-		"instance_name": {req.InstanceName},
-		"db_name":       {req.DBName},
-	}
-	data, err := w.client.SessionPost(ctx, "/simplecheck/", form)
+	data, err := w.postAPI(ctx, "/v1/workflow/sqlcheck/", req)
 	if err != nil {
 		return nil, fmt.Errorf("sql check: %w", err)
 	}
 
-	var resp struct {
-		Status int              `json:"status"`
-		Msg    string           `json:"msg"`
-		Data   sessionCheckData `json:"data"`
-	}
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("parsing sql check: %w", err)
-	}
-	if resp.Status != 0 {
-		return nil, &APIError{StatusCode: 400, ErrorMessages: []string{resp.Msg}}
+	var env sqlCheckEnvelope
+	if err := json.Unmarshal(data, &env); err != nil {
+		return nil, &APIError{ErrorMessages: []string{"parsing sql check: " + err.Error()}}
 	}
 
-	results := make([]SQLCheckResult, len(resp.Data.Rows))
-	for i, row := range resp.Data.Rows {
+	results := make([]SQLCheckResult, len(env.Rows))
+	for i, row := range env.Rows {
 		results[i] = row.toSQLCheckResult()
 	}
 	return results, nil
-}
-
-// sqlCheckREST posts to the JWT REST sqlcheck endpoint, tolerating the several
-// response envelopes older Archery versions return.
-func (w *WorkflowAPI) sqlCheckREST(ctx context.Context, req WorkflowSQLCheckRequest) ([]SQLCheckResult, error) {
-	data, err := w.client.Post(ctx, w.client.APIPath("/v1/workflow/sqlcheck/"), req)
-	if err != nil {
-		return nil, fmt.Errorf("sql check: %w", err)
-	}
-
-	var results []SQLCheckResult
-	if err := json.Unmarshal(data, &results); err == nil {
-		return results, nil
-	}
-
-	var wrapped InternalPaginatedResponse[SQLCheckResult]
-	if err := json.Unmarshal(data, &wrapped); err == nil {
-		return wrapped.Data.Rows, nil
-	}
-
-	var rawResp struct {
-		Status int             `json:"status"`
-		Msg    string          `json:"msg"`
-		Data   json.RawMessage `json:"data"`
-	}
-	if err := json.Unmarshal(data, &rawResp); err == nil && rawResp.Data != nil {
-		_ = json.Unmarshal(rawResp.Data, &results)
-	}
-
-	return results, nil
-}
-
-// boolToPyString renders a Go bool the way Archery's submit view expects:
-// is_backup is compared against the literal "True".
-func boolToPyString(b bool) string {
-	if b {
-		return "True"
-	}
-	return "False"
 }

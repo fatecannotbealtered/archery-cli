@@ -12,20 +12,6 @@ type PaginatedResponse[T any] struct {
 	Results  []T `json:"results"`
 }
 
-// InternalPaginatedResponse wraps Archery internal paginated responses
-// that use {status, msg, data: {total, rows}} format.
-type InternalPaginatedResponse[T any] struct {
-	Status int             `json:"status"`
-	Msg    string          `json:"msg"`
-	Data   InternalPage[T] `json:"data"`
-}
-
-// InternalPage holds the pagination payload for internal endpoints.
-type InternalPage[T any] struct {
-	Total int `json:"total"`
-	Rows  []T `json:"rows"`
-}
-
 // ===== Workflow Definition =====
 
 // Workflow represents an Archery workflow definition (template).
@@ -198,30 +184,86 @@ type WorkflowListParams struct {
 
 // WorkflowSubmitRequest is the payload for submitting a workflow.
 //
-// The two transports key on different identifiers. The session endpoint
-// (/autoreview/) takes names — InstanceName and GroupName — plus is_backup as
-// the string "True"/"False"; the REST endpoint takes the numeric InstanceID and
-// GroupID. The command fills whichever the active mode needs; the API layer
-// reads the matching set. CCUsers and the RunDate* window are session-only
-// optional fields (carbon-copy notify recipients, timed execution).
+// Both transports key on the numeric InstanceID and GroupID: submission goes
+// through Archery's DRF endpoint on every supported version, because the AJAX
+// view it replaced (/autoreview/) exists only in v1.8.5. InstanceName and
+// GroupName are carried for the preview/audit record only — they never reach
+// the wire. The RunDate* window maps to the SqlWorkflow model's timed-execution
+// fields.
 type WorkflowSubmitRequest struct {
-	Name         string   `json:"workflow_name"`
-	InstanceID   int      `json:"instance_id"`
-	InstanceName string   `json:"-"`
-	DBName       string   `json:"db_name"`
-	SQLContent   string   `json:"sql_content"`
-	GroupID      int      `json:"group_id,omitempty"`
-	GroupName    string   `json:"-"`
-	IsBackup     bool     `json:"is_backup"`
-	DemandURL    string   `json:"demand_url,omitempty"`
-	CCUsers      []string `json:"-"`
-	RunDateStart string   `json:"-"`
-	RunDateEnd   string   `json:"-"`
+	Name         string `json:"workflow_name"`
+	InstanceID   int    `json:"instance_id"`
+	InstanceName string `json:"-"`
+	DBName       string `json:"db_name"`
+	SQLContent   string `json:"sql_content"`
+	GroupID      int    `json:"group_id,omitempty"`
+	GroupName    string `json:"-"`
+	IsBackup     bool   `json:"is_backup"`
+	DemandURL    string `json:"demand_url,omitempty"`
+	RunDateStart string `json:"-"`
+	RunDateEnd   string `json:"-"`
+}
+
+// workflowSubmitWire is the on-the-wire shape of POST /api/v1/workflow/.
+// Archery's WorkflowContentSerializer nests every SqlWorkflow field under
+// "workflow" and keeps only sql_content at the top level. Two keys do not match
+// the flag names: the instance FK is "instance" (the model field), not
+// "instance_id", and group_name/status/syntax_type/audit_auth_groups are
+// read-only — the server fills them from group_id.
+type workflowSubmitWire struct {
+	Workflow   workflowSubmitFields `json:"workflow"`
+	SQLContent string               `json:"sql_content"`
+}
+
+type workflowSubmitFields struct {
+	Name         string  `json:"workflow_name"`
+	Instance     int     `json:"instance"`
+	DBName       string  `json:"db_name"`
+	GroupID      int     `json:"group_id"`
+	IsBackup     bool    `json:"is_backup"`
+	DemandURL    string  `json:"demand_url,omitempty"`
+	RunDateStart *string `json:"run_date_start,omitempty"`
+	RunDateEnd   *string `json:"run_date_end,omitempty"`
+}
+
+// toWire projects the request onto the serializer's nested shape.
+func (r WorkflowSubmitRequest) toWire() workflowSubmitWire {
+	w := workflowSubmitWire{
+		SQLContent: r.SQLContent,
+		Workflow: workflowSubmitFields{
+			Name:      r.Name,
+			Instance:  r.InstanceID,
+			DBName:    r.DBName,
+			GroupID:   r.GroupID,
+			IsBackup:  r.IsBackup,
+			DemandURL: r.DemandURL,
+		},
+	}
+	if r.RunDateStart != "" {
+		w.Workflow.RunDateStart = &r.RunDateStart
+	}
+	if r.RunDateEnd != "" {
+		w.Workflow.RunDateEnd = &r.RunDateEnd
+	}
+	return w
 }
 
 // WorkflowSubmitResponse is returned after a successful workflow submission.
+//
+// The endpoint returns a serialized SqlWorkflowContent, whose top-level "id" is
+// the *content* row's id — not the workflow id every other command takes. The
+// workflow id is "workflow_id" (with the nested workflow object as a fallback).
 type WorkflowSubmitResponse struct {
-	ID int `json:"id"`
+	ID int `json:"workflow_id"`
+}
+
+// workflowSubmitEnvelope is the full response, used to recover the workflow id
+// from the nested object when workflow_id is absent.
+type workflowSubmitEnvelope struct {
+	WorkflowID int `json:"workflow_id"`
+	Workflow   struct {
+		ID int `json:"id"`
+	} `json:"workflow"`
 }
 
 // WorkflowAuditRequest is the payload for POST /api/v1/workflow/audit/.
@@ -255,14 +297,25 @@ type WorkflowCancelRequest struct {
 	Remark     string `json:"remark,omitempty"`
 }
 
-// WorkflowSQLCheckRequest is the payload for the SQL pre-check. Session
-// (/simplecheck/) uses instance_name; REST uses instance_id. The command fills
-// the identifier the active transport needs.
+// WorkflowSQLCheckRequest is the payload for the SQL pre-check
+// (POST /api/v1/workflow/sqlcheck/, ExecuteCheckSerializer). The SQL field is
+// named full_sql on the wire — not sql_content, which is what the removed
+// /simplecheck/ AJAX view took. InstanceName is kept for previews and error
+// messages only.
 type WorkflowSQLCheckRequest struct {
 	InstanceID   int    `json:"instance_id"`
 	InstanceName string `json:"-"`
 	DBName       string `json:"db_name"`
-	SQLContent   string `json:"sql_content"`
+	SQLContent   string `json:"full_sql"`
+}
+
+// sqlCheckEnvelope is the ExecuteCheckResultSerializer response. Only the
+// per-statement ReviewResult rows are decoded: the aggregate fields beside them
+// are derivable from the rows, and binding a field the CLI never reads is a
+// standing risk — Archery declares `status` a CharField but its engines emit it
+// as a bare number, which would fail the whole decode for nothing.
+type sqlCheckEnvelope struct {
+	Rows []reviewResultRow `json:"rows"`
 }
 
 // SQLCheckResult is a single item from the SQL check response. Level/Message
@@ -345,13 +398,6 @@ func errLevelToString(errlevel int) string {
 	default:
 		return "error"
 	}
-}
-
-// sessionCheckData is the data payload of /simplecheck/.
-type sessionCheckData struct {
-	Rows              []reviewResultRow `json:"rows"`
-	CheckWarningCount int               `json:"CheckWarningCount"`
-	CheckErrorCount   int               `json:"CheckErrorCount"`
 }
 
 // ===== Instance =====

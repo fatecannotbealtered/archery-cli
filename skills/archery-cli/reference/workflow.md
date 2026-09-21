@@ -4,11 +4,40 @@ Manage SQL audit workflows: submit SQL for review, audit (approve/reject), execu
 
 ## Table of Contents
 
+- [Which endpoint these commands use](#which-endpoint-these-commands-use)
 - [Read commands](#read-commands)
 - [Write commands](#write-commands)
 - [Workflow data payload](#workflow-data-payload)
 - [Workflows](#workflows)
 - [Notes](#notes)
+
+## Which endpoint these commands use
+
+`workflow submit`, `workflow sqlcheck` and `workflow auto-review` go through
+Archery's REST endpoints (`/api/v1/workflow/` and `/api/v1/workflow/sqlcheck/`)
+in **both** transport modes. The AJAX views they used to call in session mode,
+`/autoreview/` and `/simplecheck/`, exist only in Archery v1.8.5 — upstream
+deleted both routes (and their backing views) in **v1.9.0**. The REST endpoints
+exist in v1.8.5 as well, so this one path covers every supported version.
+
+This needs no JWT and no API-whitelist entry: Archery accepts the session cookie
+on these endpoints, and both override the global whitelist permission with
+`IsAuthenticated`. `--mode jwt` still works and changes only how the request is
+authenticated.
+
+Two consequences worth knowing before you hit them:
+
+- `--instance-name` / `--group-name` are resolved to numeric IDs (the REST
+  endpoints key on the ID). A name that matches nothing now fails at `--dry-run`
+  with `E_NOT_FOUND` instead of reaching the server.
+- `--cc` is **not supported** and is rejected with `E_VALIDATION`. Only the
+  removed `/autoreview/` view carried `cc_users`; the workflow API has no such
+  field. Configure carbon-copy recipients in Archery's notification settings.
+
+If a workflow command ever returns a 404, read the message: it names the route
+that was missing. A 404 is the server lacking the endpoint, not a bad parameter,
+so changing instance/group/SQL will not help. Check the server version with
+`curl <url>/api/info`.
 
 ## Read commands
 
@@ -55,8 +84,8 @@ reason is in `result[].error` — read it before escalating.
 
 | Flag | Type | Required | Description |
 |------|------|----------|-------------|
-| `--instance` | int | one of | Target instance ID (resolved to a name in session mode) |
-| `--instance-name` | string | one of | Target instance name (session mode; wins over `--instance`) |
+| `--instance` | int | one of | Target instance ID |
+| `--instance-name` | string | one of | Target instance name (resolved to the ID; `--instance` wins over it) |
 | `--db` | string | yes | Target database name |
 | `--sql` | string | yes | SQL to check |
 
@@ -77,12 +106,12 @@ archery-cli workflow submit --name "Add email index" --instance 1 --db mydb \
 | Flag | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
 | `--name` | string | yes | -- | Workflow title |
-| `--instance` | int | one of | -- | Target instance ID (resolved to a name in session mode) |
-| `--instance-name` | string | one of | -- | Target instance name (session mode; wins over `--instance`) |
+| `--instance` | int | one of | -- | Target instance ID |
+| `--instance-name` | string | one of | -- | Target instance name (resolved to the ID; `--instance` wins over it) |
 | `--db` | string | yes | -- | Target database name |
 | `--sql` | string | yes | -- | SQL content |
-| `--group` | int | one of | (auto) | Resource group ID (resolved to a name in session mode) |
-| `--group-name` | string | one of | -- | Resource group name (session mode; wins over `--group`) |
+| `--group` | int | one of | -- | Resource group ID |
+| `--group-name` | string | one of | -- | Resource group name (resolved to the ID; `--group` wins over it) |
 | `--backup` | bool | no | true | Require backup before execution (needs Archery backups configured; see note below) |
 | `--demand-url` | string | no | -- | Related demand/requirement URL |
 

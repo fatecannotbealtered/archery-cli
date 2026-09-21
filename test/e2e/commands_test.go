@@ -104,12 +104,14 @@ var boundaryCases = []boundaryCase{
 	{name: "user resourcegroup-add", write: true, args: []string{
 		"user", "resourcegroup-add", "--group", "1", "--type", "user", "--ids", "3,4"}},
 
-	// workflow (default session transport: submit/sqlcheck key on names)
+	// workflow (submit/sqlcheck go through the REST endpoints in both
+	// transports; --instance-name / --group-name are resolved to the numeric
+	// ids those endpoints take, so the names here must exist in the fixture)
 	{name: "workflow list", args: []string{"workflow", "list"}},
 	{name: "workflow audit-list", args: []string{"workflow", "audit-list"}},
 	{name: "workflow detail", args: []string{"workflow", "detail", "1"}},
 	{name: "workflow submit", write: true, args: []string{
-		"workflow", "submit", "--name", "n", "--instance-name", "inst1", "--group-name", "g1",
+		"workflow", "submit", "--name", "n", "--instance-name", "inst1", "--group-name", "ops",
 		"--db", "db1", "--sql", "alter table t add c int"}},
 	{name: "workflow audit", write: true, args: []string{"workflow", "audit", "1", "--action", "pass"}},
 	{name: "workflow execute", write: true, args: []string{"workflow", "execute", "1", "--dangerous"}},

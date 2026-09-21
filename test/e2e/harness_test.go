@@ -84,6 +84,20 @@ var pathOverrides = map[string]string{
 		`"instance__instance_name":"inst1","db_name":"db1","group_name":"ops","is_backup":true,"syntax_type":1,"create_time":"2026-06-15 10:00:00"}]}`,
 	// resource_group.addrelation returns {status, msg}.
 	"/group/addrelation/": `{"status":0,"msg":"ok"}`,
+	// sqlcheck answers with ExecuteCheckResultSerializer: the per-statement
+	// ReviewResult rows plus aggregates. `status` is declared a CharField but
+	// the engines emit a bare number — kept as one here so the decoder stays
+	// honest about only binding the rows it reads.
+	"/api/v1/workflow/sqlcheck/": `{"is_execute":false,"checked":true,"warning":"","error":"",` +
+		`"warning_count":0,"error_count":0,"is_critical":false,"syntax_type":1,"status":0,"affected_rows":0,` +
+		`"column_list":["stage","errlevel"],"rows":[` +
+		`{"id":1,"stage":"CHECKED","errlevel":0,"stagestatus":"Audit completed","errormessage":"None",` +
+		`"sql":"select 1","affected_rows":0,"execute_time":"0"}]}`,
+	// submit answers with the serialized SqlWorkflowContent: the top-level id
+	// is the *content* row, the workflow id is workflow_id.
+	"/api/v1/workflow/": `{"id":7,"workflow_id":42,"workflow":{"id":42,"workflow_name":"n",` +
+		`"group_id":1,"group_name":"ops","db_name":"db1","status":"workflow_manreviewing"},` +
+		`"sql_content":"select 1","review_content":"[]","execute_result":""}`,
 }
 
 func universalMux() http.Handler {

@@ -107,14 +107,21 @@ func (c *Client) applyJSONHeaders(req *http.Request, jsonBody bool) {
 	}
 }
 
-// applyInternalHeaders sets internal-mode headers: session cookie, form content type.
-func (c *Client) applyInternalHeaders(req *http.Request) {
+// applyInternalHeaders sets internal-mode headers: session cookie, plus the
+// content type matching the body. Archery's AJAX views take form encoding; its
+// DRF endpoints (which accept the same session cookie — SessionAuthentication is
+// in DEFAULT_AUTHENTICATION_CLASSES) take JSON.
+func (c *Client) applyInternalHeaders(req *http.Request, jsonBody bool) {
 	if c.accessToken != "" {
 		req.Header.Set("Authorization", "Bearer "+c.accessToken)
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", defaultUserAgent())
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if jsonBody {
+		req.Header.Set("Content-Type", "application/json")
+	} else {
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	// Django's CSRF middleware rejects unsafe methods on a session without a
 	// matching csrftoken; mirror the csrftoken cookie into the header.
@@ -830,7 +837,7 @@ func (c *Client) restRequest(ctx context.Context, method, path string, body any)
 
 		if shouldRetry(statusCode) {
 			if attempt >= maxRetries() {
-				return nil, statusCode, header, c.parseError(statusCode, data)
+				return nil, statusCode, header, c.parseErrorAt(statusCode, data, method+" "+path)
 			}
 			if err := waitForRetry(ctx, attempt, statusCode, header); err != nil {
 				return nil, 0, nil, err
@@ -838,16 +845,44 @@ func (c *Client) restRequest(ctx context.Context, method, path string, body any)
 			continue
 		}
 
-		return nil, statusCode, header, c.parseError(statusCode, data)
+		return nil, statusCode, header, c.parseErrorAt(statusCode, data, method+" "+path)
 	}
 }
 
 // ─── Internal request mode (form-encoded, session cookie) ───────────────────
 
-// internalRequest executes a form-encoded request with session cookie auth
-// and retry logic. Used for Archery's internal Django endpoints that use
-// session-based authentication instead of JWT.
-func (c *Client) internalRequest(ctx context.Context, method, path string, form url.Values) ([]byte, int, http.Header, error) {
+// internalBody is an already-encoded request body for the session transport,
+// tagged with the content type Django should see. A nil *internalBody sends no
+// body. The bytes are kept (rather than an io.Reader) so a retried attempt can
+// replay them.
+type internalBody struct {
+	data   []byte
+	isJSON bool
+}
+
+// formBody wraps form values for the session transport. A nil form means "no
+// body", which is what GET and DELETE send.
+func formBody(form url.Values) *internalBody {
+	if form == nil {
+		return nil
+	}
+	return &internalBody{data: []byte(form.Encode())}
+}
+
+// encodeJSONBody marshals v for a session-authenticated DRF endpoint.
+func encodeJSONBody(v any) (*internalBody, error) {
+	encoded, err := json.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("encoding request body: %w", err)
+	}
+	return &internalBody{data: encoded, isJSON: true}, nil
+}
+
+// internalRequest executes a request with session cookie auth and retry logic.
+// Used for Archery's internal Django endpoints — both the form-encoded AJAX
+// views and the DRF endpoints that accept the same session cookie — which
+// authenticate by session instead of JWT.
+func (c *Client) internalRequest(ctx context.Context, method, path string, body *internalBody) ([]byte, int, http.Header, error) {
 	// Internal Django endpoints need a session cookie, not just a JWT.
 	if err := c.ensureSession(ctx); err != nil {
 		return nil, 0, nil, err
@@ -859,8 +894,8 @@ func (c *Client) internalRequest(ctx context.Context, method, path string, form 
 		}
 
 		var reqBody io.Reader
-		if form != nil {
-			reqBody = strings.NewReader(form.Encode())
+		if body != nil {
+			reqBody = bytes.NewReader(body.data)
 		}
 
 		req, err := http.NewRequestWithContext(ctx, method, c.host+path, reqBody)
@@ -868,7 +903,7 @@ func (c *Client) internalRequest(ctx context.Context, method, path string, form 
 			return nil, 0, nil, fmt.Errorf("creating request: %w", err)
 		}
 
-		c.applyInternalHeaders(req)
+		c.applyInternalHeaders(req, body != nil && body.isJSON)
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
@@ -910,7 +945,7 @@ func (c *Client) internalRequest(ctx context.Context, method, path string, form 
 
 		if shouldRetry(statusCode) {
 			if attempt >= maxRetries() {
-				return nil, statusCode, header, c.parseError(statusCode, data)
+				return nil, statusCode, header, c.parseErrorAt(statusCode, data, method+" "+path)
 			}
 			if err := waitForRetry(ctx, attempt, statusCode, header); err != nil {
 				return nil, 0, nil, err
@@ -918,7 +953,7 @@ func (c *Client) internalRequest(ctx context.Context, method, path string, form 
 			continue
 		}
 
-		return nil, statusCode, header, c.parseError(statusCode, data)
+		return nil, statusCode, header, c.parseErrorAt(statusCode, data, method+" "+path)
 	}
 }
 
@@ -965,6 +1000,15 @@ func bodySnippet(b []byte) string {
 //
 //	{"status": 1, "msg": "error message", "data": null}
 func (c *Client) parseError(statusCode int, data []byte) *APIError {
+	return c.parseErrorAt(statusCode, data, "")
+}
+
+// parseErrorAt is parseError with the request target ("POST /api/v1/workflow/")
+// known. A bare "resource not found" for a 404 hides the one fact that explains
+// it — which URL was missing — and sends the caller hunting through parameters
+// for a route-level problem. Callers that know the target pass it so the
+// message names it.
+func (c *Client) parseErrorAt(statusCode int, data []byte, target string) *APIError {
 	apiErr := &APIError{StatusCode: statusCode}
 
 	if len(data) > 0 {
@@ -1012,7 +1056,13 @@ func (c *Client) parseError(statusCode int, data []byte) *APIError {
 		}
 	case http.StatusNotFound:
 		if len(apiErr.ErrorMessages) == 0 {
-			apiErr.ErrorMessages = []string{"resource not found"}
+			msg := "resource not found"
+			if target != "" {
+				msg = fmt.Sprintf("no such route on this Archery server: %s"+
+					" (a 404 here is the server missing the endpoint, not a bad parameter;"+
+					" check the server version with 'curl <url>/api/info')", target)
+			}
+			apiErr.ErrorMessages = []string{msg}
 		}
 	}
 
@@ -1186,6 +1236,21 @@ func (c *Client) SessionPost(ctx context.Context, path string, form url.Values) 
 	return c.InternalPost(ctx, path, form)
 }
 
+// SessionPostJSON sends a JSON POST with Django session cookie auth, for the
+// DRF endpoints that replaced Archery's removed AJAX views. Archery lists
+// SessionAuthentication alongside JWTAuthentication in
+// DEFAULT_AUTHENTICATION_CLASSES, so /api/v1/… accepts the session cookie the
+// CLI already holds; no JWT and no API whitelist entry is required for the
+// endpoints that override the global permission class with IsAuthenticated.
+func (c *Client) SessionPostJSON(ctx context.Context, path string, body any) ([]byte, error) {
+	encoded, err := encodeJSONBody(body)
+	if err != nil {
+		return nil, err
+	}
+	data, _, _, err := c.internalRequest(ctx, http.MethodPost, path, encoded)
+	return data, err
+}
+
 // InternalGet sends a GET request with session cookie auth.
 func (c *Client) InternalGet(ctx context.Context, path string) ([]byte, error) {
 	data, _, _, err := c.internalRequest(ctx, http.MethodGet, path, nil)
@@ -1194,7 +1259,7 @@ func (c *Client) InternalGet(ctx context.Context, path string) ([]byte, error) {
 
 // InternalPost sends a POST request with session cookie auth.
 func (c *Client) InternalPost(ctx context.Context, path string, form url.Values) ([]byte, error) {
-	data, _, _, err := c.internalRequest(ctx, http.MethodPost, path, form)
+	data, _, _, err := c.internalRequest(ctx, http.MethodPost, path, formBody(form))
 	return data, err
 }
 
@@ -1214,7 +1279,7 @@ func (c *Client) SessionPostExpectRedirect(ctx context.Context, path string, for
 	if err != nil {
 		return 0, fmt.Errorf("creating request: %w", err)
 	}
-	c.applyInternalHeaders(req)
+	c.applyInternalHeaders(req, false)
 	// RoundTrip bypasses the http.Client's cookie jar, so attach the session
 	// cookies (sessionid + csrftoken) by hand.
 	if u, perr := url.Parse(c.host); perr == nil {
@@ -1274,7 +1339,7 @@ func lastPathID(loc string) int {
 
 // InternalPut sends a PUT request with session cookie auth.
 func (c *Client) InternalPut(ctx context.Context, path string, form url.Values) ([]byte, error) {
-	data, _, _, err := c.internalRequest(ctx, http.MethodPut, path, form)
+	data, _, _, err := c.internalRequest(ctx, http.MethodPut, path, formBody(form))
 	return data, err
 }
 

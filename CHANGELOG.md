@@ -7,6 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`workflow submit` / `sqlcheck` / `auto-review` returned 404 on Archery
+  v1.9.0 and later.** Archery deleted the root-level AJAX routes `/autoreview/`
+  and `/simplecheck/` in v1.9.0 — along with `sql_workflow.submit` and
+  `sql_workflow.check`, the views behind them — and the session transport was
+  still calling both. Against any v1.9.0+ server every submit and every
+  pre-check failed with a 404 that no combination of instance, resource group
+  or SQL could get past.
+
+  All three commands now use Archery's REST endpoints, `POST /api/v1/workflow/`
+  and `POST /api/v1/workflow/sqlcheck/`, in **both** transport modes. Those
+  routes also exist in v1.8.5, so one path covers every supported version;
+  `--mode jwt` is not required and nothing in the flag surface moves. The
+  session transport gained a JSON body (`SessionPostJSON`) to reach them:
+  Archery lists `SessionAuthentication` beside `JWTAuthentication` in its DRF
+  `DEFAULT_AUTHENTICATION_CLASSES`, and both endpoints override the global
+  API-whitelist permission with `IsAuthenticated`, so the session cookie the
+  CLI already holds is accepted — no JWT, no whitelist entry.
+
+  Three wire details differ from the retired views and are now pinned by tests,
+  because each one fails only against a live server: the submit payload nests
+  every workflow field under `workflow` with `sql_content` beside it, its
+  instance key is the FK name `instance` (not `instance_id`), and the response's
+  top-level `id` is the *content* row — the workflow id is `workflow_id`. The
+  pre-check names its SQL field `full_sql`, not `sql_content`.
+
+- **A 404 no longer hides which route was missing.** The fallback message for a
+  404 with no body was a bare `resource not found`, which reads like a bad
+  argument and sends the caller auditing parameters for what is a route-level
+  failure. It now names the method and path and says what a 404 means here.
+  This is the diagnostic whose absence made the bug above cost an afternoon.
+
+- **A malformed pre-check response is no longer reported as a clean check.**
+  The REST pre-check decoder tried several envelopes in turn and ignored the
+  failure of each, so a body it could not read returned `ok:true` with an empty
+  result list — a pre-production SQL gate answering "no findings" when it had
+  in fact parsed nothing. There is now one envelope (the serializer's shape is
+  identical from v1.8.5 to v1.14), and a body that does not match is an error.
+
+  Both decode failures were also returned as plain errors, which map to
+  `E_NETWORK`, so a contract mismatch was retried three times before failing.
+  They surface as `E_UNKNOWN` now, matching `workflow detail`. A 2xx submit
+  response carrying no workflow id is likewise an error rather than a success
+  with id 0.
+
+- **`--read-only` again refuses `workflow submit` before any network call.**
+  Resolving the instance and resource group now queries the server, which would
+  have happened before the read-only gate at the confirm chokepoint. The
+  refusal moved ahead of the resolution, restoring the stronger promise: a
+  write command under `--read-only` issues no request at all.
+
+### Changed
+
+- **`--instance-name` / `--group-name` are resolved to numeric IDs** (the REST
+  endpoints key on the ID), the reverse of the previous session-mode direction.
+  Both spellings still work in both modes. `workflow submit` resolves whichever
+  side is missing, so its dry-run preview always names the instance and group,
+  and an identifier that matches nothing fails at `--dry-run` with
+  `E_NOT_FOUND` rather than after an operator has approved a token.
+
+### Removed
+
+- **`workflow submit --cc`.** Only the deleted `/autoreview/` view ever carried
+  `cc_users`; it is not a field on Archery's workflow model or serializer. The
+  flag stays registered and is rejected with `E_VALIDATION` naming the reason,
+  so an agent working from an older Skill gets an explanation instead of an
+  "unknown flag" — but the recipients cannot be delivered, and silently
+  dropping a notification list would be worse than failing. Configure
+  carbon-copy recipients in Archery's notification settings instead.
+
 ## [1.0.21] - 2026-09-07
 
 ### Added
