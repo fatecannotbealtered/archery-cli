@@ -122,9 +122,17 @@ func runAuthLogin(_ *cobra.Command, _ []string) error {
 		regionURL = firstNonEmpty(os.Getenv("ARCHERY_CLI_URL"))
 	}
 
+	// A dry-run previews the login and mints a confirm token; it issues no
+	// request, so it needs no password. Asking for one here — as this did —
+	// collected a secret only to discard it at the gate, which reads like the
+	// password was rejected.
 	if jsonMode {
-		if regionURL == "" || username == "" || password == "" {
-			return failArg("auth login requires --url, --username, and --password in json mode; use --format text for interactive login")
+		if regionURL == "" || username == "" {
+			return failArg("auth login requires --url and --username in json mode; use --format text for interactive login")
+		}
+		if password == "" && !dryRun {
+			return failArg("auth login requires a password: pass --password, or set ARCHERY_CLI_PASSWORD to keep it out of argv; " +
+				"use --format text to be prompted for it instead")
 		}
 		if err := validateAuthURL(regionURL); err != nil {
 			return err
@@ -161,7 +169,7 @@ func runAuthLogin(_ *cobra.Command, _ []string) error {
 		return failArg("username cannot be empty")
 	}
 
-	if password == "" {
+	if password == "" && !dryRun {
 		fmt.Print("  Password: ")
 		var passwordBytes []byte
 		var err error
@@ -177,7 +185,7 @@ func runAuthLogin(_ *cobra.Command, _ []string) error {
 		}
 		password = strings.TrimSpace(string(passwordBytes))
 	}
-	if password == "" {
+	if password == "" && !dryRun {
 		return failArg("password cannot be empty")
 	}
 
@@ -202,11 +210,17 @@ func doAuthLogin(cfg *config.Config, regionName, regionURL, username, password s
 		"username": username,
 		"mode":     mode,
 	}
+	// The password is deliberately absent from the confirm payload. The token
+	// binds what the operator actually previewed — log in as this user, to this
+	// region, in this mode — and the password is an input to that, never shown
+	// in the preview and so never something they could have approved or
+	// rejected. Binding it also made the two-step flow unusable: the dry-run
+	// would have to collect the secret just to reproduce the same fingerprint
+	// at confirm time.
 	confirmPayload := map[string]any{
 		"region":   regionName,
 		"url":      regionURL,
 		"username": username,
-		"password": password,
 		"mode":     mode,
 	}
 	// Validate the 2FA secret BEFORE the dry-run gate. A dry-run exists to

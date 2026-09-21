@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -244,19 +245,24 @@ func dryRunOutputWithPayload(action string, detail map[string]any, confirmPayloa
 	if activeCmd != nil {
 		cmdPath = activeCmd.CommandPath()
 	}
+	if detail == nil {
+		detail = map[string]any{}
+	}
+	confirmCtx := ""
+	if cfg, err := config.Load(); err == nil {
+		confirmCtx = confirmContext(cfg)
+	}
+	// Mint the token for both renderings. Text mode used to print the action
+	// and nothing else, which left the documented dry-run → confirm sequence
+	// with no way to obtain a token: every write command was a dead end unless
+	// the caller knew to switch to --format json.
+	token, expires := newConfirmToken(cmdPath, confirmCtx, confirmPayload)
+
 	if jsonMode {
-		if detail == nil {
-			detail = map[string]any{}
-		}
 		changes := []map[string]any{}
 		if len(detail) > 0 {
 			changes = append(changes, detail)
 		}
-		confirmCtx := ""
-		if cfg, err := config.Load(); err == nil {
-			confirmCtx = confirmContext(cfg)
-		}
-		token, expires := newConfirmToken(cmdPath, confirmCtx, confirmPayload)
 		output.PrintJSON(map[string]any{
 			"preview": map[string]any{
 				"action":  action,
@@ -265,10 +271,32 @@ func dryRunOutputWithPayload(action string, detail map[string]any, confirmPayloa
 			"confirm_token": token,
 			"expires_at":    expires.Format(time.RFC3339),
 		})
-	} else {
-		output.Info("[dry-run] " + action)
+		return true
 	}
+
+	output.Info("[dry-run] " + action)
+	for _, k := range sortedKeys(detail) {
+		output.Gray(fmt.Sprintf("    %-14s %v", k+":", detail[k]))
+	}
+	fmt.Println()
+	output.Bold("  --confirm " + token)
+	// Deliberately not a reconstructed command line: the arguments routinely
+	// contain SQL with spaces and quotes, and cmd.exe and POSIX shells disagree
+	// on how to quote it. A wrong paste-ready line is worse than none.
+	output.Gray("  re-run the same command with --dry-run replaced by the flag above")
+	output.Gray("  token expires " + expires.Format(time.RFC3339))
 	return true
+}
+
+// sortedKeys returns the map's keys in a stable order so a preview reads the
+// same way twice.
+func sortedKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // markDryRunOrConfirm is a convenience that handles both --dry-run preview and

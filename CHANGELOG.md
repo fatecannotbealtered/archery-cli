@@ -59,7 +59,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refusal moved ahead of the resolution, restoring the stronger promise: a
   write command under `--read-only` issues no request at all.
 
+- **Write commands were unusable in `--format text`.** The dry-run printed the
+  action and nothing else — no preview, and above all no confirm token — while
+  the same command instructed the caller to "retry with `--confirm
+  <confirm_token>`". There was no token to retry with unless they knew to
+  switch to `--format json`. Text mode now mints the same token, prints the
+  preview fields being approved, and shows the flag to re-run with. It does
+  not reconstruct a paste-ready command line: arguments routinely carry SQL
+  with spaces and quotes, and cmd.exe and POSIX shells disagree on quoting, so
+  a wrong line would be worse than none.
+
+- **`auth login --dry-run` no longer asks for a password it cannot use.** The
+  password was collected before the gate, so a dry-run took the secret and
+  discarded it — which reads like the password was rejected — and in json mode
+  `--password` was *required* to obtain a token for a step that sends nothing,
+  pushing the secret into argv where other processes and the shell history can
+  read it. A dry-run now needs no password in either mode; the confirm step
+  prompts for it (text) or takes `ARCHERY_CLI_PASSWORD` / `--password` (json).
+
 ### Changed
+
+- **The `auth login` confirm token no longer binds the password.** It binds
+  what the operator actually previewed — region, url, username, mode. The
+  password is an input to the login, never shown in the preview and so never
+  something they could approve or reject; binding it only forced the dry-run
+  to collect a secret in order to reproduce the same fingerprint at confirm
+  time. A wrong password now fails authentication rather than masquerading as
+  a token mismatch.
 
 - **`--instance-name` / `--group-name` are resolved to numeric IDs** (the REST
   endpoints key on the ID), the reverse of the previous session-mode direction.

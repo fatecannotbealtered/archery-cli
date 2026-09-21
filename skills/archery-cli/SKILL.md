@@ -20,8 +20,10 @@ npm install -g @fateforge/archery-cli
 npx skills add fatecannotbealtered/archery-cli -y -g
 
 # Login and verify
-archery-cli auth login --url https://archery.example.com --username <USER> --password <PASS> --region default --dry-run
-archery-cli auth login --url https://archery.example.com --username <USER> --password <PASS> --region default --confirm <confirm_token>
+# The dry-run sends nothing, so it needs no password; keep the secret out of
+# argv by passing it via ARCHERY_CLI_PASSWORD on the confirm step.
+archery-cli auth login --url https://archery.example.com --username <USER> --region default --dry-run
+archery-cli auth login --url https://archery.example.com --username <USER> --region default --confirm <confirm_token>
 archery-cli context --compact
 archery-cli doctor --compact
 ```
@@ -46,7 +48,7 @@ archery-cli context --compact      # who/where; exit 4 if not authed
 archery-cli doctor --compact       # auth + network + version check
 ```
 
-First-time setup: ask user for Archery URL + credentials, then run `archery-cli auth login --url <URL> --username <USER> --password <PASS> --region default --dry-run`, inspect the preview, and retry with `--confirm <confirm_token>`.
+First-time setup: ask user for Archery URL + credentials, then run `archery-cli auth login --url <URL> --username <USER> --region default --dry-run`, inspect the preview, and retry with `--confirm <confirm_token>`. The dry-run issues no request and needs no password; supply it on the confirm step via `ARCHERY_CLI_PASSWORD` (preferred — `--password` puts the secret in argv, where other processes and the shell history can read it), or use `--format text` to be prompted for it.
 `auth login` persists tokens only in the OS keyring. If `doctor` reports `credential-store` as `warn`, use `ARCHERY_CLI_URL`, `ARCHERY_CLI_USERNAME`, and `ARCHERY_CLI_PASSWORD` for one-shot commands instead of expecting persisted credentials.
 
 ## Agent defaults
